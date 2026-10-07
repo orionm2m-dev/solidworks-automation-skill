@@ -43,6 +43,20 @@ SolidWorks 是 Windows 桌面 COM 应用，不是原生 MCP 服务。MCP Server 
 3. 云端网页产品没有本机配置入口时，skill 无法替用户直接安装本地 MCP。
 4. JSON 配置写入前会创建 `.bak-*` 备份；命令行客户端会先移除同名 server 再重新注册。
 
+## 进程目标与连接生命周期
+
+`solidworks_connect` 可接收正整数 `process_id`，指定已经运行的 SOLIDWORKS 进程。底层通过 Running Object Table 查找该进程的 COM 对象，并回读应用 PID；无法取得并验证目标时，直接失败，不回退到 `GetActiveObject` 或新建实例。未指定 PID 且 server 尚未绑定目标时，保持原有连接行为。
+
+MCP server 保存一次成功连接确定的进程目标；后续原生工具通过统一连接包装器继续使用该 PID，而不是在每次调用时重新选择默认活动对象。显式连接另一个 PID 必须成功后才替换绑定。`SOLIDWORKS_MCP_PROCESS_ID` 提供首次连接时读取的默认目标，格式错误会使连接失败；`solidworks_connect` 返回实际 `process_id` 和 `session_target: {process_id, scope: "mcp_server", strict: true}`，便于客户端核对。首次默认连接也会固定实际 PID；绑定后，原生 CAD 工具的结构化成功响应带有 `process_id`。
+
+无参数工具 `solidworks_list_instances()` 只读枚举可连接的 ROT 项，返回 `selected_process_id` 与实例列表；每项包含 PID、版本、moniker 和活动文档摘要。不启动应用、不激活文档，也不保证列出尚未注册到 ROT 的进程。恢复窗口工具在 PID 已绑定或明确配置时只枚举和处理该进程；没有目标 PID 时只允许诊断，拒绝自动关闭模态对话框。
+
+此状态只属于当前 `stdio` server 进程。它不会为每个聊天任务分配独立实例，也不会自动启动新的独立 SOLIDWORKS 进程。多个任务应使用不同的 MCP 配置项和进程号；共享一个 server 的任务必须协调显式切换目标。应用重启后 PID 可能变化，必须重新确认和绑定。PID 绑定仍要求文档级 `expected_document_path` / `expected_document_title` 校验。
+
+预览辅助流程在激活前确认文档的规范 IUnknown 身份属于所选应用，并对已保存文档使用完整路径；不能仅凭同名文档或相同磁盘路径判断所属实例。装配辅助连接和类型库版本探测继承环境中的 PID 目标。`comtypes` Pack and Go 兜底不具备 PID 选择能力，绑定模式会在任何 COM 访问前阻断该分支；原生 pywin32 路径及明确标记的文件暂存策略保留原有语义。
+
+真机验证：Windows / Python 3.10 / SOLIDWORKS 2026 SP4.1（Revision 34.4.1）。新的 `stdio` MCP 进程已列出两个实例、绑定指定实例、验证失败重绑保留原目标，并在该进程中以只读方式打开装配体和回读 PID。该只读装配体的预览激活也通过 COM 所有权与前后完整路径回读，未执行保存，未修改模型内容。能力仍为 `pilot`；这些结果不等于全部功能和版本的真机验证。
+
 ## 并发策略
 
 `mcp-server/server.py` 使用全局 `RLock` 串行执行所有工具。原因：
@@ -51,7 +65,7 @@ SolidWorks 是 Windows 桌面 COM 应用，不是原生 MCP 服务。MCP Server 
 - 多个工具同时切换活动文档、选择实体或保存文件，会互相破坏状态。
 - Motion Study / Mate 创建依赖当前选择集，必须避免并发污染。
 
-每个工具调用前会尝试 `pythoncom.CoInitialize()`，保证当前 MCP worker 线程可使用 COM。
+每个工具调用前会尝试 `pythoncom.CoInitialize()`，保证当前 MCP worker 线程可使用 COM。原生操作还取得 `Local\SolidWorksAutomation.Operation.v1`，使不同 MCP server 的协作操作串行执行；选择不同 PID 不会关闭此 mutex。锁不覆盖整段多步骤工作流，也不能阻止人工操作或未采用相同锁的控制脚本。
 
 ## 工具命名
 
@@ -76,6 +90,7 @@ CAD Studio 门禁工具：
 SolidWorks 原生工具：
 
 - `solidworks_connect`
+- `solidworks_list_instances`
 - `solidworks_new_document`
 - `solidworks_open_document`
 - `solidworks_inspect_configurations`

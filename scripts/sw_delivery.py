@@ -14,11 +14,11 @@ import pywintypes
 from win32com.client import gencache
 
 try:
-    from .sw_connect import get_com_member
+    from .sw_connect import connect_solidworks, get_com_member
     from .sw_document_data import read_custom_property
     from .sw_preflight import import_com_dependencies
 except ImportError:
-    from sw_connect import get_com_member
+    from sw_connect import connect_solidworks, get_com_member
     from sw_document_data import read_custom_property
     from sw_preflight import import_com_dependencies
 
@@ -645,6 +645,11 @@ def _comtypes_document_names(package, document_count: int) -> list[str]:
 
 def _active_solidworks_major() -> int | None:
     """@brief 返回当前 SolidWorks 类型库主版本，例如 SW2024 为 32。"""
+    if "SOLIDWORKS_MCP_PROCESS_ID" in os.environ:
+        # 绑定失败必须向上传递，不能改从另一个实例推断版本。
+        sw, _model = connect_solidworks(wait_seconds=0)
+        revision = str(get_com_member(sw, "RevisionNumber"))
+        return int(revision.split(".", 1)[0])
     try:
         sw = win32com_client.GetActiveObject("SldWorks.Application")
         revision = str(get_com_member(sw, "RevisionNumber"))
@@ -835,8 +840,19 @@ def _comtypes_active_model(sw, source_path: str):
     return document
 
 
+def _guard_comtypes_process_target():
+    """未实现 PID 选择的 comtypes 兜底不得越过已绑定进程的边界。"""
+    if "SOLIDWORKS_MCP_PROCESS_ID" in os.environ:
+        raise RuntimeError(
+            "SW_PROCESS_TARGET_FALLBACK_UNSUPPORTED: PID-bound mode disables the "
+            "comtypes Pack and Go fallback before COM access; use the selected "
+            "instance's native pywin32 path or inspect its API failure."
+        )
+
+
 def _connect_comtypes_solidworks(client, progids: list[str]):
     """@brief 优先附着活动实例，返回应用对象、所有权标记和最后错误。"""
+    _guard_comtypes_process_target()
     last_error = None
     for progid in progids:
         try:
@@ -864,6 +880,7 @@ def _comtypes_pack_and_go(
     dependencies: list[str] | None = None,
 ) -> dict[str, Any]:
     """@brief 使用 comtypes 早绑定兜底执行 SolidWorks 原生 Pack and Go。"""
+    _guard_comtypes_process_target()
     import comtypes.client
 
     _comtypes_module()

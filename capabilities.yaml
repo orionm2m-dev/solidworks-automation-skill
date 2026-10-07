@@ -197,6 +197,16 @@
       "allowed_modes": ["interactive", "reviewed"]
     },
     {
+      "id": "mcp_process_target",
+      "label": "MCP 指定进程连接与持久绑定",
+      "level": "pilot",
+      "backends": ["solidworks-com"],
+      "verified_versions": ["2026"],
+      "dependencies": ["Windows", "SolidWorks", "pywin32"],
+      "limitations": ["SW2026 SP4.1 Revision 34.4.1 已通过全新 stdio MCP 验证双实例枚举、指定 PID 绑定、无效 PID 拒绝并保留绑定、在原目标只读打开装配体、预览激活及路径回读；未保存或修改模型内容", "只连接已运行且可通过 COM 验证 PID 的实例，不自动创建独立进程", "绑定按 MCP server 进程保存，不按聊天任务隔离；共享 server 的显式切换需要协调", "不同 PID 的 COM 操作仍使用同一跨进程 mutex 串行执行", "应用重启后需重新确认 PID；仍需文档目标校验，不提供事务隔离", "PID 模式在 COM 访问前阻断尚未支持进程选择的 comtypes Pack and Go 兜底；无明确 PID 时不自动关闭对话框"],
+      "allowed_modes": ["interactive", "reviewed"]
+    },
+    {
       "id": "requirements_planning",
       "label": "需求分析与工程规划",
       "level": "verified",

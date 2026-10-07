@@ -13,6 +13,7 @@ import json
 import math
 import os
 import platform
+import re
 import sys
 import threading
 import time
@@ -76,7 +77,8 @@ def _load_automation_modules() -> None:
     build_spec = importlib.import_module("scripts.build_from_spec")
 
     exports = {
-        "connect_solidworks": connect.connect_solidworks,
+        "_connect_solidworks_backend": connect.connect_solidworks,
+        "_list_solidworks_instances_backend": connect.list_solidworks_instances,
         "create_empty_dispatch_variant": connect.create_empty_dispatch_variant,
         "get_com_member": connect.get_com_member,
         "mm": connect.mm,
@@ -176,12 +178,32 @@ mcp = FastMCP(
     "solidworks_mcp",
     instructions=(
         "Local SolidWorks automation over Windows COM. Tools operate on the "
-        "currently running SolidWorks desktop session and should be called "
-        "serially."
+        "selected SOLIDWORKS process. Use solidworks_list_instances and "
+        "solidworks_connect(process_id=...) to pin this MCP server. Calls "
+        "are serialized and document targets are checked."
     ),
 )
 
 _sw_lock = threading.RLock()
+_selected_process_id: Optional[int] = None
+
+
+def connect_solidworks(*args, **kwargs):
+    """将整个 MCP 进程固定到已验证的 SOLIDWORKS PID；不缓存跨线程 COM 指针。"""
+    global _selected_process_id
+    requested = kwargs.get("process_id")
+    if requested is None and _selected_process_id is not None:
+        kwargs["process_id"] = _selected_process_id
+    result = _connect_solidworks_backend(*args, **kwargs)
+    actual = int(get_com_member(result[0], "GetProcessID"))
+    expected = kwargs.get("process_id")
+    if actual <= 0 or (expected is not None and actual != expected):
+        raise RuntimeError(f"SOLIDWORKS process mismatch: expected {expected}, actual {actual}")
+    # 仅成功连接后更新；嵌套构建器和子进程也继承同一个目标。
+    _selected_process_id = actual
+    os.environ["SOLIDWORKS_MCP_PROCESS_ID"] = str(actual)
+    return result
+
 
 # 单个 SolidWorks 操作的持锁上限。超时意味着上一个操作被模态对话框阻塞，
 # 必须让出控制权给调用方，而不是让整个 server 永久挂起。
@@ -292,7 +314,12 @@ class ActiveDocumentInput(BaseInput):
 
 
 class SolidWorksConnectInput(BaseInput):
-    """Input for connecting to SolidWorks."""
+    """连接并固定当前 MCP 服务的 SOLIDWORKS 进程。"""
+
+    process_id: Optional[int] = Field(
+        default=None, gt=0, strict=True,
+        description="Select an existing SOLIDWORKS PID for this MCP server. Missing targets fail without launching or selecting another instance.",
+    )
 
     visible: bool = Field(default=True, description="Whether a newly started SolidWorks instance should be visible.")
     wait_seconds: int = Field(default=5, ge=0, le=60, description="Seconds to wait after starting SolidWorks.")
@@ -754,6 +781,8 @@ class DesignSpecBuildInput(BaseInput):
 
 class SolidWorksRecoverInput(BaseInput):
     """Input for diagnosing and recovering a blocked SolidWorks session."""
+
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
     dismiss_dialogs: bool = Field(
         default=False,
@@ -1313,7 +1342,7 @@ def _tool_error(exc: Exception, response_format: ResponseFormat = ResponseFormat
 
 
 def _run_locked(operation, response_format: ResponseFormat, load_automation: bool = True,
-                timeout_seconds: float = DEFAULT_LOCK_TIMEOUT_SECONDS):
+                timeout_seconds: float = DEFAULT_LOCK_TIMEOUT_SECONDS, desktop_guard: bool = False):
     """
     Run one SolidWorks COM operation under the global lock.
 
@@ -1346,9 +1375,11 @@ def _run_locked(operation, response_format: ResponseFormat, load_automation: boo
             _load_automation_modules()
         _coinitialize()
         # 命名互斥锁覆盖多个 MCP 进程；无 CAD 后端不等待桌面锁。
-        desktop_lock = solidworks_operation_lock(timeout_seconds) if load_automation else nullcontext()
+        desktop_lock = solidworks_operation_lock(timeout_seconds) if (load_automation or desktop_guard) else nullcontext()
         with desktop_lock, redirect_stdout(sys.stderr):
             payload = operation()
+            if load_automation and _selected_process_id is not None and isinstance(payload, dict):
+                payload.setdefault("process_id", _selected_process_id)
         return _result(payload, response_format)
     except Exception as exc:
         return _tool_error(exc, response_format)
@@ -1718,17 +1749,32 @@ def cadstudio_create_ocp_surface(params: CadStudioOcpSurfaceInput) -> str:
     },
 )
 def solidworks_connect(params: SolidWorksConnectInput = SolidWorksConnectInput()) -> str:
-    """Connect to a running SolidWorks instance or start one, then return active document status."""
+    """Connect and pin this MCP server to a verified SOLIDWORKS process; explicit PID never falls back or starts one."""
 
     def op():
-        sw, model = connect_solidworks(wait_seconds=params.wait_seconds, visible=params.visible)
+        sw, model = connect_solidworks(wait_seconds=params.wait_seconds, visible=params.visible, process_id=params.process_id)
         return {
+            "process_id": _selected_process_id,
+            "session_target": {"process_id": _selected_process_id, "scope": "mcp_server", "strict": True},
             "status": "ok",
             "revision": get_com_member(sw, "RevisionNumber"),
             "active_document": _model_summary(model) if model else None,
         }
 
     return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_list_instances",
+    title="List Registered SOLIDWORKS Instances",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def solidworks_list_instances() -> str:
+    """只读枚举可通过 ROT 连接的进程；不激活文档、不启动 SOLIDWORKS。"""
+    return _run_locked(lambda: {
+        "status": "ok", "selected_process_id": _selected_process_id,
+        "instances": _list_solidworks_instances_backend(),
+    }, ResponseFormat.JSON)
 
 
 @mcp.tool(
@@ -1764,6 +1810,7 @@ def solidworks_health_check(params: SolidWorksHealthCheckInput = SolidWorksHealt
             checks["motion_type_library_ready"] = False
         if params.start_solidworks and not missing:
             _load_automation_modules()
+            _coinitialize()
             sw, model = connect_solidworks(wait_seconds=1)
             checks["solidworks_revision"] = get_com_member(sw, "RevisionNumber")
             checks["active_document"] = _model_summary(model) if model else None
@@ -1780,10 +1827,11 @@ def solidworks_health_check(params: SolidWorksHealthCheckInput = SolidWorksHealt
             "issues": issues,
         }
 
-    return _run_locked(op, params.response_format, load_automation=False)
+    return _run_locked(op, params.response_format, load_automation=False,
+                       desktop_guard=params.start_solidworks)
 
 
-def _enumerate_solidworks_windows():
+def _enumerate_solidworks_windows(process_id=None):
     """
     枚举 SolidWorks 顶层窗口，找出疑似模态对话框。
 
@@ -1793,6 +1841,7 @@ def _enumerate_solidworks_windows():
     """
     try:
         import win32gui  # type: ignore
+        import win32process  # type: ignore
     except Exception:
         return None, [], "win32gui 不可用，无法枚举窗口（pywin32 未安装或不完整）"
 
@@ -1802,6 +1851,8 @@ def _enumerate_solidworks_windows():
     def visit(handle, _param):
         """@brief EnumWindows 回调，按窗口标题归类。"""
         nonlocal main_window
+        if process_id is not None and win32process.GetWindowThreadProcessId(handle)[1] != process_id:
+            return True
         if not win32gui.IsWindowVisible(handle):
             return True
         title = win32gui.GetWindowText(handle)
@@ -1853,7 +1904,15 @@ def solidworks_recover(params: SolidWorksRecoverInput = SolidWorksRecoverInput()
             "server_alive": True,
         }
 
-        main_window, dialogs, window_error = _enumerate_solidworks_windows()
+        target_pid = _selected_process_id
+        if target_pid is None and "SOLIDWORKS_MCP_PROCESS_ID" in os.environ:
+            value = os.environ["SOLIDWORKS_MCP_PROCESS_ID"]
+            if not re.fullmatch(r"[1-9][0-9]*", value):
+                raise ValueError("SOLIDWORKS_MCP_PROCESS_ID must be a positive decimal PID")
+            target_pid = int(value)
+        if params.dismiss_dialogs and target_pid is None:
+            raise ValueError("Connect to an explicit process before dismissing SOLIDWORKS dialogs")
+        main_window, dialogs, window_error = _enumerate_solidworks_windows(target_pid)
         probe["main_window"] = main_window
         probe["blocking_dialogs"] = dialogs
         if window_error:
@@ -1920,7 +1979,7 @@ def solidworks_recover(params: SolidWorksRecoverInput = SolidWorksRecoverInput()
         }
 
     return _run_locked(op, params.response_format, load_automation=False,
-                       timeout_seconds=params.probe_timeout_seconds)
+                       timeout_seconds=params.probe_timeout_seconds, desktop_guard=True)
 
 
 @mcp.tool(

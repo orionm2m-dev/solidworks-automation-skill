@@ -544,26 +544,55 @@ def clear_selection_for_preview(model):
     get_com_member(model, "GraphicsRedraw2")
 
 
+def _same_preview_document(first, second):
+    """比较规范 IUnknown 身份，避免不同进程中同路径文档被误认。"""
+    if first is second:
+        return True
+    if first is None or second is None:
+        return False
+    try:
+        first_unknown = first._oleobj_.QueryInterface(pythoncom.IID_IUnknown)
+        second_unknown = second._oleobj_.QueryInterface(pythoncom.IID_IUnknown)
+        return first_unknown == second_unknown
+    except Exception:
+        return False
+
+
 def activate_model_for_preview(model):
-    """激活待审查文档，避免 SaveBMP 截到 SolidWorks 当前活动的其他零件/子装配。"""
+    """激活待审查文档；绑定进程时在激活前核对文档所有权。"""
     if model is None:
         return False
     title = get_com_member(model, "GetTitle")
     if not title:
         return False
-    try:
-        sw = _win32com.GetActiveObject("SldWorks.Application")
-    except Exception:
-        return False
-    errors = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
-    try:
-        active = sw.ActivateDoc3(title, False, 0, errors)
-    except Exception:
+    bound = "SOLIDWORKS_MCP_PROCESS_ID" in os.environ
+    if bound:
+        # 不能使用全局活动对象；即使目标已退出也禁止回退到其它实例。
+        sw, _ = connect_solidworks(visible=False)
+        documents = get_com_member(sw, "GetDocuments") or ()
+        if not any(_same_preview_document(model, item) for item in documents):
+            raise RuntimeError("预览文档不属于所绑定的 SOLIDWORKS 进程")
+        # 已保存文档用完整路径激活，同名异路径文件不能混用。
+        target = get_com_member(model, "GetPathName") or title
+    else:
         try:
-            sw.ActivateDoc2(title, False, errors)
-            active = sw.ActiveDoc
+            sw = _win32com.GetActiveObject("SldWorks.Application")
         except Exception:
             return False
+        target = title
+    errors = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+    try:
+        active = sw.ActivateDoc3(target, False, 0, errors)
+    except Exception:
+        try:
+            sw.ActivateDoc2(target, False, errors)
+            active = sw.ActiveDoc
+        except Exception:
+            if bound:
+                raise RuntimeError("无法在所绑定的 SOLIDWORKS 进程激活预览文档")
+            return False
+    if bound and not _same_preview_document(active, model):
+        raise RuntimeError("预览激活结果与目标文档不一致")
     return active is not None
 
 
