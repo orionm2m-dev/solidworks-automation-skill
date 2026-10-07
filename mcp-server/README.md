@@ -365,3 +365,4 @@ claude mcp add --scope user solidworks -- python C:\path\to\solidworks-automatio
 
 实测：Windows / Python 3.10 / SOLIDWORKS 2026 SP4.1（34.4.1），新 stdio MCP 服务取消目标会话的俄文 FeatureWorks 提示，原静默打开调用恢复。第二个 SolidWorks 实例未被操作。单元测试覆盖 PID 隔离、未知对话框/按钮/提示拒绝；其他 SOLIDWORKS 版本和语言尚未实测。
 `solidworks_translate_faces`: bounds_mm、translation_mm、expected_face_count、feature_name；先 dry_run，详见 [原生面平移](../references/face-translation.md)。
+`solidworks_resize_sketch_circles`: sketch_name、centers_mm、expected_radius_mm、radius_mm，默认 dry_run；[使用说明](../references/sketch-circle-radius.md)。
