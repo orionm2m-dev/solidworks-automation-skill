@@ -1984,6 +1984,26 @@ def solidworks_recover(params: SolidWorksRecoverInput = SolidWorksRecoverInput()
 
 
 @mcp.tool(
+    name="solidworks_cancel_featureworks_prompt",
+    title="Cancel FeatureWorks Recognition Prompt",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def solidworks_cancel_featureworks_prompt() -> str:
+    """向明确绑定进程中的 FeatureWorks 提示发送“否”，不等待被提示阻塞的 COM 锁。"""
+    try:
+        from scripts.sw_dialogs import cancel_featureworks_prompt
+        target = _selected_process_id
+        if target is None:
+            value = os.environ.get("SOLIDWORKS_MCP_PROCESS_ID", "")
+            if not re.fullmatch(r"[1-9][0-9]*", value):
+                raise ValueError("需要显式绑定进程 PID")
+            target = int(value)
+        return _result(cancel_featureworks_prompt(target), ResponseFormat.JSON)
+    except Exception as exc:
+        return _tool_error(exc, ResponseFormat.JSON)
+
+
+@mcp.tool(
     name="solidworks_new_document",
     title="Create SolidWorks Document",
     annotations={
