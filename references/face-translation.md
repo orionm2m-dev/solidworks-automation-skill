@@ -8,4 +8,4 @@ API: [InsertMoveFace3](https://help.solidworks.com/2015/english/api/sldworksapi/
 
 包围盒不表示加工语义；边界必须排除邻接外表面。工具不能证明干涉、壁厚或装配公差，修改后必须检查原生预览与导出。当前自动回归为输入、选择及只读预检测试；真实 CAD 验证另行记录。
 
-真实验证：Windows / Python 3.12 / SOLIDWORKS 2026 SP4.1 (34.4.1)，八面圆角矩形通口平移 1.5 mm，原生 MoveFace 特征及三向量回读一致，Check2=0，前后体积差约 1.4e-7 mm³。数据不包含在公共仓库；其他面类型仍是 pilot。
+真实验证：Windows / Python 3.10.11 / SOLIDWORKS 2026 SP4.1 (34.4.1)，八面圆角矩形通口平移 1.5 mm，原生 MoveFace 特征及三向量回读一致，Check2=0，前后体积差约 1.4e-7 mm³。数据不包含在公共仓库；其他面类型仍是 pilot。
