@@ -65,6 +65,14 @@ def _apply(model, feature, refs, radii_mm, sw):
     member(model,"EditSketch")
     manager=member(model,"SketchManager")
     active=member(manager,"ActiveSketch")
+    if active is None:
+        from .sw_connect import create_empty_dispatch_variant
+        member(model,"ClearSelection2",True)
+        if not member(member(model,"Extension"),"SelectByID2",str(member(feature,"Name")),"SKETCH",
+                      0.0,0.0,0.0,False,0,create_empty_dispatch_variant(),0):
+            raise RuntimeError("无法按草图类型选择目标")
+        member(manager,"InsertSketch",True)
+        active=member(manager,"ActiveSketch")
     try:
         same = None if active is None else int(member(sw,"IsSame",active,member(feature,"GetSpecificFeature2")))
         if same != 1:
