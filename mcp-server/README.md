@@ -347,3 +347,11 @@ claude mcp add --scope user solidworks -- python C:\path\to\solidworks-automatio
 - MCP 已覆盖基础盒体/圆柱、复杂孔槽、添加组件、常用 Mate、固定/浮动、外观、导出、审查、旋转马达、Motion 结果门禁，以及 DFM/Routing/FEA/复杂几何的受控入口。
 - 受限封闭直纹 Loft 可生成并重开真实 STEP/BREP；平滑 Loft、扫描、自由曲面、G1/G2 和模具仍只开放结构化计划门禁。
 - SolidWorks Motion / Simulation 许可证差异可能影响计算能力；缺少合法加载项或授权时返回 `blocked`，不尝试绕过。
+
+## FeatureWorks 识别提示恢复（pilot）
+
+`solidworks_cancel_featureworks_prompt` 只取消明确绑定 PID 内的 FeatureWorks 特征识别提示。它检查窗口进程、标题、识别提示文字及唯一的“否”按钮，发送该按钮实际命令 ID；不会接受识别、关闭文档或确认保存。当前支持英文、俄文和中文提示，未识别语言只返回诊断。
+
+恢复不执行 COM，也不等待模型操作 mutex，因为被提示阻塞的打开调用可能持有该锁。此例外只用于取消已知提示；返回 `posted` 表示消息已提交，需检查原调用完成及目标文档回读。调用前必须显式绑定进程，或配置 `SOLIDWORKS_MCP_PROCESS_ID`。
+
+实测：Windows / Python 3.10 / SOLIDWORKS 2026 SP4.1（34.4.1），新 stdio MCP 服务取消目标会话的俄文 FeatureWorks 提示，原静默打开调用恢复。第二个 SolidWorks 实例未被操作。单元测试覆盖 PID 隔离、未知对话框/按钮/提示拒绝；其他 SOLIDWORKS 版本和语言尚未实测。
