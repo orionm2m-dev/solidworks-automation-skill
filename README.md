@@ -251,3 +251,4 @@ V2 附带 **37 个 deterministic reliability scenarios**，覆盖正常执行、
 为草图局部 XY 平面中的绝对中心，必须同时提供；省略时保留原中心。
 绝对坐标便于安全重试。工具同时回读尺寸、中心、实体检查和特征树，不自动保存。
 无约束四段轮廓的 pilot 限制保持不变，段级外部引用需要复核。
+原生局部编辑新增 [完整面包围盒平移 MCP](references/face-translation.md)，默认 dry-run、严格面数校验，不替换实体。

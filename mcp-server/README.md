@@ -364,3 +364,4 @@ claude mcp add --scope user solidworks -- python C:\path\to\solidworks-automatio
 恢复不执行 COM，也不等待模型操作 mutex，因为被提示阻塞的打开调用可能持有该锁。此例外只用于取消已知提示；返回 `posted` 表示消息已提交，需检查原调用完成及目标文档回读。调用前必须显式绑定进程，或配置 `SOLIDWORKS_MCP_PROCESS_ID`。
 
 实测：Windows / Python 3.10 / SOLIDWORKS 2026 SP4.1（34.4.1），新 stdio MCP 服务取消目标会话的俄文 FeatureWorks 提示，原静默打开调用恢复。第二个 SolidWorks 实例未被操作。单元测试覆盖 PID 隔离、未知对话框/按钮/提示拒绝；其他 SOLIDWORKS 版本和语言尚未实测。
+`solidworks_translate_faces`: bounds_mm、translation_mm、expected_face_count、feature_name；先 dry_run，详见 [原生面平移](../references/face-translation.md)。
