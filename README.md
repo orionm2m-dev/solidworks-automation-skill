@@ -234,3 +234,5 @@ V2 附带 **37 个 deterministic reliability scenarios**，覆盖正常执行、
 ---
 
 <sub>关注抖音 @balance. · 嵌入式开发、SolidWorks 自动化和 AI 辅助工程实践持续更新</sub>
+
+原生局部编辑新增 [完整面包围盒平移 MCP](references/face-translation.md)，默认 dry-run、严格面数校验，不替换实体。
