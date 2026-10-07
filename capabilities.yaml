@@ -237,6 +237,16 @@
       "allowed_modes": ["interactive", "reviewed"]
     },
     {
+      "id": "capsule_sketch_resize",
+      "label": "已有四段胶囊草图检查与尺寸修改",
+      "level": "pilot",
+      "backends": ["solidworks-com"],
+      "verified_versions": ["2026"],
+      "dependencies": ["SolidWorks", "pywin32"],
+      "limitations": ["仅单配置零件中的无约束、无尺寸四段二维胶囊；原生 Slot 对象拒绝修改", "保留草图和特征树，但重建四个草图段；段级及外部引用必须人工复核", "不自动保存；修改前备份，失败只在原生撤销记录可用时尝试撤销并回读，不能保证事务恢复", "SW2026 SP4.1 Revision 34.4.1 已通过真实 stdio MCP 在测试零件上完成尺寸双向修改、轮廓回读、实体 Check2 和特征错误检查；其他版本未实测"],
+      "allowed_modes": ["interactive", "reviewed"]
+    },
+    {
       "id": "external_spur_gear_geometry",
       "label": "标准外啮合渐开线直齿轮实体",
       "level": "pilot",

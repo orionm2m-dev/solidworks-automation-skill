@@ -68,6 +68,8 @@ REQUIRED_TOOLS = {
     "solidworks_create_configuration",
     "solidworks_activate_configuration",
     "solidworks_update_dimension",
+    "solidworks_inspect_capsule_sketch",
+    "solidworks_resize_capsule_sketch",
     "solidworks_set_custom_properties",
     "solidworks_batch_export_files",
     "solidworks_export_assembly_bom",
