@@ -909,6 +909,10 @@ class SolidWorksCapsuleResizeInput(SolidWorksCapsuleInspectInput):
 
     length_mm: float = Field(..., gt=0, le=100000, allow_inf_nan=False)
     width_mm: float = Field(..., gt=0, le=100000, allow_inf_nan=False)
+    center_x_mm: Optional[float] = Field(default=None, allow_inf_nan=False,
+                                        description="Absolute sketch-local X center in mm; provide both center coordinates or neither.")
+    center_y_mm: Optional[float] = Field(default=None, allow_inf_nan=False,
+                                        description="Absolute sketch-local Y center in mm; not assembly coordinates.")
 
 
 class SolidWorksAddinHostStatusInput(BaseInput):
@@ -3178,7 +3182,8 @@ def solidworks_resize_capsule_sketch(params: SolidWorksCapsuleResizeInput) -> st
     def op():
         from scripts.sw_capsule_sketch import resize_capsule_sketch
         _sw, model = _active_model_required(params)
-        result = resize_capsule_sketch(model, params.sketch_name, params.length_mm, params.width_mm)
+        result = resize_capsule_sketch(model, params.sketch_name, params.length_mm, params.width_mm,
+                                      params.center_x_mm, params.center_y_mm)
         result["document"] = _model_summary(model)
         return result
     return _run_locked(op, params.response_format)
