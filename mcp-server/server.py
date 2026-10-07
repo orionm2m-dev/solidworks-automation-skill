@@ -312,6 +312,18 @@ class ActiveDocumentInput(BaseInput):
         return value
 
 
+class SolidWorksDrawingSectionsInput(ActiveDocumentInput):
+    """只读检查原生剖视的排除组件和剖切定义。"""
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
+class SolidWorksDrawingLayoutInput(ActiveDocumentInput):
+    """创建受约束的原生工程图布局。"""
+    layout_path: str = Field(min_length=1)
+    dry_run: bool = True
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
 class SolidWorksConnectInput(BaseInput):
     """连接并固定当前 MCP 服务的 SOLIDWORKS 进程。"""
 
@@ -3381,6 +3393,53 @@ def solidworks_review_drawing(params: SolidWorksReviewDrawingInput) -> str:
         return payload
 
     return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_create_drawing_layout",
+    title="Create Native Drawing Layout",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_create_drawing_layout(params: SolidWorksDrawingLayoutInput) -> str:
+    """通过严格布局建立原生视图、剖视和参考尺寸；先 dry_run，不覆盖文件。"""
+    def op():
+        from scripts.sw_drawing_layout import load_layout, create_layout
+        spec = load_layout(params.layout_path)
+        sw, model = _active_model_required(params)
+        try:
+            return create_layout(sw, model, spec, params.dry_run)
+        except Exception:
+            import traceback
+            raise RuntimeError(traceback.format_exc())
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_inspect_drawing_sections",
+    title="Inspect Native Drawing Sections",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def solidworks_inspect_drawing_sections(params: SolidWorksDrawingSectionsInput) -> str:
+    """读取当前图纸剖视的实际排除列表与范围，不修改文档。"""
+    def op():
+        sw, model = _active_model_required(params)
+        from scripts.sw_drawing_layout import inspect_sections
+        result=inspect_sections(model)
+        result['document']=_model_summary(model)
+        return result
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_cancel_dimension_prompt",
+    title="Cancel Bound Dimension Input Prompt",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def solidworks_cancel_dimension_prompt() -> str:
+    """仅关闭绑定 PID 的尺寸输入窗口，不确认保存，不调用 COM。"""
+    from scripts.sw_drawing_layout import cancel_dimension_prompt
+    pid = _selected_process_id or int(os.environ.get('SOLIDWORKS_MCP_PROCESS_ID', '0'))
+    return _result(cancel_dimension_prompt(pid), ResponseFormat.JSON)
 
 
 @mcp.tool(

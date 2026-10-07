@@ -495,6 +495,31 @@
       "dependencies": ["python", "可选 SolidWorks Routing 类型库和加载项许可证"],
       "limitations": ["当前支持中性 Routing 端点、分段、长度、弯曲半径、碰撞/间隙、支撑间距和 BOM 复核；不生成 SOLIDWORKS Routing 原生特征", "本机 SW2026 可发现 SWRoutingLib.tlb 和核心接口，但未检测到 Routing AddIn 注册或许可证证据时原生写入必须 blocked"],
       "allowed_modes": ["interactive", "reviewed"]
+    },
+    {
+      "id": "native_drawing_layout",
+      "label": "原生工程图布局与剖视参考尺寸",
+      "level": "pilot",
+      "backends": [
+        "solidworks-com-pywin32"
+      ],
+      "verified_versions": [
+        "2026 SP4.1"
+      ],
+      "dependencies": [
+        "SOLIDWORKS",
+        "python",
+        "pywin32"
+      ],
+      "limitations": [
+        "参考尺寸不关联模型拓扑；源模型改变后必须重建和核验",
+        "只支持全深剖视和矩形裁剪；工程图需要尺寸覆盖和视觉复核",
+        "混合比例 DXF 不得直接作为整页刀路；不自动生产放行"
+      ],
+      "allowed_modes": [
+        "interactive",
+        "reviewed"
+      ]
     }
   ]
 }
