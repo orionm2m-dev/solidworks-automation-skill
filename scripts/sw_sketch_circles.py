@@ -49,7 +49,10 @@ def _read(model, sketch_name):
             "lines_sha256":hashlib.sha256(json.dumps(lines).encode()).hexdigest(),
             "line_data_length":len(lines),
             "has_dimensions":member(feature,"GetFirstDisplayDimension") is not None,
-            "relation_count":int(member(member(sketch,"RelationManager"),"GetRelationsCount",0))},feature,None
+            "relation_count":int(member(member(sketch,"RelationManager"),"GetRelationsCount",0)),
+            "editable":bool(member(sketch,"IsSketchEditable")),
+            "suppressed":bool(member(feature,"IsSuppressed")),
+            "model_active_sketch":member(model,"GetActiveSketch2") is not None},feature,None
 
 
 def _health(model):
@@ -59,12 +62,13 @@ def _health(model):
 
 
 def _apply(model, feature, refs, radii_mm, sw):
+    model.Visible=True
     member(model,"ClearSelection2",True)
     if not member(feature,"Select2",False,0):
         raise RuntimeError("无法选择草图")
     member(model,"EditSketch")
     manager=member(model,"SketchManager")
-    active=member(manager,"ActiveSketch")
+    active=member(model,"GetActiveSketch2")
     if active is None:
         from .sw_connect import create_empty_dispatch_variant
         member(model,"ClearSelection2",True)
@@ -72,7 +76,7 @@ def _apply(model, feature, refs, radii_mm, sw):
                       0.0,0.0,0.0,False,0,create_empty_dispatch_variant(),0):
             raise RuntimeError("无法按草图类型选择目标")
         member(manager,"InsertSketch",True)
-        active=member(manager,"ActiveSketch")
+        active=member(model,"GetActiveSketch2")
     try:
         same = None if active is None else int(member(sw,"IsSame",active,member(feature,"GetSpecificFeature2")))
         if same != 1:
@@ -106,12 +110,12 @@ def _apply(model, feature, refs, radii_mm, sw):
             if not member(ref,"SetRadius",radius/1000):
                 raise RuntimeError("SetRadius 返回失败")
     finally:
-        if member(manager,"ActiveSketch") is not None:
+        if member(model,"GetActiveSketch2") is not None:
             member(manager,"InsertSketch",True)
 
 
 def resize_sketch_circles(model, sketch_name, centers_mm, expected_radius_mm,
-                          radius_mm, dry_run=True, sw=None):
+                          radius_mm, dry_run=True, sw=None, make_reference_editable=False):
     """仅调整严格匹配的完整圆，保留圆心、圆实体与其他草图段。
 
     仅支持单配置无关系、无尺寸的二维草图。可用于投影图形或孔轮廓；不自动保存。
@@ -134,8 +138,16 @@ def resize_sketch_circles(model, sketch_name, centers_mm, expected_radius_mm,
         raise ValueError("草图存在尺寸或关系，请使用尺寸编辑")
     if bool(member(model,"IsOpenedReadOnly")) or any(health_before["body_checks"]):
         raise ValueError("文档只读或实体检查失败")
+    if not before["editable"] and not make_reference_editable:
+        raise ValueError("参考草图只读；需要显式 make_reference_editable=true")
     selected=[dict(before["circles"][i]) for i in indices]
+    old_command=bool(member(sw,"CommandInProgress"))
+    sw.CommandInProgress=True
     try:
+        if not before["editable"]:
+            member(member(feature,"GetSpecificFeature2"),"SetSketchEditable",True)
+            if not member(member(feature,"GetSpecificFeature2"),"IsSketchEditable"):
+                raise RuntimeError("参考草图转换失败")
         _apply(model,feature,selected,[radius_mm]*len(selected),sw)
         rebuilt=bool(member(model,"EditRebuild3"))
         after,_,_=_read(model,sketch_name)
@@ -150,13 +162,15 @@ def resize_sketch_circles(model, sketch_name, centers_mm, expected_radius_mm,
         for a,b in zip(expected,after["circles"]):
             if math.dist(a["center_mm"],b["center_mm"]) > .001 or abs(a["radius_mm"]-b["radius_mm"]) > .001:
                 raise RuntimeError("其他圆或圆心发生变化")
-        report.update(after=after,health_after=health,entities_preserved=True)
+        report.update(after=after,health_after=health,entities_preserved=True,reference_sketch_converted=not before["editable"])
         return report
     except Exception as exc:
         rollback=False
         try:
             _apply(model,feature,selected,[before["circles"][i]["radius_mm"] for i in indices],sw)
             member(model,"EditRebuild3")
+            if not before["editable"]:
+                member(member(feature,"GetSpecificFeature2"),"SetSketchEditable",False)
             restored,_,_=_read(model,sketch_name)
             match_circles(restored["circles"],centers_mm,expected_radius_mm)
             health=_health(model)
@@ -166,5 +180,6 @@ def resize_sketch_circles(model, sketch_name, centers_mm, expected_radius_mm,
             pass
         return {"success":False,"error":str(exc),"rollback_verified":rollback,"saved":False}
     finally:
+        sw.CommandInProgress=old_command
         member(model,"ClearSelection2",True)
         member(model,"GraphicsRedraw2")
