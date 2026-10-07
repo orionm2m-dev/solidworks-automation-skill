@@ -77,3 +77,35 @@ def test_projected_point_uses_rotation_scale_then_translation():
 def test_projected_point_rejects_truncated_matrix():
     from scripts.sw_drawing_layout import transform_point
     with pytest.raises(ValueError): transform_point([0,0,0],[1,0,0])
+
+
+@pytest.mark.parametrize('count,minimum,passes',[(0,1,False),(16,1,True),(2,3,False),(0,0,True)])
+def test_section_requires_actual_hatched_geometry(count,minimum,passes):
+    from types import SimpleNamespace
+    from scripts.sw_drawing_layout import require_section_hatches
+    view=SimpleNamespace(GetFaceHatchCount=lambda:count)
+    if passes:
+        assert require_section_hatches(view,minimum,'section')==count
+    else:
+        with pytest.raises(RuntimeError,match='hatched faces'):
+            require_section_hatches(view,minimum,'section')
+
+
+def test_hatch_gate_rejects_non_section_view():
+    data=valid();data['views'][0]['minimum_hatched_faces']=1
+    with pytest.raises(ValueError,match='requires a section'):
+        DrawingLayout.model_validate(data)
+
+
+def test_section_inspection_reports_only_failed_features():
+    from types import SimpleNamespace as NS
+    from scripts.sw_drawing_layout import inspect_sections
+    good=NS(Name='good',GetTypeName2=lambda:'AbsoluteView',GetErrorCode=lambda:0)
+    bad=NS(Name='bad',GetTypeName2=lambda:'SectionAssemView',GetErrorCode=lambda:1)
+    good.GetNextSubFeature=lambda:bad;bad.GetNextSubFeature=lambda:None
+    top=NS(Name='sheet',GetTypeName2=lambda:'DrawingSheet',GetErrorCode=lambda:0,
+           GetFirstSubFeature=lambda:good,GetNextFeature=lambda:None)
+    drawing=NS(GetType=lambda:3,GetFirstView=lambda:None,FirstFeature=lambda:top)
+    result=inspect_sections(drawing)
+    assert result['read_only'] is True
+    assert result['feature_errors']==[{'name':'bad','type':'SectionAssemView','code':1}]
