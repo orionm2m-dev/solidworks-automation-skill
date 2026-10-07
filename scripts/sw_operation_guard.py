@@ -10,6 +10,20 @@ from pathlib import Path
 OPERATION_MUTEX_NAME = r"Local\SolidWorksAutomation.Operation.v1"
 
 
+def solidworks_operation_mutex_name(process_id=None):
+    """返回指定 SolidWorks 进程的互斥锁名称；未绑定时使用兼容全局锁。"""
+    if process_id is None:
+        value = os.environ.get("SOLIDWORKS_MCP_PROCESS_ID")
+        if value is None:
+            return OPERATION_MUTEX_NAME
+        if not value.isascii() or not value.isdecimal() or int(value) <= 0:
+            raise ValueError("SOLIDWORKS_MCP_PROCESS_ID must be a positive decimal PID")
+        process_id = int(value)
+    if isinstance(process_id, bool) or not isinstance(process_id, int) or process_id <= 0:
+        raise ValueError("process_id must be a positive integer")
+    return rf"Local\SolidWorksAutomation.Operation.v1.PID.{process_id}"
+
+
 class SolidWorksDocumentMismatch(RuntimeError):
     """请求目标与当前文档不符，必须在修改前停止。"""
 
@@ -64,12 +78,15 @@ def check_document_target(actual_path, actual_title, *, expected_path=None, expe
 
 
 @contextmanager
-def solidworks_operation_lock(timeout_seconds=300.0, *, name=OPERATION_MUTEX_NAME):
-    """串行化同一 Windows 登录会话内的协作客户端；非 Windows 下不触及 COM。
+def solidworks_operation_lock(timeout_seconds=300.0, *, name=None, process_id=None):
+    """串行化目标 SolidWorks PID 的协作客户端；非 Windows 下不触及 COM。
 
-    CLI 和其他进程必须使用同一名称才能参与互斥。锁不阻止人工操作或旧版客户端。
-    超时只约束等待锁的时间，不能取消已经执行的 COM 调用。
+    未显式传入名称时按 process_id 或 SOLIDWORKS_MCP_PROCESS_ID 生成锁名；未绑定时
+    使用兼容全局锁。CLI 和其他进程必须使用相同 PID/名称才能参与互斥。锁不阻止人工
+    操作或旧版客户端。超时只约束等待锁的时间，不能取消已经执行的 COM 调用。
     """
+    if name is None:
+        name = solidworks_operation_mutex_name(process_id)
     if os.name != "nt":
         yield
         return
