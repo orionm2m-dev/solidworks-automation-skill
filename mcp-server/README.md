@@ -2,7 +2,58 @@
 
 本目录提供一个本地 `stdio` MCP Server，同时暴露无 CAD 开放格式工具和 SolidWorks COM 白名单工具。MCP 与 CAD Studio、Skill、CLI 共用能力清单和数据协议。
 
-SolidWorks 是 Windows 桌面 COM 应用，不适合远程多客户端并发；因此本 server 默认使用 `stdio`，并在内部用全局锁串行执行所有 SolidWorks 操作。
+SolidWorks 是 Windows 桌面 COM 应用，因此本 server 默认使用 `stdio`。工具可以绑定一个已运行的 SOLIDWORKS 进程，原生操作仍通过进程内锁和跨进程 Windows mutex 串行执行。
+
+## 绑定指定的 SOLIDWORKS 进程
+
+多个 SOLIDWORKS 进程同时运行时，默认 COM 活动对象不一定是当前任务需要的实例。先调用无参数的 `solidworks_list_instances`，只读枚举已经向 Running Object Table 注册且可通过 COM 连接的实例；返回 `selected_process_id` 及 `instances`，每项包含 `process_id`、`revision`、`moniker` 和 `active_document`，不会激活文档或启动应用。此清单不保证包含尚未完成 COM 注册的所有操作系统进程。
+
+使用 `solidworks_connect` 的 `process_id` 选择一个已运行的进程：
+
+```json
+{
+  "params": {
+    "process_id": 12345
+  }
+}
+```
+
+连接成功后，返回值中的 `process_id` 是实际回读的进程号，`session_target` 为 `{ "process_id": 12345, "scope": "mcp_server", "strict": true }`。首次未指定 PID 的成功连接也会固定实际选中的 PID。该 `stdio` server 的后续原生操作继续连接同一个 PID；省略 `process_id` 不会清除已经建立的绑定。再次显式连接其他 PID 时，只有连接成功才更新绑定，失败则保留原目标。
+
+也可以在 MCP 子进程环境中设置 `SOLIDWORKS_MCP_PROCESS_ID`，提供首次连接时读取的默认目标。环境值必须是正整数；格式错误时连接失败，不代表 server 在启动时已经验证目标。以下是两个独立 server 配置的示例；路径和 PID 都需要替换为本机实际值：
+
+```json
+{
+  "mcpServers": {
+    "solidworks_design_a": {
+      "command": "python",
+      "args": ["C:\\path\\to\\solidworks-automation-skill\\mcp-server\\server.py"],
+      "env": {
+        "SOLIDWORKS_MCP_PROCESS_ID": "12345",
+        "SOLIDWORKS_MCP_REQUIRE_DOCUMENT_TARGET": "1"
+      }
+    },
+    "solidworks_design_b": {
+      "command": "python",
+      "args": ["C:\\path\\to\\solidworks-automation-skill\\mcp-server\\server.py"],
+      "env": {
+        "SOLIDWORKS_MCP_PROCESS_ID": "23456",
+        "SOLIDWORKS_MCP_REQUIRE_DOCUMENT_TARGET": "1"
+      }
+    }
+  }
+}
+```
+
+指定 PID 不存在、尚未向 COM 注册或无法确认身份时，连接失败，不会退回默认活动实例，也不会自动启动替代进程。此工具不负责创建新的独立 SOLIDWORKS 实例。应用退出或重启后，重新确认进程号并显式绑定；修改环境配置需要重启 MCP 连接。
+
+绑定后，原生 CAD 工具的结构化成功响应也带有 `process_id`；客户端应同时检查进程号和文档身份。恢复窗口工具在已确定目标 PID 时只枚举和处理该进程的窗口；没有已绑定或明确配置的 PID 时，允许诊断，但拒绝自动关闭模态对话框。
+
+PID 模式下，预览辅助流程先核对文档的 COM 身份属于所选进程，再按完整路径激活已保存文档；装配辅助连接和类型库版本探测也继承目标。`comtypes` 的 Pack and Go 兜底尚未实现 PID 选择，因此在访问 COM 前拒绝执行，不会连接默认实例。此限制不表示原生 pywin32 Pack and Go 不可用；现有文件暂存策略仍按其明确的交付状态报告，不能把暂存包宣称为原生 Pack and Go 验证通过。
+
+绑定范围是一个 MCP server 进程，不是聊天线程、文档或 Windows 用户会话。同一 server 被多个客户端任务共享时，显式更改绑定会影响它们；需要分别使用独立 server 配置，并核对连接返回的 PID。即使绑定不同的 SOLIDWORKS 进程，`Local\SolidWorksAutomation.Operation.v1` 仍串行执行协作客户端的 COM 操作。PID 选择不会代替下面的文档路径保护，也不提供多步骤事务隔离。
+
+验证范围：Windows / Python 3.10，SOLIDWORKS 2026 SP4.1（Revision 34.4.1）。全新 MCP `stdio` 进程已完成真实端到端验证：列出两个同时运行的实例、绑定指定实例、拒绝不存在的 PID 并保留原绑定、在原目标中以只读方式打开装配体并回读相同 PID；检查未修改模型内容。该只读装配体的预览激活也验证了所属进程及激活前后完整路径一致，未保存文档。底层连接分别回读两个实例的正确 PID 和活动文档。离线单元测试覆盖目标验证、首次绑定、失败重绑、文档保护、辅助连接、健康检查和恢复锁定及兜底阻断；这些结果不代表全部工具和版本的真机验证。MCP 多实例控制仍为 `pilot`，不宣称提供并行执行或事务隔离。
 
 ## 文档目标保护与跨客户端互斥
 
@@ -150,7 +201,8 @@ claude mcp add --scope user solidworks -- python C:\path\to\solidworks-automatio
 | `cadstudio_create_ocp_loft` | 从白名单封闭截面生成真实直纹 Loft STEP/BREP/STL，并重开验证 B-Rep | 否 |
 | `cadstudio_create_ocp_surface` | 从严格 JSON 生成平滑 Loft、直线/圆弧 Sweep、闭壳 Knit 或开放面 Thicken，并返回连续性采样证据 | 否 |
 | `solidworks_health_check` | 检查 Python 依赖、SolidWorks 检测、Motion 类型库和可选实时连接 | 否 |
-| `solidworks_connect` | 连接/启动 SolidWorks 并返回活动文档摘要 | 否 |
+| `solidworks_connect` | 连接/启动 SolidWorks，或按 `process_id` 绑定已运行实例；返回实际 PID、绑定状态和活动文档摘要 | 否 |
+| `solidworks_list_instances` | 无参数，只读枚举可通过 ROT 连接的实例、PID、版本和活动文档，不启动或激活文档 | 否 |
 | `solidworks_new_document` | 新建零件/装配体/工程图 | 是 |
 | `solidworks_create_basic_part` | 创建基础盒体/圆柱零件，可保存并设置文档颜色 | 是 |
 | `solidworks_open_document` | 打开已有 SolidWorks 文档 | 是 |

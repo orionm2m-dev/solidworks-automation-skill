@@ -4,6 +4,7 @@ SolidWorks 连接工具
 """
 import glob
 import os
+import re
 import tempfile
 import time
 from pathlib import Path
@@ -14,6 +15,7 @@ except ImportError:
     from sw_preflight import ensure_solidworks_installed, import_com_dependencies
 
 pythoncom, win32com_client, VARIANT = import_com_dependencies()
+import pywintypes
 
 
 DOC_TYPE_MAP = {
@@ -226,46 +228,203 @@ def close_owned_solidworks(sw, started_by_cad_studio):
     return False
 
 
-def connect_solidworks(version=None, wait_seconds=5, visible=True, return_metadata=False):
+def _selected_process_id(process_id):
+    """验证显式 PID；未传参时继承当前 MCP 进程的绑定。"""
+    if process_id is None:
+        value = os.environ.get("SOLIDWORKS_MCP_PROCESS_ID")
+        if value is None:
+            return None
+        if re.fullmatch(r"[1-9][0-9]*", value) is None:
+            raise ValueError("SOLIDWORKS_MCP_PROCESS_ID must be a positive decimal integer")
+        process_id = int(value)
+    if isinstance(process_id, bool) or not isinstance(process_id, int) or process_id <= 0:
+        raise ValueError("process_id must be a positive integer")
+    return process_id
+
+
+def _read_process_id(sw):
+    """回读应用进程号，不能把无法验证的代理视为选定实例。"""
+    value = get_com_member(sw, "GetProcessID")
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError("SOLIDWORKS returned an invalid process ID")
+    return value
+
+
+def _application_class_monikers(version=None):
+    """从已注册 ProgID 解析应用类 moniker，不硬编码某个安装版本的 CLSID。"""
+    names = set()
+    prog_ids = ["SldWorks.Application"]
+    if version is not None:
+        prog_ids.append(_prog_id_for_version(version))
+    for prog_id in prog_ids:
+        try:
+            clsid = str(pywintypes.IID(prog_id)).casefold()
+            names.update((clsid, "!" + clsid))
+        except pywintypes.com_error:
+            # 未注册的版本可以跳过；API 拼写或其它编程错误必须显式报错。
+            continue
+    return names
+
+
+def _rot_application_candidates(process_id=None, version=None):
+    """仅枚举 SOLIDWORKS 应用 moniker；不绑定文件或其它应用对象。"""
+    try:
+        rot = pythoncom.GetRunningObjectTable()
+        context = pythoncom.CreateBindCtx(0)
+        enumerator = rot.EnumRunning()
+        exact, aliases = [], []
+        class_monikers = _application_class_monikers(version)
+        while True:
+            batch = enumerator.Next(1)
+            if not batch:
+                break
+            moniker = batch[0]
+            try:
+                name = str(moniker.GetDisplayName(context, None))
+            except Exception:
+                continue
+            match = re.fullmatch(r"!?(?:SolidWorks|SldWorks)_PID_([1-9][0-9]*)", name, re.IGNORECASE)
+            if match:
+                advertised_pid = int(match.group(1))
+                if process_id is None or advertised_pid == process_id:
+                    exact.append((rot, moniker, name, advertised_pid))
+            elif (name.casefold() in class_monikers
+                  or re.fullmatch(r"!?SldWorks[.]Application(?:[.][0-9]+)?", name, re.IGNORECASE)):
+                aliases.append((rot, moniker, name, None))
+        return exact + aliases
+    except Exception as exc:
+        raise SolidWorksConnectionError("SW_ROT_UNAVAILABLE", "attach", f"无法读取运行对象表: {exc}") from exc
+
+
+def _dispatch_rot_application(rot, moniker):
+    """将 ROT 的 IUnknown 明确转换为 IDispatch 后再创建 Python 代理。"""
+    unknown = rot.GetObject(moniker)
+    dispatch = unknown.QueryInterface(pythoncom.IID_IDispatch)
+    return win32com_client.Dispatch(dispatch)
+
+
+def _connect_process(process_id, version=None):
+    """按 PID 只附着现有应用；失败时禁止回退默认实例或启动新进程。"""
+    errors = []
+    for rot, moniker, name, advertised_pid in _rot_application_candidates(process_id, version):
+        try:
+            # Dispatch 接收已有 ROT 对象，不传 ProgID，因此不会激活类工厂。
+            sw = _dispatch_rot_application(rot, moniker)
+            actual_pid = _read_process_id(sw)
+        except Exception as exc:
+            errors.append(f"{name}: {exc}")
+            continue
+        if actual_pid != process_id:
+            if advertised_pid is not None:
+                raise SolidWorksConnectionError(
+                    "SW_PROCESS_MISMATCH", "attach",
+                    f"ROT 标记 PID {process_id}，应用却返回 PID {actual_pid}；未执行操作",
+                )
+            continue
+        if version is not None:
+            try:
+                actual_version = get_sw_version(sw)["year"]
+            except Exception as exc:
+                raise SolidWorksConnectionError("SW_VERSION_UNVERIFIED", "attach", str(exc)) from exc
+            if actual_version != int(version):
+                raise SolidWorksConnectionError(
+                    "SW_VERSION_MISMATCH", "attach",
+                    f"PID {process_id} 为 SOLIDWORKS {actual_version}，请求版本为 {version}",
+                )
+        return sw, name
+    detail = "; ".join(errors) or "未找到匹配的应用 moniker"
+    raise SolidWorksConnectionError(
+        "SW_PROCESS_NOT_FOUND", "attach",
+        f"不能附着 SOLIDWORKS PID {process_id}；不会启动或选择其它实例: {detail}",
+    )
+
+
+def list_solidworks_instances():
+    """
+    只读列出 ROT 中可验证的 SOLIDWORKS 实例，不启动或激活窗口。
+
+    返回:
+        字典列表，含 process_id、revision、moniker 和 active_document；
+        不包含尚未注册 ROT、无法响应或进程号不符的实例。
+    """
+    instances = {}
+    for rot, moniker, name, advertised_pid in _rot_application_candidates():
+        try:
+            sw = _dispatch_rot_application(rot, moniker)
+            process_id = _read_process_id(sw)
+            if advertised_pid is not None and process_id != advertised_pid:
+                continue
+            if process_id in instances:
+                continue
+            revision = str(get_com_member(sw, "RevisionNumber"))
+            model = _read_active_document(sw)
+            document = None
+            if model is not None:
+                document = {
+                    "path": str(get_com_member(model, "GetPathName") or ""),
+                    "title": str(get_com_member(model, "GetTitle") or ""),
+                    "type": int(get_com_member(model, "GetType")),
+                }
+            instances[process_id] = {
+                "process_id": process_id, "revision": revision,
+                "moniker": name, "active_document": document,
+            }
+        except Exception:
+            # 枚举期间退出或尚未就绪的实例不应阻止其它实例的诊断。
+            continue
+    return [instances[pid] for pid in sorted(instances)]
+
+
+def connect_solidworks(version=None, wait_seconds=5, visible=True, return_metadata=False, process_id=None):
     """
     连接到 SolidWorks 实例。
 
     参数:
         version: SolidWorks 版本年份（如 2024），None 则自动检测
-        wait_seconds: 启动新实例后等待秒数
-        visible: 启动新实例后是否显示窗口
+        wait_seconds: 默认模式启动新实例后等待秒数
+        visible: 仅控制默认模式新启动实例的窗口
+        return_metadata: True 时另返回连接来源与进程信息
+        process_id: 可选正整数 PID；只附着此现有进程，不启动或回退。
+            未传参时继承 SOLIDWORKS_MCP_PROCESS_ID，均未设置则保留默认连接行为。
 
     返回:
-        (sw, model) 元组，model 可能为 None（无打开的文档时）
+        (sw, model) 元组，model 可能为 None（无打开的文档时）；
+        return_metadata=True 时返回 (sw, model, metadata)。
     """
+    process_id = _selected_process_id(process_id)
     ensure_solidworks_installed()
     prog_id = _prog_id_for_version(version)
     sw = None
     launched_here = False
+    moniker = None
 
-    # 启动和附着共享同一把互斥锁，避免多个 worker 同时拉起实例。
-    with _LaunchGuard():
-        try:
-            sw = win32com_client.GetActiveObject(prog_id)
-            print(f"已连接到运行中的 SolidWorks 实例（ProgID: {prog_id}）")
-        except Exception as attach_error:
+    if process_id is not None:
+        sw, moniker = _connect_process(process_id, version)
+        print(f"已连接到指定 SolidWorks 实例（PID: {process_id}）")
+    else:
+        # 默认连接保持原行为；启动和附着共享锁，避免同时拉起实例。
+        with _LaunchGuard():
             try:
-                sw = win32com_client.Dispatch(prog_id)
-                launched_here = True
+                sw = win32com_client.GetActiveObject(prog_id)
+                print(f"已连接到运行中的 SolidWorks 实例（ProgID: {prog_id}）")
+            except Exception as attach_error:
                 try:
-                    sw.Visible = visible
-                except Exception:
-                    pass
-                print(f"启动了新的 SolidWorks 实例（ProgID: {prog_id}）")
-                _wait_until_ready(sw, wait_seconds)
-            except SolidWorksConnectionError:
-                close_owned_solidworks(sw, launched_here)
-                raise
-            except Exception as launch_error:
-                close_owned_solidworks(sw, launched_here)
-                raise SolidWorksConnectionError(
-                    "SW_LAUNCH_FAILED", "launch", f"无法启动 {prog_id}: {launch_error}; attach={attach_error}"
-                ) from launch_error
+                    sw = win32com_client.Dispatch(prog_id)
+                    launched_here = True
+                    try:
+                        sw.Visible = visible
+                    except Exception:
+                        pass
+                    print(f"启动了新的 SolidWorks 实例（ProgID: {prog_id}）")
+                    _wait_until_ready(sw, wait_seconds)
+                except SolidWorksConnectionError:
+                    close_owned_solidworks(sw, launched_here)
+                    raise
+                except Exception as launch_error:
+                    close_owned_solidworks(sw, launched_here)
+                    raise SolidWorksConnectionError(
+                        "SW_LAUNCH_FAILED", "launch", f"无法启动 {prog_id}: {launch_error}; attach={attach_error}"
+                    ) from launch_error
 
     if sw is None:
         raise SolidWorksConnectionError("SW_NO_INSTANCE", "connect", "未获得 SolidWorks COM 实例")
@@ -279,10 +438,21 @@ def connect_solidworks(version=None, wait_seconds=5, visible=True, return_metada
     else:
         print("当前没有打开的文档")
 
+    try:
+        actual_process_id = _read_process_id(sw)
+    except Exception as exc:
+        if process_id is not None:
+            raise SolidWorksConnectionError("SW_PROCESS_UNVERIFIED", "connect", str(exc)) from exc
+        actual_process_id = None
+    if process_id is not None and actual_process_id != process_id:
+        raise SolidWorksConnectionError("SW_PROCESS_MISMATCH", "connect", "连接进程号在验证后发生变化")
     metadata = {
         "prog_id": prog_id,
         "requested_version": int(version) if version is not None else None,
         "started_by_cad_studio": launched_here,
+        "process_id": actual_process_id,
+        "requested_process_id": process_id,
+        "moniker": moniker,
     }
     return (sw, model, metadata) if return_metadata else (sw, model)
 

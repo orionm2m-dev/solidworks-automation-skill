@@ -9,10 +9,10 @@ import os
 
 try:
     from .sw_preflight import import_com_dependencies
-    from .sw_connect import open_document, safe_get_com_member
+    from .sw_connect import connect_solidworks, open_document, safe_get_com_member
 except ImportError:
     from sw_preflight import import_com_dependencies
-    from sw_connect import open_document, safe_get_com_member
+    from sw_connect import connect_solidworks, open_document, safe_get_com_member
 
 pythoncom, _win32com, VARIANT = import_com_dependencies()
 
@@ -74,7 +74,10 @@ def _as_alias_list(aliases):
 
 
 def _active_solidworks_app():
-    """获取当前运行中的 SolidWorks 应用对象。"""
+    """获取当前应用；存在进程绑定时只连接该目标，不回退到默认实例。"""
+    if "SOLIDWORKS_MCP_PROCESS_ID" in os.environ:
+        # 失败必须传递给调用方，不能让添加组件流程使用另一应用。
+        return connect_solidworks(visible=False)[0]
     try:
         return _win32com.GetActiveObject("SldWorks.Application")
     except Exception:
