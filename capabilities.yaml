@@ -495,6 +495,31 @@
       "dependencies": ["python", "可选 SolidWorks Routing 类型库和加载项许可证"],
       "limitations": ["当前支持中性 Routing 端点、分段、长度、弯曲半径、碰撞/间隙、支撑间距和 BOM 复核；不生成 SOLIDWORKS Routing 原生特征", "本机 SW2026 可发现 SWRoutingLib.tlb 和核心接口，但未检测到 Routing AddIn 注册或许可证证据时原生写入必须 blocked"],
       "allowed_modes": ["interactive", "reviewed"]
-    }
+    },
+{
+      "id": "sketch_circle_radius_edit",
+      "label": "原位草图圆半径",
+      "level": "pilot",
+      "backends": [
+            "solidworks-python"
+      ],
+      "verified_versions": [
+            "2026 SP4.1 (34.4.1)"
+      ],
+      "dependencies": [
+            "python",
+            "pywin32",
+            "SOLIDWORKS"
+      ],
+      "limitations": [
+            "无约束二维完整圆；保留圆心和其他线条",
+            "参考草图必须显式 make_reference_editable=true，SOLIDWORKS 2020+",
+            "不保存；投影颜色和外部引用仍需复核"
+      ],
+      "allowed_modes": [
+            "interactive",
+            "reviewed"
+      ]
+}
   ]
 }

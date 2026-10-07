@@ -892,6 +892,7 @@ class SolidWorksSketchCircleRadiusInput(ActiveDocumentInput):
     centers_mm: list[list[float]] = Field(..., min_length=1, max_length=1000)
     expected_radius_mm: float = Field(..., gt=0, allow_inf_nan=False)
     radius_mm: float = Field(..., gt=0, allow_inf_nan=False)
+    make_reference_editable: bool = Field(default=False)
     dry_run: bool = Field(default=True)
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON)
 
@@ -3135,7 +3136,8 @@ def solidworks_resize_sketch_circles(params: SolidWorksSketchCircleRadiusInput) 
         from scripts.sw_sketch_circles import resize_sketch_circles
         _sw, model = _active_model_required(params)
         result = resize_sketch_circles(model, params.sketch_name, params.centers_mm,
-                                       params.expected_radius_mm, params.radius_mm, params.dry_run, sw=_sw)
+                                       params.expected_radius_mm, params.radius_mm, params.dry_run, sw=_sw,
+                                       make_reference_editable=params.make_reference_editable)
         result["document"] = _model_summary(model)
         return result
     return _run_locked(op, params.response_format)
