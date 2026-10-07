@@ -885,6 +885,17 @@ class SolidWorksExportInput(ActiveDocumentInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
+class SolidWorksTranslateFacesInput(ActiveDocumentInput):
+    """按完整面包围盒进行受保护的原生平移。"""
+
+    bounds_mm: list[float] = Field(..., min_length=6, max_length=6)
+    translation_mm: list[float] = Field(..., min_length=3, max_length=3)
+    expected_face_count: int = Field(..., ge=1, le=1000)
+    feature_name: str = Field(..., min_length=1, max_length=240)
+    dry_run: bool = Field(default=True)
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON)
+
+
 class SolidWorksDimensionUpdateInput(ActiveDocumentInput):
     """Input for updating a named model dimension in millimeters."""
 
@@ -3110,6 +3121,23 @@ def solidworks_activate_configuration(params: SolidWorksConfigurationActivateInp
         result["document"] = _model_summary(model)
         return result
 
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_translate_faces",
+    title="Translate Explicit Faces In Native Part",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_translate_faces(params: SolidWorksTranslateFacesInput) -> str:
+    """通过 Move Face 平移完整落入区域的面；先 dry_run，严格校验面数，不自动保存。"""
+    def op():
+        from scripts.sw_face_translation import translate_faces_in_box
+        _sw, model = _active_model_required(params)
+        result = translate_faces_in_box(model, params.bounds_mm, params.translation_mm,
+                                        params.expected_face_count, params.feature_name, params.dry_run)
+        result["document"] = _model_summary(model)
+        return result
     return _run_locked(op, params.response_format)
 
 
