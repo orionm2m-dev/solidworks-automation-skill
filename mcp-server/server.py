@@ -885,6 +885,17 @@ class SolidWorksExportInput(ActiveDocumentInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
+class SolidWorksSketchCircleRadiusInput(ActiveDocumentInput):
+    """按草图坐标选择完整圆，原位改变半径。"""
+
+    sketch_name: str = Field(..., min_length=1, max_length=240)
+    centers_mm: list[list[float]] = Field(..., min_length=1, max_length=1000)
+    expected_radius_mm: float = Field(..., gt=0, allow_inf_nan=False)
+    radius_mm: float = Field(..., gt=0, allow_inf_nan=False)
+    dry_run: bool = Field(default=True)
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON)
+
+
 class SolidWorksDimensionUpdateInput(ActiveDocumentInput):
     """Input for updating a named model dimension in millimeters."""
 
@@ -3110,6 +3121,23 @@ def solidworks_activate_configuration(params: SolidWorksConfigurationActivateInp
         result["document"] = _model_summary(model)
         return result
 
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_resize_sketch_circles",
+    title="Resize Existing Sketch Circles",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_resize_sketch_circles(params: SolidWorksSketchCircleRadiusInput) -> str:
+    """按圆心和旧半径匹配无约束完整圆；保留圆心与实体，不自动保存。"""
+    def op():
+        from scripts.sw_sketch_circles import resize_sketch_circles
+        _sw, model = _active_model_required(params)
+        result = resize_sketch_circles(model, params.sketch_name, params.centers_mm,
+                                       params.expected_radius_mm, params.radius_mm, params.dry_run)
+        result["document"] = _model_summary(model)
+        return result
     return _run_locked(op, params.response_format)
 
 

@@ -234,3 +234,5 @@ V2 附带 **37 个 deterministic reliability scenarios**，覆盖正常执行、
 ---
 
 <sub>关注抖音 @balance. · 嵌入式开发、SolidWorks 自动化和 AI 辅助工程实践持续更新</sub>
+
+新增 [草图圆半径 MCP](references/sketch-circle-radius.md)，严格圆心/旧半径匹配，保留现有草图实体。
