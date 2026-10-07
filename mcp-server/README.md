@@ -357,3 +357,10 @@ claude mcp add --scope user solidworks -- python C:\path\to\solidworks-automatio
 调用必须携带 `expected_document_path`，或未保存文档的 `expected_document_title`。示例参数：`sketch_name="AccessProfile", length_mm=12, width_mm=4`，总长必须大于宽度。新尺寸回读、闭合轮廓、特征树、实体数量和 Check2 必须通过；工具不保存文档。先备份源文件；失败返回 `rollback_verified`，若为 false，应停止保存及后续修改。SW2026 某些草图操作不能建立统一撤销记录；成功结果如实返回 `undo_record_created=false`，不承诺事务恢复。
 
 验证：Windows / Python 3.10 / SOLIDWORKS 2026 SP4.1（34.4.1），真实 stdio MCP 在测试副本完成双向尺寸修改，原切除及下游加工特征保留，实体检查无错误。单元测试覆盖旋转/平移、非法轮廓、只读/约束门禁、修改失败、撤销失败、成功但原生统一撤销不可用、文档目标保护。其他版本及尺寸/关系约束草图未验证。
+## FeatureWorks 识别提示恢复（pilot）
+
+`solidworks_cancel_featureworks_prompt` 只取消明确绑定 PID 内的 FeatureWorks 特征识别提示。它检查窗口进程、标题、识别提示文字及唯一的“否”按钮，发送该按钮实际命令 ID；不会接受识别、关闭文档或确认保存。当前支持英文、俄文和中文提示，未识别语言只返回诊断。
+
+恢复不执行 COM，也不等待模型操作 mutex，因为被提示阻塞的打开调用可能持有该锁。此例外只用于取消已知提示；返回 `posted` 表示消息已提交，需检查原调用完成及目标文档回读。调用前必须显式绑定进程，或配置 `SOLIDWORKS_MCP_PROCESS_ID`。
+
+实测：Windows / Python 3.10 / SOLIDWORKS 2026 SP4.1（34.4.1），新 stdio MCP 服务取消目标会话的俄文 FeatureWorks 提示，原静默打开调用恢复。第二个 SolidWorks 实例未被操作。单元测试覆盖 PID 隔离、未知对话框/按钮/提示拒绝；其他 SOLIDWORKS 版本和语言尚未实测。
