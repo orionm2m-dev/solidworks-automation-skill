@@ -554,6 +554,31 @@
             "interactive",
             "reviewed"
       ]
-}
+},
+    {
+      "id": "native_drawing_layout",
+      "label": "原生工程图布局与剖视参考尺寸",
+      "level": "pilot",
+      "backends": [
+        "solidworks-com-pywin32"
+      ],
+      "verified_versions": [
+        "2026 SP4.1"
+      ],
+      "dependencies": [
+        "SOLIDWORKS",
+        "python",
+        "pywin32"
+      ],
+      "limitations": [
+        "参考尺寸不关联模型拓扑；源模型改变后必须重建和核验",
+        "只支持全深剖视和矩形裁剪；工程图需要尺寸覆盖和视觉复核",
+        "混合比例 DXF 不得直接作为整页刀路；不自动生产放行"
+      ],
+      "allowed_modes": [
+        "interactive",
+        "reviewed"
+      ]
+    }
   ]
 }
