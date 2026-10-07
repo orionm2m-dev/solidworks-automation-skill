@@ -4,6 +4,27 @@
 
 SolidWorks 是 Windows 桌面 COM 应用，不适合远程多客户端并发；因此本 server 默认使用 `stdio`，并在内部用全局锁串行执行所有 SolidWorks 操作。
 
+## 文档目标保护与跨客户端互斥
+
+活动窗口可能被另一个任务切换。对已保存文档的调用应携带 `expected_document_path`；路径不符时返回 `SW_DOCUMENT_MISMATCH`，不自动切换窗口，也不执行操作。同名文件必须按完整路径区分。需要切换目标时，显式调用 `solidworks_open_document`；已加载的原生文件也会被激活并回读路径。首次保存前可以使用 `expected_document_title`，但它只允许匹配尚未保存的文档。
+
+```json
+{
+  "params": {
+    "expected_document_path": "C:\\work\\part.SLDPRT",
+    "color": "#F5A623"
+  }
+}
+```
+
+在 MCP 进程环境中设置 `SOLIDWORKS_MCP_REQUIRE_DOCUMENT_TARGET=1` 后，活动文档工具缺少目标校验参数也会拒绝执行。默认保持旧客户端兼容。新建、按明确路径打开、批量导出和无 CAD 工具保留自身的路径语义。首次保存使用创建操作返回的精确标题，保存后改用完整路径。启用目标保护时不能将单个目标与 `close_all` 混用。
+
+Windows 下原生 COM 操作还会持有命名互斥锁 `Local\SolidWorksAutomation.Operation.v1`，让使用本版本的多个 MCP 进程串行执行。CLI 可复用 `scripts.sw_operation_guard.solidworks_operation_lock()`；C# 或 PowerShell 包装器必须使用同一 Windows mutex 名称。异常退出、超时和未释放的句柄都有明确的失败路径。
+
+此锁只覆盖一次操作，不预订整个多步骤任务。旧版客户端、未使用此锁的脚本、人工操作及加载项不受它约束；执行期间不要手动切换窗口，也不要并行运行旧控制脚本。目标检查发生在取得活动文档引用时，不能保证阻止长操作中的外部窗口切换。等待锁超时不会取消已经运行的 COM 调用。新代码和输入 schema 需要重启 MCP 客户端连接后才能生效。
+
+验证范围：Windows / Python 3.10，文档误匹配的零写入测试、未保存标题、同名异路径、旧模式兼容、严格模式与真实跨进程 Windows mutex。SOLIDWORKS 2026 SP4.1（Revision 34.4.1）已通过全新 stdio MCP 进程验证：错误路径和缺失目标均在写入前拒绝，匹配路径的包围盒读取成功，原活动文档、保存标志及外观保持不变；该控制路径作为 `pilot`，不宣称提供事务回滚或隔离人工操作。
+
 ## 环境要求
 
 - Windows 10/11

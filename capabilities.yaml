@@ -187,6 +187,16 @@
   ],
   "capabilities": [
     {
+      "id": "mcp_document_target_guard",
+      "label": "MCP 文档目标保护与跨进程互斥",
+      "level": "pilot",
+      "backends": ["solidworks-com"],
+      "verified_versions": ["2026"],
+      "dependencies": ["Windows", "SolidWorks", "pywin32"],
+      "limitations": ["目标检查不能阻止人工操作、旧版客户端或未使用同一 mutex 的脚本", "仅在操作开始时校验目标，不提供事务隔离或回滚", "严格模式需要配置环境变量并重启 MCP 连接"],
+      "allowed_modes": ["interactive", "reviewed"]
+    },
+    {
       "id": "requirements_planning",
       "label": "需求分析与工程规划",
       "level": "verified",
