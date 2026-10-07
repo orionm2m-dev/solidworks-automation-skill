@@ -236,3 +236,10 @@ V2 附带 **37 个 deterministic reliability scenarios**，覆盖正常执行、
 ---
 
 <sub>关注抖音 @balance. · 嵌入式开发、SolidWorks 自动化和 AI 辅助工程实践持续更新</sub>
+
+### 胶囊草图中心定位
+
+`solidworks_resize_capsule_sketch` 可选参数 `center_x_mm` 与 `center_y_mm`
+为草图局部 XY 平面中的绝对中心，必须同时提供；省略时保留原中心。
+绝对坐标便于安全重试。工具同时回读尺寸、中心、实体检查和特征树，不自动保存。
+无约束四段轮廓的 pilot 限制保持不变，段级外部引用需要复核。

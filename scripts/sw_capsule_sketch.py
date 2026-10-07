@@ -141,14 +141,20 @@ def _same_shape(a, b):
             abs(abs(sum(x*y for x, y in zip(a["axis"], b["axis"])))-1) < TOL)
 
 
-def resize_capsule_sketch(model, sketch_name, length_mm, width_mm):
+def resize_capsule_sketch(model, sketch_name, length_mm, width_mm,
+                          center_x_mm=None, center_y_mm=None):
     """原位修改无约束胶囊，不保存；回读或重建失败则撤销并验证恢复。
 
     仅支持单配置零件、四段草图，无尺寸、无关系、无原生 Slot 对象。
-    保留草图、中心、方向和切除特征；替换四个原生草图段，段级引用必须复核。
+    保留草图、方向和切除特征；默认保留中心，可指定草图 XY 绝对中心（mm）。
+    替换四个原生草图段，段级引用必须复核。
     """
     if not all(math.isfinite(x) for x in (length_mm, width_mm)) or not 0 < width_mm < length_mm:
         raise ValueError("尺寸必须满足有限值且 0 < width_mm < length_mm")
+    if (center_x_mm is None) != (center_y_mm is None):
+        raise ValueError("必须同时指定 center_x_mm 和 center_y_mm")
+    if center_x_mm is not None and not all(math.isfinite(x) for x in (center_x_mm, center_y_mm)):
+        raise ValueError("中心坐标必须是有限值")
     if len(member(model, "GetConfigurationNames") or []) != 1:
         raise ValueError("只支持单配置零件")
     if member(member(model, "SketchManager"), "ActiveSketch") is not None:
@@ -162,6 +168,8 @@ def resize_capsule_sketch(model, sketch_name, length_mm, width_mm):
     if health_before["feature_errors"] or any(health_before["body_checks"]) or not health_before["solid_bodies"]:
         raise ValueError(f"修改前零件检查未通过: {health_before}")
     expected = dict(before, length_mm=float(length_mm), width_mm=float(width_mm))
+    if center_x_mm is not None:
+        expected["center_m"] = [float(center_x_mm)/1000, float(center_y_mm)/1000, 0.0]
     if _same_shape(before, expected):
         return {"success": True, "changed": False, "before": before, "after": before,
                 "health": health_before, "saved": False, "segment_references_preserved": True, "review_required": True}
@@ -171,7 +179,7 @@ def resize_capsule_sketch(model, sketch_name, length_mm, width_mm):
     def transform(old):
         delta = [old[i]-center[i] for i in range(3)]
         parallel = sum(delta[i]*axis[i] for i in range(3))
-        return [center[i]+axial_scale*parallel*axis[i]+radial_scale*(delta[i]-parallel*axis[i])
+        return [expected["center_m"][i]+axial_scale*parallel*axis[i]+radial_scale*(delta[i]-parallel*axis[i])
                 for i in range(3)]
     extension = member(model, "Extension")
     member(model, "ClearSelection2", True)
