@@ -162,3 +162,31 @@ def test_creation_failure_restores_add_to_db_and_attempts_undo(monkeypatch):
     assert not result["success"] and result["rollback_verified"]
     assert not model.SketchManager.AddToDB
     model.EditUndo2.assert_called_once_with(1)
+
+
+@pytest.mark.parametrize("x,y", [(1, None), (None, 1), (float('nan'), 2), (1, float('inf'))])
+def test_invalid_center_is_rejected_before_model_access(x, y):
+    """不完整或非有限中心在访问 COM 前被拒绝。"""
+    with pytest.raises(ValueError):
+        capsule.resize_capsule_sketch(None, "Slot", 8, 2, x, y)
+
+
+def test_absolute_center_moves_all_native_segments(monkeypatch):
+    """检查创建坐标真实平移，不能只更改预期报告。"""
+    model, before, _ = fixture_model(monkeypatch)
+    after = dict(before, center_m=[.0165, -.019, 0])
+    monkeypatch.setattr(capsule, "inspect_capsule_sketch", lambda model, name: after)
+    result = capsule.resize_capsule_sketch(model, "Slot", 8, 2, 16.5, -19)
+    assert result["success"] and result["changed"]
+    first_arc = model.SketchManager.CreateArc.call_args_list[0].args
+    assert first_arc[:3] == pytest.approx([.0135, -.019, 0])
+    assert first_arc[3:6] == pytest.approx([.0135, -.018, 0])
+    assert first_arc[6:9] == pytest.approx([.0135, -.020, 0])
+
+
+def test_absolute_center_is_idempotent(monkeypatch):
+    """相同绝对中心的重试不再平移或开始事务。"""
+    model, _, _ = fixture_model(monkeypatch)
+    result = capsule.resize_capsule_sketch(model, "Slot", 8, 2, 17, -21)
+    assert result["success"] and not result["changed"]
+    model.Extension.StartRecordingUndoObject.assert_not_called()
