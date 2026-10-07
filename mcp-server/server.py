@@ -16,7 +16,7 @@ import platform
 import sys
 import threading
 import time
-from contextlib import redirect_stdout
+from contextlib import nullcontext, redirect_stdout
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
@@ -42,6 +42,9 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from scripts.sw_preflight import missing_com_dependencies, solidworks_installed  # noqa: E402
+from scripts.sw_operation_guard import (  # noqa: E402
+    SolidWorksDocumentMismatch, absolute_document_path, check_document_target, solidworks_operation_lock,
+)
 
 
 pythoncom = None
@@ -120,6 +123,7 @@ def _load_automation_modules() -> None:
         "export_to_parasolid": export.export_to_parasolid,
         "export_to_pdf": export.export_to_pdf,
         "export_to_step": export.export_to_step,
+        "activate_source_document": export._activate_source_document,
         "export_to_stl": export.export_to_stl,
         "batch_export_formats": export.batch_export_formats,
         "inspect_configurations": document_data.inspect_configurations,
@@ -264,6 +268,27 @@ class BaseInput(BaseModel):
     """Common Pydantic config."""
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+
+class ActiveDocumentInput(BaseInput):
+    """活动文档工具的目标校验参数；兼容旧客户端并支持本地严格模式。"""
+
+    expected_document_path: Optional[str] = Field(
+        default=None, min_length=1,
+        description="Expected full path of the active saved document. Mismatch aborts before the operation.",
+    )
+    expected_document_title: Optional[str] = Field(
+        default=None, min_length=1,
+        description="Exact expected title for an unsaved document only. Use the full path after saving.",
+    )
+
+    @field_validator("expected_document_path")
+    @classmethod
+    def target_path_must_be_absolute(cls, value):
+        """拒绝可能指向相邻目录的相对路径。"""
+        if value is not None and not absolute_document_path(value):
+            raise ValueError("expected_document_path must be an absolute path")
+        return value
 
 
 class SolidWorksConnectInput(BaseInput):
@@ -553,7 +578,7 @@ class SolidWorksHealthCheckInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksSketchOnPlaneInput(BaseInput):
+class SolidWorksSketchOnPlaneInput(ActiveDocumentInput):
     """Input for sketching on a plane and creating a boss extrude."""
 
     plane_name: str = Field(default="Front Plane", description="Sketch plane, English or Chinese name.")
@@ -577,7 +602,7 @@ class SolidWorksSketchOnPlaneInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksRevolveInput(BaseInput):
+class SolidWorksRevolveInput(ActiveDocumentInput):
     """Input for a revolve boss from a sketch profile."""
 
     sketch_name: str = Field(..., min_length=1, description="Profile sketch name.")
@@ -586,7 +611,7 @@ class SolidWorksRevolveInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksFilletInput(BaseInput):
+class SolidWorksFilletInput(ActiveDocumentInput):
     """Input for a constant-radius fillet on semantically selected edges."""
 
     radius_mm: float = Field(..., gt=0.0, le=2500.0, description="Fillet radius, mm.")
@@ -604,7 +629,7 @@ class SolidWorksFilletInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksChamferInput(BaseInput):
+class SolidWorksChamferInput(ActiveDocumentInput):
     """Input for a chamfer on semantically selected edges."""
 
     distance_mm: float = Field(..., gt=0.0, le=2500.0, description="Chamfer distance, mm.")
@@ -616,7 +641,7 @@ class SolidWorksChamferInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksShellInput(BaseInput):
+class SolidWorksShellInput(ActiveDocumentInput):
     """Input for a shell feature."""
 
     thickness_mm: float = Field(..., gt=0.0, le=2500.0, description="Wall thickness, mm.")
@@ -626,7 +651,7 @@ class SolidWorksShellInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksPatternInput(BaseInput):
+class SolidWorksPatternInput(ActiveDocumentInput):
     """Input for a linear or circular pattern of an existing feature."""
 
     feature_name: str = Field(..., min_length=1, max_length=240, description="Name of the feature to pattern.")
@@ -642,7 +667,7 @@ class SolidWorksPatternInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksMirrorInput(BaseInput):
+class SolidWorksMirrorInput(ActiveDocumentInput):
     """Input for mirroring a feature about a plane."""
 
     feature_name: str = Field(..., min_length=1, max_length=240, description="Feature to mirror.")
@@ -650,7 +675,7 @@ class SolidWorksMirrorInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksEdgeInspectionInput(BaseInput):
+class SolidWorksEdgeInspectionInput(ActiveDocumentInput):
     """Input for listing model edges with optional geometric filters."""
 
     axis: Literal["x", "y", "z", "vertical", "all"] = Field(default="all")
@@ -666,7 +691,7 @@ class SolidWorksEdgeInspectionInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksMassPropertiesInput(BaseInput):
+class SolidWorksMassPropertiesInput(ActiveDocumentInput):
     """Input for reading mass properties of the active document."""
 
     density_kg_m3: Optional[float] = Field(
@@ -676,13 +701,13 @@ class SolidWorksMassPropertiesInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksBoundingBoxInput(BaseInput):
+class SolidWorksBoundingBoxInput(ActiveDocumentInput):
     """Input for reading the active document bounding box."""
 
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksInterferenceInput(BaseInput):
+class SolidWorksInterferenceInput(ActiveDocumentInput):
     """Input for running interference detection on the active assembly."""
 
     treat_subassemblies_as_components: bool = Field(default=False)
@@ -693,7 +718,7 @@ class SolidWorksInterferenceInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksUnitsInput(BaseInput):
+class SolidWorksUnitsInput(ActiveDocumentInput):
     """Input for reading or setting document units."""
 
     linear_unit: Optional[str] = Field(
@@ -781,14 +806,14 @@ class SolidWorksOpenDocumentInput(BaseInput):
         return value
 
 
-class SolidWorksSaveDocumentInput(BaseInput):
+class SolidWorksSaveDocumentInput(ActiveDocumentInput):
     """Input for saving the active document."""
 
     path: Optional[str] = Field(default=None, description="Optional Save As path. Omit to save current document.")
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksCloseDocumentsInput(BaseInput):
+class SolidWorksCloseDocumentsInput(ActiveDocumentInput):
     """Input for closing SolidWorks documents."""
 
     close_all: bool = Field(default=False, description="Close all documents when true; otherwise close active document.")
@@ -796,7 +821,7 @@ class SolidWorksCloseDocumentsInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksAddComponentInput(BaseInput):
+class SolidWorksAddComponentInput(ActiveDocumentInput):
     """Input for adding a component to the active assembly."""
 
     path: str = Field(..., min_length=1, description="Absolute path to .SLDPRT or .SLDASM component.")
@@ -815,7 +840,7 @@ class SolidWorksAddComponentInput(BaseInput):
         return value
 
 
-class SolidWorksSetComponentFixedInput(BaseInput):
+class SolidWorksSetComponentFixedInput(ActiveDocumentInput):
     """Input for fixing or floating a component in the active assembly."""
 
     component_keyword: str = Field(..., min_length=1, description="Keyword in the component name.")
@@ -823,7 +848,7 @@ class SolidWorksSetComponentFixedInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksExportInput(BaseInput):
+class SolidWorksExportInput(ActiveDocumentInput):
     """Input for exporting the active document."""
 
     output_path: str = Field(..., min_length=1, description="Absolute output file path.")
@@ -832,7 +857,7 @@ class SolidWorksExportInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksDimensionUpdateInput(BaseInput):
+class SolidWorksDimensionUpdateInput(ActiveDocumentInput):
     """Input for updating a named model dimension in millimeters."""
 
     dimension_name: str = Field(..., min_length=1, max_length=240, description="Exact dimension name, e.g. D1@Boss-Extrude1.")
@@ -851,7 +876,7 @@ class SolidWorksAddinHostStatusInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksConfigurationCreateInput(BaseInput):
+class SolidWorksConfigurationCreateInput(ActiveDocumentInput):
     """Input for creating and optionally activating a SolidWorks configuration."""
 
     configuration_name: str = Field(..., min_length=1, max_length=240)
@@ -865,13 +890,13 @@ class SolidWorksConfigurationCreateInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksConfigurationInspectInput(BaseInput):
+class SolidWorksConfigurationInspectInput(ActiveDocumentInput):
     """Input for inspecting the active document configuration family."""
 
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksConfigurationActivateInput(BaseInput):
+class SolidWorksConfigurationActivateInput(ActiveDocumentInput):
     """Input for activating and verifying an existing SolidWorks configuration."""
 
     configuration_name: str = Field(..., min_length=1, max_length=240)
@@ -880,7 +905,7 @@ class SolidWorksConfigurationActivateInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksCustomPropertiesInput(BaseInput):
+class SolidWorksCustomPropertiesInput(ActiveDocumentInput):
     """Input for setting file-level or configuration-level custom properties."""
 
     properties: Dict[str, str] = Field(..., min_length=1, max_length=100)
@@ -910,7 +935,7 @@ class SolidWorksBatchExportInput(BaseInput):
         return values
 
 
-class SolidWorksBomExportInput(BaseInput):
+class SolidWorksBomExportInput(ActiveDocumentInput):
     """Input for exporting a reviewed assembly component BOM CSV."""
 
     output_path: str = Field(..., min_length=1)
@@ -919,7 +944,7 @@ class SolidWorksBomExportInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksPackAndGoInput(BaseInput):
+class SolidWorksPackAndGoInput(ActiveDocumentInput):
     """Input for native Pack and Go plus the explicit dependency staging fallback."""
 
     output_dir: str = Field(..., min_length=1)
@@ -936,7 +961,7 @@ class SolidWorksPackAndGoInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksReviewInput(BaseInput):
+class SolidWorksReviewInput(ActiveDocumentInput):
     """Input for exporting previews and a review report."""
 
     output_dir: str = Field(..., min_length=1, description="Directory for BMP previews and JSON report.")
@@ -1024,7 +1049,7 @@ class SolidWorksInspectDrawingInput(BaseInput):
         return value
 
 
-class SolidWorksHoleFeatureInput(BaseInput):
+class SolidWorksHoleFeatureInput(ActiveDocumentInput):
     """Input for creating a constrained hole or semicircular slot on the active part."""
 
     feature_kind: HoleFeatureKind = Field(..., description="Hole or slot kind.")
@@ -1050,7 +1075,7 @@ class HoleExpectationInput(BaseInput):
     position_mm: tuple[float, float, float]
 
 
-class SolidWorksHoleInspectionInput(BaseInput):
+class SolidWorksHoleInspectionInput(ActiveDocumentInput):
     """Input for inspecting B-Rep holes and optional expected positions."""
 
     expected_holes: list[HoleExpectationInput] = Field(default_factory=list)
@@ -1059,7 +1084,7 @@ class SolidWorksHoleInspectionInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksPlaneCoincidentMateInput(BaseInput):
+class SolidWorksPlaneCoincidentMateInput(ActiveDocumentInput):
     """Input for adding a coincident mate between two component planes/features."""
 
     component_a_keyword: str = Field(..., min_length=1, description="Keyword in the first component name.")
@@ -1070,7 +1095,7 @@ class SolidWorksPlaneCoincidentMateInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksPlaneDistanceMateInput(BaseInput):
+class SolidWorksPlaneDistanceMateInput(ActiveDocumentInput):
     """Input for adding a distance mate between two component planes/features."""
 
     component_a_keyword: str = Field(..., min_length=1, description="Keyword in the first component name.")
@@ -1082,7 +1107,7 @@ class SolidWorksPlaneDistanceMateInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksConcentricMateInput(BaseInput):
+class SolidWorksConcentricMateInput(ActiveDocumentInput):
     """Input for adding a concentric mate by largest matching cylinder faces."""
 
     component_a_keyword: str = Field(..., min_length=1, description="Keyword in the first component name.")
@@ -1110,7 +1135,7 @@ class SolidWorksConcentricMateInput(BaseInput):
         return value
 
 
-class SolidWorksSetAppearanceInput(BaseInput):
+class SolidWorksSetAppearanceInput(ActiveDocumentInput):
     """Input for setting document or component appearance color."""
 
     target: AppearanceTarget = Field(default=AppearanceTarget.DOCUMENT, description="Appearance target.")
@@ -1119,7 +1144,7 @@ class SolidWorksSetAppearanceInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksRotaryMotorInput(BaseInput):
+class SolidWorksRotaryMotorInput(ActiveDocumentInput):
     """Input for adding a constant-speed rotary motor to the active assembly."""
 
     shaft_component_keyword: str = Field(..., min_length=1, description="Keyword in the stationary shaft/support component name.")
@@ -1151,13 +1176,13 @@ class SolidWorksRotaryMotorInput(BaseInput):
         return value
 
 
-class SolidWorksMotionAuditInput(BaseInput):
+class SolidWorksMotionAuditInput(ActiveDocumentInput):
     """Input for auditing Motion Study definitions and result freshness."""
 
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
-class SolidWorksMotionValidationInput(BaseInput):
+class SolidWorksMotionValidationInput(ActiveDocumentInput):
     """Input for enforcing Motion Study delivery requirements."""
 
     study_name: Optional[str] = Field(default=None, max_length=120)
@@ -1174,26 +1199,32 @@ def _coinitialize() -> None:
         pythoncom.CoInitialize()
 
 
-def _active_model_required():
-    """Return the active SolidWorks document or raise a helpful error."""
-    sw, model = connect_solidworks(wait_seconds=1)
-    model = sw.ActiveDoc or model
+def _active_model_required(params=None):
+    """取得并校验目标文档后返回其 COM 引用；禁止改用先前活动窗口。"""
+    sw, _previous = connect_solidworks(wait_seconds=1)
+    model = get_com_member(sw, "ActiveDoc")
     if model is None:
         raise RuntimeError("No active SolidWorks document. Use solidworks_open_document or solidworks_new_document first.")
+    check_document_target(
+        get_com_member(model, "GetPathName"), get_com_member(model, "GetTitle"),
+        expected_path=getattr(params, "expected_document_path", None),
+        expected_title=getattr(params, "expected_document_title", None),
+        required=os.environ.get("SOLIDWORKS_MCP_REQUIRE_DOCUMENT_TARGET", "").lower() in {"1", "true", "yes"},
+    )
     return sw, model
 
 
-def _active_assembly_required():
-    """Return the active SolidWorks assembly document or raise a helpful error."""
-    sw, model = _active_model_required()
+def _active_assembly_required(params=None):
+    """校验目标路径与装配体类型。"""
+    sw, model = _active_model_required(params)
     if int(get_com_member(model, "GetType")) != 2:
         raise RuntimeError("Active document must be an assembly (.SLDASM).")
     return sw, model
 
 
-def _active_part_required():
-    """Return the active SolidWorks part document or raise a helpful error."""
-    sw, model = _active_model_required()
+def _active_part_required(params=None):
+    """校验目标路径与零件类型。"""
+    sw, model = _active_model_required(params)
     if int(get_com_member(model, "GetType")) != 1:
         raise RuntimeError("Active document must be a part (.SLDPRT).")
     return sw, model
@@ -1275,6 +1306,9 @@ def _tool_error(exc: Exception, response_format: ResponseFormat = ResponseFormat
             "components are resolved, and file paths are absolute Windows paths."
         ),
     }
+    if isinstance(exc, SolidWorksDocumentMismatch):
+        payload.update(exc.details)
+        payload["suggestion"] = "Verify the target document and retry with its exact path. No automatic window switching is performed."
     return _result(payload, response_format)
 
 
@@ -1311,7 +1345,9 @@ def _run_locked(operation, response_format: ResponseFormat, load_automation: boo
         if load_automation:
             _load_automation_modules()
         _coinitialize()
-        with redirect_stdout(sys.stderr):
+        # 命名互斥锁覆盖多个 MCP 进程；无 CAD 后端不等待桌面锁。
+        desktop_lock = solidworks_operation_lock(timeout_seconds) if load_automation else nullcontext()
+        with desktop_lock, redirect_stdout(sys.stderr):
             payload = operation()
         return _result(payload, response_format)
     except Exception as exc:
@@ -1976,7 +2012,7 @@ def _run_feature_with_edges(params, edge_spec, create_feature):
     create the feature when nothing matched, and always clears the selection
     afterwards so the next tool starts from a known state.
     """
-    sw, model = _active_part_required()
+    sw, model = _active_part_required(params)
     selection = select_edges(model, edge_spec)
 
     payload: Dict[str, Any] = {
@@ -2042,7 +2078,7 @@ def solidworks_list_edges(params: SolidWorksEdgeInspectionInput = SolidWorksEdge
     """
 
     def op():
-        sw, model = _active_part_required()
+        sw, model = _active_part_required(params)
         descriptors, errors = iter_model_edges(model)
         if not descriptors:
             return {
@@ -2111,7 +2147,7 @@ def solidworks_sketch_and_extrude(params: SolidWorksSketchOnPlaneInput) -> str:
     """
 
     def op():
-        sw, model = _active_part_required()
+        sw, model = _active_part_required(params)
 
         if params.shape == "circle" and params.radius_mm is None:
             raise ValueError("shape='circle' requires radius_mm.")
@@ -2183,7 +2219,7 @@ def solidworks_revolve(params: SolidWorksRevolveInput) -> str:
     """Revolve a sketch profile about an axis to create a solid of revolution."""
 
     def op():
-        sw, model = _active_part_required()
+        sw, model = _active_part_required(params)
         feature = revolve_boss(model, params.sketch_name, math.radians(params.angle_deg),
                                params.axis_sketch_name)
         if feature is None:
@@ -2256,7 +2292,7 @@ def solidworks_shell(params: SolidWorksShellInput) -> str:
     """Hollow out the active part with a uniform wall thickness."""
 
     def op():
-        sw, model = _active_part_required()
+        sw, model = _active_part_required(params)
         faces = None
         if params.face_to_remove:
             try:
@@ -2304,7 +2340,7 @@ def solidworks_pattern(params: SolidWorksPatternInput) -> str:
     """Create a linear or circular pattern of an existing feature (e.g. a hole or boss)."""
 
     def op():
-        sw, model = _active_part_required()
+        sw, model = _active_part_required(params)
         if params.pattern_type == "linear":
             direction = {"x": (1.0, 0.0, 0.0), "y": (0.0, 1.0, 0.0), "z": (0.0, 0.0, 1.0)}[params.direction]
             feature = linear_pattern(
@@ -2357,7 +2393,7 @@ def solidworks_mirror_feature(params: SolidWorksMirrorInput) -> str:
     """Mirror an existing feature about a reference plane."""
 
     def op():
-        sw, model = _active_part_required()
+        sw, model = _active_part_required(params)
         feature = mirror_feature(model, params.feature_name, params.mirror_plane_name)
         try:
             model.ClearSelection2(True)
@@ -2396,7 +2432,7 @@ def solidworks_mass_properties(params: SolidWorksMassPropertiesInput = SolidWork
     """
 
     def op():
-        sw, model = _active_model_required()
+        sw, model = _active_model_required(params)
         result = collect_mass_properties(model, density_kg_m3=params.density_kg_m3)
         result["status"] = "warn" if result.get("errors") else "ok"
         result["document"] = _model_summary(model)
@@ -2422,7 +2458,7 @@ def solidworks_bounding_box(params: SolidWorksBoundingBoxInput = SolidWorksBound
     """
 
     def op():
-        sw, model = _active_model_required()
+        sw, model = _active_model_required(params)
         result = collect_bounding_box(model)
         result["status"] = "warn" if result.get("errors") else "ok"
         result["document"] = _model_summary(model)
@@ -2445,7 +2481,7 @@ def solidworks_interference_check(params: SolidWorksInterferenceInput = SolidWor
     """
 
     def op():
-        sw, asm_model = _active_assembly_required()
+        sw, asm_model = _active_assembly_required(params)
         result = inspect_interference(
             asm_model,
             treat_subassemblies_as_components=params.treat_subassemblies_as_components,
@@ -2474,7 +2510,7 @@ def solidworks_document_units(params: SolidWorksUnitsInput = SolidWorksUnitsInpu
     """
 
     def op():
-        sw, model = _active_model_required()
+        sw, model = _active_model_required(params)
         changes = []
 
         def read_pref(preference):
@@ -2625,6 +2661,9 @@ def solidworks_open_document(params: SolidWorksOpenDocumentInput) -> str:
             silent=params.silent,
             raise_on_error=True,
         )
+        # 显式打开已加载的原生文件时也必须激活它，后续目标检查才有确定的上下文。
+        if Path(params.path).suffix.lower() in {".sldprt", ".sldasm", ".slddrw"}:
+            model = activate_source_document(sw, model, params.path)
         return {"status": "ok", "document": _model_summary(model)}
 
     return _run_locked(op, params.response_format)
@@ -2644,7 +2683,7 @@ def solidworks_add_component(params: SolidWorksAddComponentInput) -> str:
     """Add an existing part/subassembly to the active assembly, optionally fixing it."""
 
     def op():
-        sw, asm = _active_assembly_required()
+        sw, asm = _active_assembly_required(params)
         component = assembly_add_component(
             asm,
             params.path,
@@ -2685,7 +2724,7 @@ def solidworks_set_component_fixed(params: SolidWorksSetComponentFixedInput) -> 
     """Fix or float a component in the active assembly by component name keyword."""
 
     def op():
-        _sw, asm = _active_assembly_required()
+        _sw, asm = _active_assembly_required(params)
         component = find_component_by_name(asm, params.component_keyword)
         ok = _set_component_fixed(asm, component, fixed=params.fixed)
         return {
@@ -2712,7 +2751,7 @@ def solidworks_save_document(params: SolidWorksSaveDocumentInput = SolidWorksSav
     """Save the active SolidWorks document, optionally using Save As."""
 
     def op():
-        _sw, model = _active_model_required()
+        _sw, model = _active_model_required(params)
         success = save_document(model, params.path)
         return {
             "status": "ok" if success else "failed",
@@ -2737,8 +2776,10 @@ def solidworks_close_documents(params: SolidWorksCloseDocumentsInput = SolidWork
     """Close the active document or all documents in the current SolidWorks session."""
 
     def op():
-        sw, model = _active_model_required()
+        sw, model = _active_model_required(params)
         if params.close_all:
+            if params.expected_document_path or params.expected_document_title:
+                raise ValueError("A single-document guard cannot authorize close_all. Close each expected document separately.")
             sw.CloseAllDocuments(bool(params.save_changes))
             # 文档已关闭，其 ISketch 引用必须立即释放；否则常驻进程会一直持有
             # 已关闭文档的 COM 对象，导致 SolidWorks 侧无法释放文档。
@@ -2766,7 +2807,7 @@ def solidworks_add_coincident_mate(params: SolidWorksPlaneCoincidentMateInput) -
     """Add a coincident mate between named planes/features inside two assembly components."""
 
     def op():
-        _sw, asm = _active_assembly_required()
+        _sw, asm = _active_assembly_required(params)
         component_a = find_component_by_name(asm, params.component_a_keyword)
         component_b = find_component_by_name(asm, params.component_b_keyword)
         entity_a = get_component_feature_entity(component_a, params.feature_a_name)
@@ -2804,7 +2845,7 @@ def solidworks_add_distance_mate(params: SolidWorksPlaneDistanceMateInput) -> st
     """Add a distance mate between named planes/features inside two assembly components."""
 
     def op():
-        _sw, asm = _active_assembly_required()
+        _sw, asm = _active_assembly_required(params)
         component_a = find_component_by_name(asm, params.component_a_keyword)
         component_b = find_component_by_name(asm, params.component_b_keyword)
         entity_a = get_component_feature_entity(component_a, params.feature_a_name)
@@ -2844,7 +2885,7 @@ def solidworks_add_concentric_mate(params: SolidWorksConcentricMateInput) -> str
     """Add a concentric mate between two components by locating matching cylinder faces."""
 
     def op():
-        _sw, asm = _active_assembly_required()
+        _sw, asm = _active_assembly_required(params)
         component_a = find_component_by_name(asm, params.component_a_keyword)
         component_b = find_component_by_name(asm, params.component_b_keyword)
         mate = add_concentric_mate_by_cylinders(
@@ -2884,7 +2925,7 @@ def solidworks_set_appearance(params: SolidWorksSetAppearanceInput) -> str:
     """Set appearance color on the active document or an assembly component."""
 
     def op():
-        _sw, model = _active_model_required()
+        _sw, model = _active_model_required(params)
         if params.target == AppearanceTarget.DOCUMENT:
             ok = set_document_appearance(model, params.color)
             component = None
@@ -2923,7 +2964,7 @@ def solidworks_export_active(params: SolidWorksExportInput) -> str:
     """Export the active SolidWorks document to STEP, STL, IGES, Parasolid, PDF, or DXF."""
 
     def op():
-        _sw, model = _active_model_required()
+        _sw, model = _active_model_required(params)
         exporters = {
             ExportFormat.STEP: lambda: export_to_step(model, params.output_path),
             ExportFormat.STL: lambda: export_to_stl(model, params.output_path, quality=params.stl_quality),
@@ -2955,7 +2996,7 @@ def solidworks_inspect_configurations(
     """Inspect configuration names and the active configuration without modifying the document."""
 
     def op():
-        _sw, model = _active_model_required()
+        _sw, model = _active_model_required(params)
         result = inspect_configurations(model)
         result["document"] = _model_summary(model)
         return result
@@ -2972,7 +3013,7 @@ def solidworks_create_configuration(params: SolidWorksConfigurationCreateInput) 
     """Create, optionally activate, rebuild, save, and read back a configuration."""
 
     def op():
-        _sw, model = _active_model_required()
+        _sw, model = _active_model_required(params)
         result = create_configuration(
             model,
             params.configuration_name,
@@ -2999,7 +3040,7 @@ def solidworks_activate_configuration(params: SolidWorksConfigurationActivateInp
     """Activate an existing configuration and verify the active configuration by readback."""
 
     def op():
-        _sw, model = _active_model_required()
+        _sw, model = _active_model_required(params)
         result = activate_configuration(
             model,
             params.configuration_name,
@@ -3021,7 +3062,7 @@ def solidworks_update_dimension(params: SolidWorksDimensionUpdateInput) -> str:
     """Update an exact named dimension, rebuild, optionally save, and return before/after evidence."""
 
     def op():
-        _sw, model = _active_model_required()
+        _sw, model = _active_model_required(params)
         result = update_dimension_mm(
             model,
             params.dimension_name,
@@ -3046,7 +3087,7 @@ def solidworks_set_custom_properties(params: SolidWorksCustomPropertiesInput) ->
     """Set and read back file-level or configuration-level custom properties."""
 
     def op():
-        _sw, model = _active_model_required()
+        _sw, model = _active_model_required(params)
         result = set_custom_properties(
             model,
             params.properties,
@@ -3092,7 +3133,7 @@ def solidworks_export_assembly_bom(params: SolidWorksBomExportInput) -> str:
     """Export a component/property BOM CSV; the result always requires native BOM review."""
 
     def op():
-        _sw, model = _active_assembly_required()
+        _sw, model = _active_assembly_required(params)
         result = export_assembly_bom_csv(
             model,
             params.output_path,
@@ -3114,7 +3155,7 @@ def solidworks_pack_and_go_tool(params: SolidWorksPackAndGoInput) -> str:
     """Run the native Pack and Go API into a protected output directory."""
 
     def op():
-        _sw, model = _active_model_required()
+        _sw, model = _active_model_required(params)
         result = pack_and_go(
             model,
             params.output_dir,
@@ -3146,7 +3187,7 @@ def solidworks_review_active(params: SolidWorksReviewInput) -> str:
     """Export preview BMPs and a JSON review report for the active SolidWorks document."""
 
     def op():
-        _sw, model = _active_model_required()
+        _sw, model = _active_model_required(params)
         report, report_path = run_review(model, params.output_dir, basename=params.basename)
         return {
             "status": "ok",
@@ -3329,7 +3370,7 @@ def solidworks_create_hole_feature(params: SolidWorksHoleFeatureInput) -> str:
     """Create a constrained blind/through/compound hole or semicircular slot on the active part."""
 
     def op():
-        _sw, model = _active_part_required()
+        _sw, model = _active_part_required(params)
         center = (mm(params.center_x_mm), mm(params.center_y_mm))
         common = {"plane_name": params.plane_name, "name": params.feature_name}
         if params.feature_kind == HoleFeatureKind.BLIND:
@@ -3391,7 +3432,7 @@ def solidworks_inspect_hole_features(params: SolidWorksHoleInspectionInput = Sol
     """Read B-Rep holes, compound segments, slot arcs, and optional hole-position acceptance."""
 
     def op():
-        _sw, model = _active_part_required()
+        _sw, model = _active_part_required(params)
         measurements = collect_geometry_measurements(model)
         expected = [item.model_dump() for item in params.expected_holes]
         position_checks = None
@@ -3426,7 +3467,7 @@ def solidworks_add_rotary_motor(params: SolidWorksRotaryMotorInput) -> str:
     """Create a Motion Study on the active assembly and add a constant-speed rotary motor by cylinder faces."""
 
     def op():
-        _sw, asm = _active_model_required()
+        _sw, asm = _active_model_required(params)
         if int(get_com_member(asm, "GetType")) != 2:
             raise RuntimeError("Active document must be an assembly (.SLDASM) to add a Motion Study motor.")
         shaft_comp = find_component_by_name(asm, params.shaft_component_keyword)
@@ -3477,7 +3518,7 @@ def solidworks_inspect_motion_studies(params: SolidWorksMotionAuditInput = Solid
     """Inspect Motion Study definitions, motor/force counts, and whether results are stale."""
 
     def op():
-        _sw, asm = _active_assembly_required()
+        _sw, asm = _active_assembly_required(params)
         return {
             "status": "ok",
             "motion": collect_motion_study_summary(asm),
@@ -3501,7 +3542,7 @@ def solidworks_validate_motion_study(params: SolidWorksMotionValidationInput = S
     """Enforce Motion Study type, duration, motor count, result presence, and freshness requirements."""
 
     def op():
-        _sw, asm = _active_assembly_required()
+        _sw, asm = _active_assembly_required(params)
         audit = validate_motion_studies(
             asm,
             study_name=params.study_name,
