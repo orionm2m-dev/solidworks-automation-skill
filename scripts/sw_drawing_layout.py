@@ -16,6 +16,7 @@ class ViewSpec(Strict):
     parent: str | None = None
     section_line_mm: tuple[tuple[float,float,float],tuple[float,float,float]] | None = None
     section_label: str = 'A'
+    minimum_hatched_faces: int = Field(default=0,ge=0)
     crop_mm: list[tuple[float,float,float]] | None = None
 
 class NoteSpec(Strict):
@@ -62,6 +63,8 @@ class DrawingLayout(Strict):
                 raise ValueError('Duplicate view or missing preceding parent')
             if bool(v.parent) != bool(v.section_line_mm):
                 raise ValueError('Sections require parent and cutting line')
+            if v.minimum_hatched_faces and not v.parent:
+                raise ValueError('Hatch validation requires a section view')
             if v.crop_mm and len(v.crop_mm) != 4:
                 raise ValueError('Crop requires four model-coordinate corners')
             seen.add(v.id)
@@ -81,6 +84,15 @@ def transform_point(values, matrix):
     xyz=list(values); m=list(matrix)
     if len(xyz)!=3 or len(m)!=16: raise ValueError('Expected 3D point and 16-value transform')
     return [m[12]*sum(xyz[i]*m[3*i+j] for i in range(3))+m[9+j] for j in range(3)]
+
+
+def require_section_hatches(view, minimum, view_id):
+    """要求实际剖切填充；拒绝只有剖视名称而没有剖切几何的失败结果。"""
+    from scripts.sw_connect import get_com_member as get
+    count = int(get(view, 'GetFaceHatchCount'))
+    if count < minimum:
+        raise RuntimeError(f'Section {view_id} has {count} hatched faces, requires {minimum}')
+    return count
 
 
 def create_layout(sw, source, spec, dry_run=True):
@@ -135,6 +147,10 @@ def create_layout(sw, source, spec, dry_run=True):
     if template:
         sheet.SetTemplateName('')
         draw.ReloadTemplate(False)
+    for text_pref in (10,23,24,25,26):
+        fmt=draw.Extension.GetUserPreferenceTextFormat(text_pref,0)
+        fmt.CharHeight=.003;fmt.Italic=False;fmt.Bold=False;fmt.TypeFaceName='Arial'
+        draw.Extension.SetUserPreferenceTextFormat(text_pref,0,fmt)
     draw.SetUserPreferenceToggle(6,False)
     draw.Extension.SetUserPreferenceInteger(47,0,0)
     draw.Extension.SetUserPreferenceInteger(24,0,2)
@@ -167,7 +183,7 @@ def create_layout(sw, source, spec, dry_run=True):
             finally: sm.AddToDB=False
             if line is None or not line.Select4(False,null):
                 raise RuntimeError('Cannot select native section cutting line')
-            v=draw.CreateSectionViewAt4(vs.center_mm[0]/1000,vs.center_mm[1]/1000,0.,vs.section_label,1,null)
+            v=draw.CreateSectionViewAt5(vs.center_mm[0]/1000,vs.center_mm[1]/1000,0.,vs.section_label,1,null,0.)
             if v is None or get(v,'GetSection') is None:
                 raise RuntimeError('Native section creation failed')
             sec=get(v,'GetSection'); sec.SetPartialSection(False); sec.SetDisplayOnlySurfaceCut(False); sec.SetAutoHatch(True)
@@ -193,10 +209,11 @@ def create_layout(sw, source, spec, dry_run=True):
         actual_source=str(get(v,'GetReferencedModelName'))
         check_document_target(actual_source,source_title,expected_path=source_path,required=True)
         if abs(float(get(v,'ScaleDecimal'))-vs.scale)>1e-8: raise RuntimeError('View scale mismatch')
+        hatch_count=require_section_hatches(v,vs.minimum_hatched_faces,vs.id) if vs.parent else 0
         views[vs.id]=v
         result['views'].append({'id':vs.id,'name':get(v,'GetName2'),'source':actual_source,
             'scale':get(v,'ScaleDecimal'),'outline_m':list(get(v,'GetOutline')),
-            'native_section':get(v,'GetSection') is not None,'cropped':bool(get(v,'IsCropped')),
+            'native_section':get(v,'GetSection') is not None,'hatched_face_count':hatch_count,'cropped':bool(get(v,'IsCropped')),
             'model_to_view':list(get(get(v,'ModelToViewTransform'),'ArrayData'))})
     old_prompt = bool(sw.GetUserPreferenceToggle(10))
     sw.SetUserPreferenceToggle(10, False)
@@ -283,3 +300,41 @@ def cancel_dimension_prompt(process_id, *, gui=None, processes=None):
         return True
     gui.EnumWindows(visit,None)
     return {'status':'posted' if dismissed else 'no_matching_prompt','process_id':process_id,'dismissed':dismissed}
+
+
+def inspect_sections(drawing):
+    """读取当前图纸剖视的剖切定义、排除列表和填充数量。"""
+    from scripts.sw_connect import get_com_member as get
+    if int(get(drawing,'GetType'))!=3: raise ValueError('Drawing required')
+    rows=[];v=get(drawing,'GetFirstView')
+    while v is not None:
+        sec=get(v,'GetSection')
+        if sec is not None:
+            excluded=list(get(sec,'GetExcludedComponents') or [])
+            row={'name':get(v,'GetName2'),'source':get(v,'GetReferencedModelName'),
+                 'excluded_components':[str(get(c,'Name2')) for c in excluded],
+                 'auto_hatch':get(sec,'GetAutoHatch'),'partial':get(sec,'GetPartialSection'),
+                 'surface_only':get(sec,'GetDisplayOnlySurfaceCut'),
+                 'line_info':list(get(sec,'GetLineInfo') or []),
+                 'exclude_fasteners':get(sec,'ExcludeFasteners'),
+                 'exclude_slice_bodies':get(sec,'ExcludeSliceSectionBodies'),
+                 'section_depth':get(sec,'SectionDepth'),'lightweight':bool(get(v,'IsLightweight')),
+                 'visible_components':[str(get(c,'Name2')) for c in (get(v,'GetVisibleComponents') or [])]}
+            for name in ['GetFaceHatchCount','GetFaceHatchesCount']:
+                try:row[name]=get(v,name)
+                except Exception:pass
+            rows.append(row)
+        v=get(v,'GetNextView')
+    errors=[];f=get(drawing,'FirstFeature')
+    while f is not None:
+        try:
+            code=get(f,'GetErrorCode')
+            if code: errors.append({'name':get(f,'Name'),'type':get(f,'GetTypeName2'),'code':code})
+        except Exception:pass
+        sub=get(f,'GetFirstSubFeature')
+        while sub is not None:
+            code=get(sub,'GetErrorCode')
+            if code: errors.append({'name':get(sub,'Name'),'type':get(sub,'GetTypeName2'),'code':code})
+            sub=get(sub,'GetNextSubFeature')
+        f=get(f,'GetNextFeature')
+    return {'status':'inspected','sections':rows,'feature_errors':errors,'read_only':True}

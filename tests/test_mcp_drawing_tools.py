@@ -21,6 +21,7 @@ def test_drawing_mcp_tools_are_registered():
     tools = server.mcp._tool_manager._tools
 
     assert {"solidworks_generate_drawing", "solidworks_review_drawing", "solidworks_inspect_drawing"} <= set(tools)
+    assert {"solidworks_create_drawing_layout", "solidworks_inspect_drawing_sections", "solidworks_cancel_dimension_prompt"} <= set(tools)
 
 
 def test_release_mcp_gate_requires_drawing_tools():
