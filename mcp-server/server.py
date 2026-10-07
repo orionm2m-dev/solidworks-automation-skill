@@ -897,6 +897,20 @@ class SolidWorksDimensionUpdateInput(ActiveDocumentInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
+class SolidWorksCapsuleInspectInput(ActiveDocumentInput):
+    """读取已有四段胶囊草图。"""
+
+    sketch_name: str = Field(..., min_length=1, max_length=240)
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON)
+
+
+class SolidWorksCapsuleResizeInput(SolidWorksCapsuleInspectInput):
+    """原位调整无约束胶囊的总长和宽度。"""
+
+    length_mm: float = Field(..., gt=0, le=100000, allow_inf_nan=False)
+    width_mm: float = Field(..., gt=0, le=100000, allow_inf_nan=False)
+
+
 class SolidWorksAddinHostStatusInput(BaseInput):
     """Input for read-only C# Add-in host deployment and runtime diagnostics."""
 
@@ -3135,6 +3149,38 @@ def solidworks_update_dimension(params: SolidWorksDimensionUpdateInput) -> str:
         result["document"] = _model_summary(model)
         return result
 
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_inspect_capsule_sketch",
+    title="Inspect Existing Capsule Sketch",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def solidworks_inspect_capsule_sketch(params: SolidWorksCapsuleInspectInput) -> str:
+    """读取两条直线和两个半圆组成的胶囊草图；尺寸以毫米返回。"""
+    def op():
+        from scripts.sw_capsule_sketch import inspect_capsule_sketch
+        _sw, model = _active_model_required(params)
+        result = inspect_capsule_sketch(model, params.sketch_name)
+        result["document"] = _model_summary(model)
+        return result
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_resize_capsule_sketch",
+    title="Resize Existing Capsule Sketch In Place",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def solidworks_resize_capsule_sketch(params: SolidWorksCapsuleResizeInput) -> str:
+    """原位缩放单配置零件的无约束四段胶囊；不保存，失败时尝试撤销并回读。"""
+    def op():
+        from scripts.sw_capsule_sketch import resize_capsule_sketch
+        _sw, model = _active_model_required(params)
+        result = resize_capsule_sketch(model, params.sketch_name, params.length_mm, params.width_mm)
+        result["document"] = _model_summary(model)
+        return result
     return _run_locked(op, params.response_format)
 
 

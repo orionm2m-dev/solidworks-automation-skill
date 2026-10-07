@@ -347,3 +347,13 @@ claude mcp add --scope user solidworks -- python C:\path\to\solidworks-automatio
 - MCP 已覆盖基础盒体/圆柱、复杂孔槽、添加组件、常用 Mate、固定/浮动、外观、导出、审查、旋转马达、Motion 结果门禁，以及 DFM/Routing/FEA/复杂几何的受控入口。
 - 受限封闭直纹 Loft 可生成并重开真实 STEP/BREP；平滑 Loft、扫描、自由曲面、G1/G2 和模具仍只开放结构化计划门禁。
 - SolidWorks Motion / Simulation 许可证差异可能影响计算能力；缺少合法加载项或授权时返回 `blocked`，不尝试绕过。
+
+## 已有胶囊草图修改（pilot）
+
+`solidworks_inspect_capsule_sketch` 读取二维四段胶囊的总长、宽度、中心、方向、圆弧/直线、尺寸及关系状态。`solidworks_resize_capsule_sketch` 在原草图内重建两个半圆和两条直线，保留草图名称、位置、方向、原生切除及下游特征树。重建会更换段级身份，不保证外部或工程图引用不变，须人工复核。
+
+仅支持单配置零件、无关系和尺寸的独立四段草图；只读文档、活动草图编辑、原生 Slot 对象、非胶囊或预先损坏的实体均拒绝。已有驱动尺寸应使用 `solidworks_update_dimension`。
+
+调用必须携带 `expected_document_path`，或未保存文档的 `expected_document_title`。示例参数：`sketch_name="AccessProfile", length_mm=12, width_mm=4`，总长必须大于宽度。新尺寸回读、闭合轮廓、特征树、实体数量和 Check2 必须通过；工具不保存文档。先备份源文件；失败返回 `rollback_verified`，若为 false，应停止保存及后续修改。SW2026 某些草图操作不能建立统一撤销记录；成功结果如实返回 `undo_record_created=false`，不承诺事务恢复。
+
+验证：Windows / Python 3.10 / SOLIDWORKS 2026 SP4.1（34.4.1），真实 stdio MCP 在测试副本完成双向尺寸修改，原切除及下游加工特征保留，实体检查无错误。单元测试覆盖旋转/平移、非法轮廓、只读/约束门禁、修改失败、撤销失败、成功但原生统一撤销不可用、文档目标保护。其他版本及尺寸/关系约束草图未验证。

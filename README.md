@@ -10,6 +10,8 @@
 
 多窗口或多客户端操作时，使用[文档目标保护与跨客户端互斥](mcp-server/README.md#文档目标保护与跨客户端互斥)：完整路径校验、可选严格模式和 Windows 进程间互斥锁。
 
+已有无尺寸胶囊草图可通过 MCP 检查及修改总长/宽度；该能力为 pilot，保留原生草图和特征树但重建草图段，须备份并复核段级引用，详见 MCP README。
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Release](https://img.shields.io/github/v/release/wzyn20051216/solidworks-automation-skill)](https://github.com/wzyn20051216/solidworks-automation-skill/releases)
