@@ -58,16 +58,17 @@ def _health(model):
             "volume_mm3":sum(float(member(b,"GetMassProperties",1)[3])*1e9 for b in bodies)}
 
 
-def _apply(model, feature, refs, radii_mm):
+def _apply(model, feature, refs, radii_mm, sw):
     member(model,"ClearSelection2",True)
     if not member(feature,"Select2",False,0):
         raise RuntimeError("无法选择草图")
     member(model,"EditSketch")
     manager=member(model,"SketchManager")
     active=member(manager,"ActiveSketch")
-    if active is None or active._oleobj_ != member(feature,"GetSpecificFeature2")._oleobj_:
-        raise RuntimeError("未进入目标草图")
     try:
+        same = None if active is None else int(member(sw,"IsSame",active,member(feature,"GetSpecificFeature2")))
+        if same != 1:
+            raise RuntimeError(f"未进入目标草图: active={active is not None}, IsSame={same}")
         for item,radius in zip(refs,radii_mm):
             ref=item.get("reference")
             if ref is None:
@@ -85,7 +86,7 @@ def _apply(model, feature, refs, radii_mm):
                     if candidate is None or int(member(candidate,"GetType")) != 1 or not member(candidate,"IsCircle"):
                         continue
                     owner=member(candidate,"GetSketch")
-                    if owner._oleobj_ != active._oleobj_:continue
+                    if int(member(sw,"IsSame",owner,active)) != 1:continue
                     cp=member(candidate,"GetCenterPoint2")
                     xyz=[float(member(cp,n))*1000 for n in ("X","Y","Z")]
                     if math.dist(xyz,item["center_mm"]) > .001 or abs(float(member(candidate,"GetRadius"))*1000-item["radius_mm"]) > .001:
@@ -97,11 +98,12 @@ def _apply(model, feature, refs, radii_mm):
             if not member(ref,"SetRadius",radius/1000):
                 raise RuntimeError("SetRadius 返回失败")
     finally:
-        member(manager,"InsertSketch",True)
+        if member(manager,"ActiveSketch") is not None:
+            member(manager,"InsertSketch",True)
 
 
 def resize_sketch_circles(model, sketch_name, centers_mm, expected_radius_mm,
-                          radius_mm, dry_run=True):
+                          radius_mm, dry_run=True, sw=None):
     """仅调整严格匹配的完整圆，保留圆心、圆实体与其他草图段。
 
     仅支持单配置无关系、无尺寸的二维草图。可用于投影图形或孔轮廓；不自动保存。
@@ -126,7 +128,7 @@ def resize_sketch_circles(model, sketch_name, centers_mm, expected_radius_mm,
         raise ValueError("文档只读或实体检查失败")
     selected=[dict(before["circles"][i]) for i in indices]
     try:
-        _apply(model,feature,selected,[radius_mm]*len(selected))
+        _apply(model,feature,selected,[radius_mm]*len(selected),sw)
         rebuilt=bool(member(model,"EditRebuild3"))
         after,_,_=_read(model,sketch_name)
         match_circles(after["circles"],centers_mm,radius_mm)
@@ -145,7 +147,7 @@ def resize_sketch_circles(model, sketch_name, centers_mm, expected_radius_mm,
     except Exception as exc:
         rollback=False
         try:
-            _apply(model,feature,selected,[before["circles"][i]["radius_mm"] for i in indices])
+            _apply(model,feature,selected,[before["circles"][i]["radius_mm"] for i in indices],sw)
             member(model,"EditRebuild3")
             restored,_,_=_read(model,sketch_name)
             match_circles(restored["circles"],centers_mm,expected_radius_mm)
