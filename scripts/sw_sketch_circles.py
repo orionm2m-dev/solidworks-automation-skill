@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import math
+import hashlib
+import json
 
 from .sw_connect import get_com_member as member
 
@@ -30,19 +32,24 @@ def _read(model, sketch_name):
     sketch = member(feature, "GetSpecificFeature2")
     if member(sketch, "Is3D"):
         raise ValueError("不支持三维草图")
-    segments = list(member(sketch, "GetSketchSegments") or [])
-    circles, refs = [], []
-    for seg in segments:
-        if int(member(seg, "GetType")) != 1 or not member(seg, "IsCircle"):
+    # GetArcs2 一次返回每条圆弧的 16 个值，避免遍历大型 DXF 的全部 COM 段。
+    arcs=list(member(sketch,"GetArcs2") or [])
+    arc_count=int(member(sketch,"GetArcCount"))
+    if len(arcs) != 16*arc_count:
+        raise ValueError("圆弧数组长度不符")
+    circles=[]
+    for offset in range(0,len(arcs),16):
+        row=arcs[offset:offset+16];start,end,center=row[6:9],row[9:12],row[12:15]
+        if math.dist(start,end) > 1e-9:
             continue
-        p = member(seg, "GetCenterPoint2")
-        circles.append({"center_mm": [float(member(p,n))*1000 for n in ("X","Y","Z")],
-                        "radius_mm": float(member(seg,"GetRadius"))*1000,
-                        "construction": bool(member(seg,"ConstructionGeometry"))})
-        refs.append(seg)
-    return {"sketch_name": sketch_name, "circles": circles, "segment_count":len(segments),
+        circles.append({"center_mm":[float(v)*1000 for v in center],
+                        "radius_mm":math.dist(start,center)*1000})
+    lines=list(member(sketch,"GetLines2",0) or [])
+    return {"sketch_name":sketch_name,"circles":circles,"arc_count":arc_count,
+            "lines_sha256":hashlib.sha256(json.dumps(lines).encode()).hexdigest(),
+            "line_data_length":len(lines),
             "has_dimensions":member(feature,"GetFirstDisplayDimension") is not None,
-            "relation_count":int(member(member(sketch,"RelationManager"),"GetRelationsCount",0))}, feature, refs
+            "relation_count":int(member(member(sketch,"RelationManager"),"GetRelationsCount",0))},feature,None
 
 
 def _health(model):
@@ -61,7 +68,32 @@ def _apply(model, feature, refs, radii_mm):
     if active is None or active._oleobj_ != member(feature,"GetSpecificFeature2")._oleobj_:
         raise RuntimeError("未进入目标草图")
     try:
-        for ref,radius in zip(refs,radii_mm):
+        for item,radius in zip(refs,radii_mm):
+            ref=item.get("reference")
+            if ref is None:
+                from .sw_connect import create_empty_dispatch_variant
+                transform=list(member(member(member(active,"ModelToSketchTransform"),"Inverse"),"ArrayData"))
+                c=[v/1000 for v in item["center_mm"]];r=item["radius_mm"]/1000
+                for angle in (0,math.pi/2,math.pi,3*math.pi/2):
+                    q=[c[0]+r*math.cos(angle),c[1]+r*math.sin(angle),c[2]]
+                    point=[transform[12]*sum(q[j]*transform[j*3+i] for j in range(3))+transform[9+i] for i in range(3)]
+                    member(model,"ClearSelection2",True)
+                    ok=member(member(model,"Extension"),"SelectByID2","","SKETCHSEGMENT",
+                              *point,False,0,create_empty_dispatch_variant(),0)
+                    if not ok:continue
+                    candidate=member(member(model,"SelectionManager"),"GetSelectedObject6",1,-1)
+                    if candidate is None or int(member(candidate,"GetType")) != 1 or not member(candidate,"IsCircle"):
+                        continue
+                    owner=member(candidate,"GetSketch")
+                    if owner._oleobj_ != active._oleobj_:continue
+                    cp=member(candidate,"GetCenterPoint2")
+                    xyz=[float(member(cp,n))*1000 for n in ("X","Y","Z")]
+                    if math.dist(xyz,item["center_mm"]) > .001 or abs(float(member(candidate,"GetRadius"))*1000-item["radius_mm"]) > .001:
+                        continue
+                    if member(candidate,"ConstructionGeometry"):
+                        raise ValueError("不支持构造圆")
+                    ref=candidate;item["reference"]=ref;break
+                if ref is None:raise RuntimeError("无法唯一选择目标完整圆")
             if not member(ref,"SetRadius",radius/1000):
                 raise RuntimeError("SetRadius 返回失败")
     finally:
@@ -83,8 +115,6 @@ def resize_sketch_circles(model, sketch_name, centers_mm, expected_radius_mm,
         raise ValueError("请先退出草图编辑")
     before,feature,refs=_read(model,sketch_name)
     indices=match_circles(before["circles"],centers_mm,expected_radius_mm)
-    if any(before["circles"][i]["construction"] for i in indices):
-        raise ValueError("不支持构造圆")
     health_before=_health(model)
     report={"success":True,"dry_run":dry_run,"before":before,"selected_indices":indices,
             "radius_mm":radius_mm,"health_before":health_before,"saved":False,"review_required":True}
@@ -94,7 +124,7 @@ def resize_sketch_circles(model, sketch_name, centers_mm, expected_radius_mm,
         raise ValueError("草图存在尺寸或关系，请使用尺寸编辑")
     if bool(member(model,"IsOpenedReadOnly")) or any(health_before["body_checks"]):
         raise ValueError("文档只读或实体检查失败")
-    selected=[refs[i] for i in indices]
+    selected=[dict(before["circles"][i]) for i in indices]
     try:
         _apply(model,feature,selected,[radius_mm]*len(selected))
         rebuilt=bool(member(model,"EditRebuild3"))
@@ -103,8 +133,8 @@ def resize_sketch_circles(model, sketch_name, centers_mm, expected_radius_mm,
         health=_health(model)
         if not rebuilt or any(health["body_checks"]) or health["solid_count"] != health_before["solid_count"]:
             raise RuntimeError("重建或实体检查失败")
-        if before["segment_count"] != after["segment_count"]:
-            raise RuntimeError("草图段数变化")
+        if before["lines_sha256"] != after["lines_sha256"] or before["arc_count"] != after["arc_count"]:
+            raise RuntimeError("其他直线或圆弧数变化")
         expected=[dict(c) for c in before["circles"]]
         for i in indices: expected[i]["radius_mm"]=radius_mm
         for a,b in zip(expected,after["circles"]):
