@@ -495,6 +495,30 @@
       "dependencies": ["python", "可选 SolidWorks Routing 类型库和加载项许可证"],
       "limitations": ["当前支持中性 Routing 端点、分段、长度、弯曲半径、碰撞/间隙、支撑间距和 BOM 复核；不生成 SOLIDWORKS Routing 原生特征", "本机 SW2026 可发现 SWRoutingLib.tlb 和核心接口，但未检测到 Routing AddIn 注册或许可证证据时原生写入必须 blocked"],
       "allowed_modes": ["interactive", "reviewed"]
-    }
+    },
+{
+      "id": "native_face_translation",
+      "label": "原生局部面平移",
+      "level": "pilot",
+      "backends": [
+            "solidworks-python"
+      ],
+      "verified_versions": [
+            "2026 SP4.1 (34.4.1)"
+      ],
+      "dependencies": [
+            "python",
+            "pywin32",
+            "SOLIDWORKS"
+      ],
+      "limitations": [
+            "完整包围盒选择，必须先 dry-run 并指定面数",
+            "单配置零件，不保存；必须复核邻接拓扑和装配"
+      ],
+      "allowed_modes": [
+            "interactive",
+            "reviewed"
+      ]
+}
   ]
 }
