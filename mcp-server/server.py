@@ -3135,7 +3135,7 @@ def solidworks_resize_sketch_circles(params: SolidWorksSketchCircleRadiusInput) 
         from scripts.sw_sketch_circles import resize_sketch_circles
         _sw, model = _active_model_required(params)
         result = resize_sketch_circles(model, params.sketch_name, params.centers_mm,
-                                       params.expected_radius_mm, params.radius_mm, params.dry_run)
+                                       params.expected_radius_mm, params.radius_mm, params.dry_run, sw=_sw)
         result["document"] = _model_summary(model)
         return result
     return _run_locked(op, params.response_format)
