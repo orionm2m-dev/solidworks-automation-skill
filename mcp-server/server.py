@@ -3,8 +3,7 @@ SolidWorks MCP Server.
 
 This stdio MCP server wraps the existing solidworks-automation skill scripts so
 MCP clients can operate a local Windows SolidWorks desktop session through
-Python COM. It intentionally serializes all tool calls because SolidWorks COM is
-a single-user desktop automation surface.
+Python COM. Calls are serialized per bound SolidWorks process.
 """
 from __future__ import annotations
 
@@ -1374,8 +1373,10 @@ def _run_locked(operation, response_format: ResponseFormat, load_automation: boo
         if load_automation:
             _load_automation_modules()
         _coinitialize()
-        # 命名互斥锁覆盖多个 MCP 进程；无 CAD 后端不等待桌面锁。
-        desktop_lock = solidworks_operation_lock(timeout_seconds) if (load_automation or desktop_guard) else nullcontext()
+        # 同一 SolidWorks PID 跨 MCP 进程串行；不同 PID 使用不同锁。
+        desktop_lock = solidworks_operation_lock(
+            timeout_seconds, process_id=_selected_process_id
+        ) if (load_automation or desktop_guard) else nullcontext()
         with desktop_lock, redirect_stdout(sys.stderr):
             payload = operation()
             if load_automation and _selected_process_id is not None and isinstance(payload, dict):

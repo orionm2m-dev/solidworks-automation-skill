@@ -166,6 +166,40 @@ class OperationLockTests(unittest.TestCase):
         with solidworks_operation_lock(0.1, name=name):
             pass
 
+    def test_distinct_solidworks_processes_do_not_block_each_other(self):
+        code = (
+            "from scripts.sw_operation_guard import solidworks_operation_lock\n"
+            "import sys\n"
+            "with solidworks_operation_lock(2, process_id=int(sys.argv[1])):\n"
+            " print('locked', flush=True)\n"
+            " sys.stdin.readline()\n"
+        )
+        child = subprocess.Popen([sys.executable, "-c", code, "5678"], cwd=ROOT,
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(child.stdout.readline().strip(), "locked")
+            with solidworks_operation_lock(0.5, process_id=1234):
+                pass
+        finally:
+            child.communicate("release\n", timeout=10)
+        self.assertEqual(child.returncode, 0)
+
+    def test_same_solidworks_process_is_shared_across_clients(self):
+        code = (
+            "from scripts.sw_operation_guard import solidworks_operation_lock\n"
+            "import sys\n"
+            "try:\n"
+            " with solidworks_operation_lock(0.1, process_id=int(sys.argv[1])):\n"
+            "  print('unexpected-acquire', flush=True)\n"
+            "except TimeoutError:\n"
+            " print('blocked', flush=True)\n"
+        )
+        with solidworks_operation_lock(1, process_id=1234):
+            child = subprocess.run([sys.executable, "-c", code, "1234"], cwd=ROOT,
+                                   capture_output=True, text=True, timeout=10)
+        self.assertEqual(child.returncode, 0, child.stderr)
+        self.assertEqual(child.stdout.strip(), "blocked")
+
 
 if __name__ == "__main__":
     unittest.main()

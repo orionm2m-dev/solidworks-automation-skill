@@ -2,7 +2,7 @@
 
 本目录提供一个本地 `stdio` MCP Server，同时暴露无 CAD 开放格式工具和 SolidWorks COM 白名单工具。MCP 与 CAD Studio、Skill、CLI 共用能力清单和数据协议。
 
-SolidWorks 是 Windows 桌面 COM 应用，因此本 server 默认使用 `stdio`。工具可以绑定一个已运行的 SOLIDWORKS 进程，原生操作仍通过进程内锁和跨进程 Windows mutex 串行执行。
+SolidWorks 是 Windows 桌面 COM 应用，因此本 server 默认使用 `stdio`。每个 server 可以绑定一个已运行的 SOLIDWORKS 进程；原生操作按目标 PID 使用跨进程 Windows mutex 串行执行。两个独立的 server 分别绑定不同 PID 时可以并行工作。
 
 ## 绑定指定的 SOLIDWORKS 进程
 
@@ -51,9 +51,9 @@ SolidWorks 是 Windows 桌面 COM 应用，因此本 server 默认使用 `stdio`
 
 PID 模式下，预览辅助流程先核对文档的 COM 身份属于所选进程，再按完整路径激活已保存文档；装配辅助连接和类型库版本探测也继承目标。`comtypes` 的 Pack and Go 兜底尚未实现 PID 选择，因此在访问 COM 前拒绝执行，不会连接默认实例。此限制不表示原生 pywin32 Pack and Go 不可用；现有文件暂存策略仍按其明确的交付状态报告，不能把暂存包宣称为原生 Pack and Go 验证通过。
 
-绑定范围是一个 MCP server 进程，不是聊天线程、文档或 Windows 用户会话。同一 server 被多个客户端任务共享时，显式更改绑定会影响它们；需要分别使用独立 server 配置，并核对连接返回的 PID。即使绑定不同的 SOLIDWORKS 进程，`Local\SolidWorksAutomation.Operation.v1` 仍串行执行协作客户端的 COM 操作。PID 选择不会代替下面的文档路径保护，也不提供多步骤事务隔离。
+绑定范围是一个 MCP server 进程，不是聊天线程、文档或 Windows 用户会话。同一 server 被多个客户端任务共享时，显式更改绑定会影响它们；需要分别使用独立 server 配置，并核对连接返回的 PID。两个 server 指向同一 PID 时会共用 `Local\SolidWorksAutomation.Operation.v1.PID.<pid>` 并串行执行；不同 PID 使用不同 mutex，可并行执行。未绑定 PID 的旧式/诊断调用仍使用兼容全局锁 `Local\SolidWorksAutomation.Operation.v1`。PID 选择不会代替下面的文档路径保护，也不提供多步骤事务隔离。
 
-验证范围：Windows / Python 3.10，SOLIDWORKS 2026 SP4.1（Revision 34.4.1）。全新 MCP `stdio` 进程已完成真实端到端验证：列出两个同时运行的实例、绑定指定实例、拒绝不存在的 PID 并保留原绑定、在原目标中以只读方式打开装配体并回读相同 PID；检查未修改模型内容。该只读装配体的预览激活也验证了所属进程及激活前后完整路径一致，未保存文档。底层连接分别回读两个实例的正确 PID 和活动文档。离线单元测试覆盖目标验证、首次绑定、失败重绑、文档保护、辅助连接、健康检查和恢复锁定及兜底阻断；这些结果不代表全部工具和版本的真机验证。MCP 多实例控制仍为 `pilot`，不宣称提供并行执行或事务隔离。
+验证范围：Windows / Python 3.10，SOLIDWORKS 2026 SP4.1（Revision 34.4.1）。全新 MCP `stdio` 进程已完成真实端到端验证：列出两个同时运行的实例、绑定指定实例、拒绝不存在的 PID 并保留原绑定、在原目标中以只读方式打开装配体并回读相同 PID；检查未修改模型内容。该只读装配体的预览激活也验证了所属进程及激活前后完整路径一致，未保存文档。底层连接分别回读两个实例的正确 PID 和活动文档。离线单元测试覆盖 PID 锁命名及不同 PID 的跨进程锁互不阻塞；尚未在两个真实 SolidWorks 会话中同时运行 MCP 操作，因此该并行路径仍为 `pilot`，不提供多步骤事务隔离。
 
 ## 文档目标保护与跨客户端互斥
 
@@ -70,7 +70,7 @@ PID 模式下，预览辅助流程先核对文档的 COM 身份属于所选进�
 
 在 MCP 进程环境中设置 `SOLIDWORKS_MCP_REQUIRE_DOCUMENT_TARGET=1` 后，活动文档工具缺少目标校验参数也会拒绝执行。默认保持旧客户端兼容。新建、按明确路径打开、批量导出和无 CAD 工具保留自身的路径语义。首次保存使用创建操作返回的精确标题，保存后改用完整路径。启用目标保护时不能将单个目标与 `close_all` 混用。
 
-Windows 下原生 COM 操作还会持有命名互斥锁 `Local\SolidWorksAutomation.Operation.v1`，让使用本版本的多个 MCP 进程串行执行。CLI 可复用 `scripts.sw_operation_guard.solidworks_operation_lock()`；C# 或 PowerShell 包装器必须使用同一 Windows mutex 名称。异常退出、超时和未释放的句柄都有明确的失败路径。
+Windows 下原生 COM 操作会持有按 PID 命名的 mutex `Local\SolidWorksAutomation.Operation.v1.PID.<pid>`，让使用本版本的多个 MCP 进程对同一 SolidWorks 实例串行执行，同时允许不同 PID 并行。CLI 可复用 `scripts.sw_operation_guard.solidworks_operation_lock()`；在 MCP 子进程设置 `SOLIDWORKS_MCP_PROCESS_ID` 时会自动采用相同的 PID 锁。C# 或 PowerShell 包装器应按相同规则构造锁名；未绑定进程的兼容路径仍用全局 mutex。异常退出、超时和未释放的句柄都有明确的失败路径。旧版客户端仍使用原全局锁，因此混用旧版 MCP 与新版 MCP 时不能保证同一 PID 的互斥；并行任务须使用已更新的 server。
 
 此锁只覆盖一次操作，不预订整个多步骤任务。旧版客户端、未使用此锁的脚本、人工操作及加载项不受它约束；执行期间不要手动切换窗口，也不要并行运行旧控制脚本。目标检查发生在取得活动文档引用时，不能保证阻止长操作中的外部窗口切换。等待锁超时不会取消已经运行的 COM 调用。新代码和输入 schema 需要重启 MCP 客户端连接后才能生效。
 
@@ -339,7 +339,7 @@ claude mcp add --scope user solidworks -- python C:\path\to\solidworks-automatio
 
 - 不开放任意 Python/VBA 执行工具，避免 MCP 客户端直接执行不受控脚本。
 - CAD Studio 无头/门禁工具使用 `cadstudio_` 前缀，SolidWorks 原生工具使用 `solidworks_` 前缀，避免与其他 MCP server 冲突。
-- 所有 COM 操作串行执行，降低 SolidWorks 桌面会话崩溃概率。
+- 同一 SolidWorks PID 的 COM 操作通过跨 MCP 进程的 Windows mutex 串行执行；不同 PID 可并行执行。
 - 错误返回包含建议动作，方便 LLM 自行纠错。
 
 ## 已知限制

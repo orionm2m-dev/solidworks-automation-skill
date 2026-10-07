@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "mcp-server"))
 import server
+from scripts.sw_operation_guard import OPERATION_MUTEX_NAME, solidworks_operation_mutex_name
 
 
 def member(obj, name, *args):
@@ -77,6 +78,13 @@ class McpProcessTargetTests(unittest.TestCase):
         answer = json.loads(server._run_locked(lambda: {"status": "ok"}, server.ResponseFormat.JSON))
         self.assertEqual(answer["process_id"], 1234)
 
+    def test_native_tool_lock_is_scoped_to_selected_pid(self):
+        server._selected_process_id = 1234
+        with patch.object(server, "solidworks_operation_lock") as lock:
+            answer = json.loads(server._run_locked(lambda: {"status": "ok"}, server.ResponseFormat.JSON))
+        self.assertEqual(answer["status"], "ok")
+        lock.assert_called_once_with(300.0, process_id=1234)
+
     def test_listing_does_not_change_binding_or_connect(self):
         server._selected_process_id = 1234
         with patch.object(server, "_list_solidworks_instances_backend", return_value=[{"process_id": 1234}, {"process_id": 5678}], create=True), \
@@ -90,6 +98,17 @@ class McpProcessTargetTests(unittest.TestCase):
         for value in [0, -1, True, 12.5, "1234"]:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 server.SolidWorksConnectInput(process_id=value)
+
+    def test_operation_mutex_is_process_scoped(self):
+        self.assertEqual(solidworks_operation_mutex_name(1234), r"Local\SolidWorksAutomation.Operation.v1.PID.1234")
+        self.assertEqual(solidworks_operation_mutex_name(5678), r"Local\SolidWorksAutomation.Operation.v1.PID.5678")
+        self.assertEqual(solidworks_operation_mutex_name(), OPERATION_MUTEX_NAME)
+        with patch.dict(os.environ, {"SOLIDWORKS_MCP_PROCESS_ID": "5678"}):
+            self.assertEqual(solidworks_operation_mutex_name(), r"Local\SolidWorksAutomation.Operation.v1.PID.5678")
+        for value in ["0", "-1", "12.5", " 1234", "１２３４"]:
+            with self.subTest(value=value), patch.dict(os.environ, {"SOLIDWORKS_MCP_PROCESS_ID": value}):
+                with self.assertRaises(ValueError):
+                    solidworks_operation_mutex_name()
 
     def test_recovery_does_not_close_unbound_windows(self):
         with patch.object(server, "_enumerate_solidworks_windows") as windows:
