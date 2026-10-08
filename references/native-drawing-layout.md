@@ -34,4 +34,4 @@
 
 工程图创建会显示已选定的 SOLIDWORKS 实例，并在读取裁剪视图边界前重绘。隐藏会话可能返回完整模型的旧范围，按此范围居中会使局部视图和尺寸移出预期位置。工具拒绝越出图幅的视图；裁剪视图范围不得大于投影裁剪矩形加 25 mm 标签/边距余量。此门禁不能替代 PDF 图像复核，也不保证所有文字不重叠。
 
-离线回归覆盖越界、无效边界、陈旧完整模型范围和正常标签余量。公开 API 依据：[IView.GetOutline](https://help.solidworks.com/2018/english/api/sldworksapi/SolidWorks.Interop.sldworks~SolidWorks.Interop.sldworks.IView~GetOutline.html)。实机验证结果在后续记录中补充。
+离线回归覆盖越界、无效边界、陈旧完整模型范围和正常标签余量。公开 API 依据：[IView.GetOutline](https://help.solidworks.com/2018/english/api/sldworksapi/SolidWorks.Interop.sldworks~SolidWorks.Interop.sldworks.IView~GetOutline.html)。Windows / Python 3.10 / SOLIDWORKS 2026 SP4.1（34.4.1）通过已安装 MCP 实测：同一双页工程图在隐藏会话复现裁剪范围陈旧，修复后显示会话并重绘，裁剪剖视与局部视图均回到预期位置；PDF 图像人工复核及九个引线端点投影检查通过。未验证其他 SOLIDWORKS 版本。
