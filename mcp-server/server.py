@@ -47,6 +47,10 @@ from scripts.sw_operation_guard import (  # noqa: E402
 )
 
 
+from scripts.sw_runtime_identity import RuntimeIdentity, RuntimeIdentityError  # noqa: E402
+
+_runtime_identity = RuntimeIdentity.capture(REPO_DIR)
+
 pythoncom = None
 _automation_loaded = False
 
@@ -1324,6 +1328,8 @@ def _result(payload: Dict[str, Any], response_format: ResponseFormat) -> str:
 
 
 def _tool_error(exc: Exception, response_format: ResponseFormat = ResponseFormat.JSON) -> str:
+    if isinstance(exc, RuntimeIdentityError):
+        return _result(exc.details, response_format)
     """Return actionable tool error content."""
     payload = {
         "status": "error",
@@ -1350,6 +1356,12 @@ def _run_locked(operation, response_format: ResponseFormat, load_automation: boo
     续调用都排队等一个永远不会释放的锁。超时后返回结构化错误并提示调用
     solidworks_recover。
     """
+    if load_automation or desktop_guard:
+        try:
+            _runtime_identity.assert_current()
+        except RuntimeIdentityError as exc:
+            return _result(exc.details, response_format)
+
     if not _sw_lock.acquire(timeout=timeout_seconds):
         payload = {
             "status": "error",
@@ -1370,6 +1382,8 @@ def _run_locked(operation, response_format: ResponseFormat, load_automation: boo
     _lock_state["thread"] = threading.current_thread().name
     _lock_state["operation"] = None
     try:
+        if load_automation or desktop_guard:
+            _runtime_identity.assert_current()
         if load_automation:
             _load_automation_modules()
         _coinitialize()
@@ -1378,7 +1392,11 @@ def _run_locked(operation, response_format: ResponseFormat, load_automation: boo
             timeout_seconds, process_id=_selected_process_id
         ) if (load_automation or desktop_guard) else nullcontext()
         with desktop_lock, redirect_stdout(sys.stderr):
+            if load_automation or desktop_guard:
+                identity = _runtime_identity.assert_current()
             payload = operation()
+            if (load_automation or desktop_guard) and isinstance(payload, dict):
+                payload.setdefault('runtime_identity', identity)
             if load_automation and _selected_process_id is not None and isinstance(payload, dict):
                 payload.setdefault("process_id", _selected_process_id)
         return _result(payload, response_format)
@@ -1776,6 +1794,16 @@ def solidworks_list_instances() -> str:
         "status": "ok", "selected_process_id": _selected_process_id,
         "instances": _list_solidworks_instances_backend(),
     }, ResponseFormat.JSON)
+
+
+@mcp.tool(
+    name="solidworks_runtime_status",
+    title="Inspect MCP Runtime Identity",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def solidworks_runtime_status() -> str:
+    """不访问 COM，核对运行目录、启动时源摘要和当前源摘要。"""
+    return _result(_runtime_identity.status(), ResponseFormat.JSON)
 
 
 @mcp.tool(
