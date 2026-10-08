@@ -989,6 +989,13 @@ class SolidWorksPackAndGoInput(ActiveDocumentInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
+class SolidWorksPackRenameInput(ActiveDocumentInput):
+    """显式一对一映射的原生文件集复制。"""
+    mapping_path: str = Field(...,min_length=1)
+    dry_run: bool = True
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
 class SolidWorksReviewInput(ActiveDocumentInput):
     """Input for exporting previews and a review report."""
 
@@ -3231,6 +3238,23 @@ def solidworks_pack_and_go_tool(params: SolidWorksPackAndGoInput) -> str:
         return result
 
     return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_pack_and_go_renamed",
+    title="Native Pack and Go with Explicit Names",
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False},
+)
+def solidworks_pack_and_go_renamed(params: SolidWorksPackRenameInput) -> str:
+    """按严格路径映射复制文件集，不保存源文档，不使用文件系统重命名回退。"""
+    def op():
+        from scripts.sw_pack_rename import CopyEntry,copy_named_document_set
+        entries=[CopyEntry.model_validate(r) for r in json.loads(Path(params.mapping_path).read_text(encoding='utf-8-sig'))]
+        sw,model=_active_model_required(params)
+        result=copy_named_document_set(sw,model,entries,params.dry_run)
+        result['document']=_model_summary(model)
+        return result
+    return _run_locked(op,params.response_format)
 
 
 @mcp.tool(

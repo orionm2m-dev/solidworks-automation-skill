@@ -347,3 +347,8 @@ claude mcp add --scope user solidworks -- python C:\path\to\solidworks-automatio
 - MCP 已覆盖基础盒体/圆柱、复杂孔槽、添加组件、常用 Mate、固定/浮动、外观、导出、审查、旋转马达、Motion 结果门禁，以及 DFM/Routing/FEA/复杂几何的受控入口。
 - 受限封闭直纹 Loft 可生成并重开真实 STEP/BREP；平滑 Loft、扫描、自由曲面、G1/G2 和模具仍只开放结构化计划门禁。
 - SolidWorks Motion / Simulation 许可证差异可能影响计算能力；缺少合法加载项或授权时返回 `blocked`，不尝试绕过。
+
+
+## 显式文件命名
+
+`solidworks_pack_and_go_renamed`：受 PID/文档路径保护的原生文件集复制，规则及限制见[原生命名复制](../references/pack-and-go-renamed.md)。
