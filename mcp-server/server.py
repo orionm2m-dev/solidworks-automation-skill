@@ -312,6 +312,13 @@ class ActiveDocumentInput(BaseInput):
         return value
 
 
+class SolidWorksDrawingBookInput(ActiveDocumentInput):
+    """包含严格页布局的多页工程图输入。"""
+    book_path: str = Field(...,min_length=1)
+    dry_run: bool = True
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
 class SolidWorksDrawingSectionsInput(ActiveDocumentInput):
     """只读检查原生剖视的排除组件和剖切定义。"""
     response_format: ResponseFormat = ResponseFormat.JSON
@@ -3412,6 +3419,21 @@ def solidworks_create_drawing_layout(params: SolidWorksDrawingLayoutInput) -> st
             import traceback
             raise RuntimeError(traceback.format_exc())
     return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_create_drawing_book",
+    title="Create Native Multi-sheet Drawing",
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False},
+)
+def solidworks_create_drawing_book(params: SolidWorksDrawingBookInput) -> str:
+    """按严格输入创建同一源模型的多页工程图和全部页 PDF/DXF。"""
+    def op():
+        from scripts.sw_drawing_book import DrawingBook,create_book
+        book=DrawingBook.model_validate_json(Path(params.book_path).read_text(encoding='utf-8-sig'))
+        sw,model=_active_model_required(params)
+        return create_book(sw,model,book,params.dry_run)
+    return _run_locked(op,params.response_format)
 
 
 @mcp.tool(

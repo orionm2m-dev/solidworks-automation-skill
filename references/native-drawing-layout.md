@@ -20,3 +20,11 @@
 `solidworks_inspect_drawing_sections` 是受文档路径保护的只读检查：返回排除组件、局部/仅剖面状态、实际填充数量、轻化状态和非零特征错误。应结合保存后重新打开的检查与 PDF 视觉复核；不能仅凭 API 返回的深度默认值断言剖切正常。
 
 新增实机核验：SOLIDWORKS 2026 SP4.1，装配体全深剖视保存后重新打开，16 个填充面、无排除组件、剖视特征错误码 0；PDF 已视觉复核。此证据不扩展其他版本的支持范围。
+
+## 同一编号的多页工程图
+
+`solidworks_create_drawing_book` 读取 `DrawingBook` JSON：`output_path` 与有序 `sheets`；每页提供唯一 `name` 和既有 `DrawingLayout` 的 `layout`。全部页必须共享输出文件，工具继续按完整路径保护一个已保存源模型。支持 1–20 页；已有原生或导出文件时拒绝覆盖。
+
+先运行 `dry_run=true`。实建时先保存首张图纸，再设置页名，避免本地化初始标题异步变化导致文档保护误报。后续页使用原生 `NewSheet3`，最终用 PDF `SetSheets` 导出全部页。DXF 暂设 `swDxfMultiSheetOption=swDxfMultiSheet`，并在 finally 中恢复原设置；首张图在 Model 空间，后续图在纸空间 layouts，验证不能只遍历 Model。每个页面的视图和参考尺寸审计保存在统一 `.audit.json`。
+
+实机验证：SOLIDWORKS 2026 SP4.1（34.4.1），四个文档、共七页；页数、原生模型引用、剖视填充、原生尺寸与全部 DXF layouts 的测量值、PDF 文字边界及重叠已检查，PDF 已视觉复核。能力保持 pilot；参考尺寸仍非模型拓扑关联，模型修改后必须重新生成并复核。

@@ -498,6 +498,8 @@
     },
     {
       "id": "native_drawing_layout",
+      "multi_sheet_tool": "solidworks_create_drawing_book",
+      "multi_sheet_verified": "SOLIDWORKS 2026 SP4.1; 4 documents / 7 sheets; native/PDF/DXF layout checks",
       "label": "原生工程图布局与剖视参考尺寸",
       "level": "pilot",
       "backends": [

@@ -234,3 +234,5 @@ V2 附带 **37 个 deterministic reliability scenarios**，覆盖正常执行、
 ---
 
 <sub>关注抖音 @balance. · 嵌入式开发、SolidWorks 自动化和 AI 辅助工程实践持续更新</sub>
+
+多页原生工程图（pilot）：`solidworks_create_drawing_book` 在一个文档编号下创建有序图纸并导出完整 PDF/DXF，详见 [原生工程图布局](references/native-drawing-layout.md)。
