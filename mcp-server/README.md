@@ -375,3 +375,13 @@ claude mcp add --scope user solidworks -- python C:\path\to\solidworks-automatio
 ## 显式文件命名
 
 `solidworks_pack_and_go_renamed`：受 PID/文档路径保护的原生文件集复制，规则及限制见[原生命名复制](../references/pack-and-go-renamed.md)。
+
+## 运行目录和源代码一致性
+
+生产配置可设置 `SOLIDWORKS_MCP_RUNTIME_ROOT` 为安装仓库的绝对路径。`solidworks_runtime_status` 不访问 COM，返回实际服务路径、服务 PID、启动时及当前源摘要。客户端应先检查 `status=ready`、`runtime_protocol=1` 与期望路径，再发送 CAD 请求；缺少该工具的旧服务必须重新连接。
+
+原生操作在加载 COM 前、等待锁后及取得桌面锁后校验运行身份。目录不符返回 `SW_RUNTIME_ROOT_MISMATCH`，启动后 `.py/.cs/.ps1` 或能力清单改变返回 `SW_RUNTIME_SOURCE_CHANGED`；都不执行该 CAD 操作。成功响应附带 `runtime_identity`。源摘要覆盖 `mcp-server`、`scripts`、`subskills` 下的执行源及 `capabilities.yaml`，不受 README、测试结果和模型文件变化影响。
+
+开发工作树用于开发和独立验证；实际项目命令应使用同一个已安装根目录。不要为获得新工具而另启旧分支服务器。先合入安装副本、测试并重启 MCP，再核对运行身份。已有旧服务没有此保护，首次部署时仍必须重连；此检查不是操作系统安全边界，也不消除校验后并发编辑代码的竞态。安装更新应在无 CAD 操作时进行。多进程 CAD 继续使用不同目标 PID，但共享同一受控代码来源。
+
+验证：Windows / Python 3.10，离线覆盖目录不符、增删改源文件、相对路径拒绝、文档变化不触发以及陈旧源在加载 COM 前阻断；SOLIDWORKS 版本能力不会因身份校验自动扩大。
