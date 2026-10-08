@@ -95,6 +95,21 @@ def require_section_hatches(view, minimum, view_id):
     return count
 
 
+def validate_view_outline(outline, size_mm, view_id, crop_span_mm=None):
+    """拒绝越出图幅或仍使用完整模型边界的裁剪视图，单位为米。"""
+    import math
+    box = [float(value) * 1000 for value in outline]
+    if len(box) != 4 or not all(math.isfinite(value) for value in box):
+        raise RuntimeError(f'Invalid view outline: {view_id}')
+    if not (0 <= box[0] < box[2] <= size_mm[0] and 0 <= box[1] < box[3] <= size_mm[1]):
+        raise RuntimeError(f'View outside sheet: {view_id}: {box}')
+    if crop_span_mm is not None:
+        # GetOutline 包含视图边距和标签；允许 25 mm，但不接受完整模型的陈旧范围。
+        if any(box[i + 2] - box[i] > crop_span_mm[i] + 25 for i in range(2)):
+            raise RuntimeError(f'Crop outline not refreshed: {view_id}: {box}')
+    return box
+
+
 def create_layout(sw, source, spec, dry_run=True, *, _drawing=None, _sheet_name=None):
     """创建独立图纸；参考尺寸保留原生尺寸实体，明确为快照而非模型关联。"""
     from scripts.sw_connect import get_com_member as get, new_document, create_empty_dispatch_variant
@@ -118,6 +133,8 @@ def create_layout(sw, source, spec, dry_run=True, *, _drawing=None, _sheet_name=
     if dry_run:
         return {'status':'ready','source_path':source_path,'named_views':named_views,
                 'layout':spec.model_dump(),'manual_review_required':True}
+    # 裁剪视图的 GetOutline 在不可见会话中可能保留完整模型范围。
+    sw.Visible = True
     targets[0].parent.mkdir(parents=True,exist_ok=True)
     draw = _drawing if _drawing is not None else new_document(sw,'drawing',spec.template_path)
     if _drawing is not None:
@@ -173,12 +190,15 @@ def create_layout(sw, source, spec, dry_run=True, *, _drawing=None, _sheet_name=
         if sketch: arr=transform(arr,get(get(v,'GetSketch'),'ModelToSketchTransform'))
         return arr
     def center(v, xy):
+        draw.GraphicsRedraw2()
         draw.ForceRebuild3(False)
+        draw.GraphicsRedraw2()
         box=list(get(v,'GetOutline')); pos=list(get(v,'Position'))
         pos[0]+=xy[0]/1000-(box[0]+box[2])/2
         pos[1]+=xy[1]/1000-(box[1]+box[3])/2
         v.Position=vec(pos)
         draw.ForceRebuild3(False)
+        draw.GraphicsRedraw2()
     for vs in spec.views:
         guard(); draw.ClearSelection2(True)
         if vs.parent:
@@ -213,6 +233,11 @@ def create_layout(sw, source, spec, dry_run=True, *, _drawing=None, _sheet_name=
                 if line is None or not line.Select4(i!=0,null): raise RuntimeError('Crop selection failed')
             if v.Crop2(False,False,5)!=1 or not get(v,'IsCropped'): raise RuntimeError('Native view crop failed')
         center(v,vs.center_mm)
+        crop_span = None
+        if vs.crop_mm:
+            projected = [project(v,p) for p in vs.crop_mm]
+            crop_span = [1000*(max(p[i] for p in projected)-min(p[i] for p in projected)) for i in range(2)]
+        validate_view_outline(get(v,'GetOutline'), spec.size_mm, vs.id, crop_span)
         actual_source=str(get(v,'GetReferencedModelName'))
         check_document_target(actual_source,source_title,expected_path=source_path,required=True)
         if abs(float(get(v,'ScaleDecimal'))-vs.scale)>1e-8: raise RuntimeError('View scale mismatch')

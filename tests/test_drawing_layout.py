@@ -109,3 +109,21 @@ def test_section_inspection_reports_only_failed_features():
     result=inspect_sections(drawing)
     assert result['read_only'] is True
     assert result['feature_errors']==[{'name':'bad','type':'SectionAssemView','code':1}]
+
+
+@pytest.mark.parametrize('box',[[.02,-.002,.08,.378],[.02,.03,.5,.2],[float('nan'),.01,.03,.04]])
+def test_reject_view_outside_sheet_or_invalid_outline(box):
+    from scripts.sw_drawing_layout import validate_view_outline
+    with pytest.raises(RuntimeError):
+        validate_view_outline(box,(420,297),'detail')
+
+
+def test_reject_full_model_outline_when_crop_flag_is_true():
+    from scripts.sw_drawing_layout import validate_view_outline
+    with pytest.raises(RuntimeError,match='not refreshed'):
+        validate_view_outline([.05,.01,.1,.28],(420,297),'detail',(50,60))
+
+
+def test_allow_cropped_outline_with_label_margin():
+    from scripts.sw_drawing_layout import validate_view_outline
+    assert validate_view_outline([.05,.1,.105,.182],(420,297),'detail',(50,75)) == pytest.approx([50,100,105,182])
