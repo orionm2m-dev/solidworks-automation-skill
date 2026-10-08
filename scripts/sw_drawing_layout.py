@@ -95,7 +95,7 @@ def require_section_hatches(view, minimum, view_id):
     return count
 
 
-def create_layout(sw, source, spec, dry_run=True):
+def create_layout(sw, source, spec, dry_run=True, *, _drawing=None, _sheet_name=None):
     """创建独立图纸；参考尺寸保留原生尺寸实体，明确为快照而非模型关联。"""
     from scripts.sw_connect import get_com_member as get, new_document, create_empty_dispatch_variant
     from scripts.sw_operation_guard import check_document_target
@@ -109,7 +109,7 @@ def create_layout(sw, source, spec, dry_run=True):
     targets = [Path(spec.output_path)]
     if spec.export_pdf: targets.append(Path(spec.output_path).with_suffix('.pdf'))
     if spec.export_dxf: targets.append(Path(spec.output_path).with_suffix('.dxf'))
-    if any(p.exists() for p in targets):
+    if _drawing is None and any(p.exists() for p in targets):
         raise FileExistsError('Refusing to replace an existing drawing or export')
     named_views = list(get(source,'GetModelViewNames') or [])
     for view in spec.views:
@@ -119,7 +119,11 @@ def create_layout(sw, source, spec, dry_run=True):
         return {'status':'ready','source_path':source_path,'named_views':named_views,
                 'layout':spec.model_dump(),'manual_review_required':True}
     targets[0].parent.mkdir(parents=True,exist_ok=True)
-    draw = new_document(sw,'drawing',spec.template_path)
+    draw = _drawing if _drawing is not None else new_document(sw,'drawing',spec.template_path)
+    if _drawing is not None:
+        check_document_target(get(draw,'GetPathName'),get(draw,'GetTitle'),expected_path=spec.output_path,required=True)
+        if not draw.NewSheet3(_sheet_name,12,13,1.,1.,True,'',spec.size_mm[0]/1000,spec.size_mm[1]/1000,''):
+            raise RuntimeError('NewSheet3 failed')
     title = str(get(draw,'GetTitle'))
     null = create_empty_dispatch_variant()
     vec = lambda values: VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_R8,tuple(values))
@@ -137,7 +141,10 @@ def create_layout(sw, source, spec, dry_run=True):
     active = get(sw, 'ActiveDoc')
     if get(active, 'GetTitle') != title:
         raise RuntimeError(f'New drawing is not active: created={title!r}, active={get(active, "GetTitle")!r}')
+    if _sheet_name and not get(draw,'GetPathName'): save()
     sheet=get(draw,'GetCurrentSheet')
+    if _sheet_name:
+        sheet.SetName(_sheet_name)
     sheet_name=str(get(sheet,'GetName'))
     guard()
     if not draw.SetupSheet5(sheet_name,12,13,1.,1.,True,'',spec.size_mm[0]/1000,spec.size_mm[1]/1000,'',True):
