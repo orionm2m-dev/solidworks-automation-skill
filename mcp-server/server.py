@@ -1008,6 +1008,12 @@ class SolidWorksPackAndGoInput(ActiveDocumentInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
+class SolidWorksFrameCutInput(ActiveDocumentInput):
+    """结构化任意坐标系切除，不执行用户代码。"""
+    spec_path: str = Field(..., min_length=1)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
 class SolidWorksReviewInput(ActiveDocumentInput):
     """Input for exporting previews and a review report."""
 
@@ -3250,6 +3256,20 @@ def solidworks_pack_and_go_tool(params: SolidWorksPackAndGoInput) -> str:
         return result
 
     return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_create_frame_cut", title="Native Rounded Pocket in a Specified Frame",
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_create_frame_cut(params: SolidWorksFrameCutInput) -> str:
+    """按正交坐标系创建固定基准面、原生封闭草图及盲切除，回读体积与实体数量。"""
+    def op():
+        from scripts.sw_frame_cut import FrameCutSpec, create_frame_cut
+        spec=FrameCutSpec.model_validate_json(Path(params.spec_path).read_text(encoding="utf-8-sig"))
+        sw,model=_active_part_required(params)
+        result=create_frame_cut(sw,model,spec)
+        result["document"]=_model_summary(model)
+        return result
+    return _run_locked(op,params.response_format)
 
 
 @mcp.tool(
