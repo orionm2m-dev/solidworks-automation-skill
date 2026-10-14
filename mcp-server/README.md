@@ -351,3 +351,7 @@ claude mcp add --scope user solidworks -- python C:\path\to\solidworks-automatio
 ## 原生工程图布局
 
 `solidworks_create_drawing_layout`、只读 `solidworks_inspect_drawing_sections` 和限定 PID 的 `solidworks_cancel_dimension_prompt`：见[输入规则、尺寸关联限制和实机验证](../references/native-drawing-layout.md)。
+
+### 任意平面盲切除
+
+`solidworks_create_frame_cut` 读取严格 JSON 轮廓并创建原生基准面、草图与切除。见 [参数及审核边界](../references/native-frame-cut.md)。必须指定 `expected_document_path`。
