@@ -385,3 +385,7 @@ claude mcp add --scope user solidworks -- python C:\path\to\solidworks-automatio
 开发工作树用于开发和独立验证；实际项目命令应使用同一个已安装根目录。不要为获得新工具而另启旧分支服务器。先合入安装副本、测试并重启 MCP，再核对运行身份。已有旧服务没有此保护，首次部署时仍必须重连；此检查不是操作系统安全边界，也不消除校验后并发编辑代码的竞态。安装更新应在无 CAD 操作时进行。多进程 CAD 继续使用不同目标 PID，但共享同一受控代码来源。
 
 验证：Windows / Python 3.10，离线覆盖目录不符、增删改源文件、相对路径拒绝、文档变化不触发以及陈旧源在加载 COM 前阻断；SOLIDWORKS 版本能力不会因身份校验自动扩大。
+
+### 任意平面盲切除
+
+`solidworks_create_frame_cut` 读取严格 JSON 轮廓并创建原生基准面、草图与切除。见 [参数及审核边界](../references/native-frame-cut.md)。必须指定 `expected_document_path`。

@@ -605,6 +605,26 @@
     "interactive",
     "reviewed"
   ]
-}
+},
+{
+  "id": "native_frame_cut",
+  "label": "正交坐标系的原生圆角矩形盲切除",
+  "level": "pilot",
+  "backends": [
+    "solidworks-csharp-pia"
+  ],
+  "mcp_tools": [
+    "solidworks_create_frame_cut"
+  ],
+  "verified_versions": [],
+  "limitations": [
+    "固定参考平面，非关联基准；草图和切除为原生特征",
+    "每次必须核对方向、壁厚、导出和装配干涉；失败不自动保存或回滚"
+  ],
+  "allowed_modes": [
+    "interactive",
+    "reviewed"
   ]
+}
+]
 }
