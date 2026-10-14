@@ -8,7 +8,7 @@ using SolidWorks.Interop.sldworks;
 
 // 仅由受互斥锁保护的 MCP 调用；不启动进程、不切换窗口、不保存或关闭源文件。
 public static class NativeNamedCopy {
- public class Entry { public string source, target; }
+ public class Entry { public string source, target; public bool keep_source; }
  public class Request { public int process_id; public string source; public bool dry_run; public Entry[] entries; }
  static JavaScriptSerializer json=new JavaScriptSerializer { MaxJsonLength=int.MaxValue };
  [DllImport("ole32.dll")] static extern int GetRunningObjectTable(int reserved,out System.Runtime.InteropServices.ComTypes.IRunningObjectTable table);
@@ -50,6 +50,10 @@ public static class NativeNamedCopy {
   foreach(var entry in req.entries) {
    if(!Path.IsPathRooted(entry.source)||!Path.IsPathRooted(entry.target))throw new Exception("Absolute paths required");
    string src=Canon(entry.source),dst=Canon(entry.target);
+   if(entry.keep_source) {
+    if(!string.Equals(src,dst,StringComparison.OrdinalIgnoreCase)||map.ContainsKey(src)||!File.Exists(src)||string.Equals(src,Canon(req.source),StringComparison.OrdinalIgnoreCase))throw new Exception("Invalid retained reference");
+    map.Add(src,"");continue;
+   }
    if(string.Equals(src,dst,StringComparison.OrdinalIgnoreCase)||map.ContainsKey(src)||!targets.Add(dst))throw new Exception("Duplicate or in-place mapping");
    if(!File.Exists(src)||File.Exists(dst)||!string.Equals(Path.GetExtension(src),Path.GetExtension(dst),StringComparison.OrdinalIgnoreCase))throw new Exception("Invalid source or destination");
    map.Add(src,dst);
@@ -69,14 +73,14 @@ public static class NativeNamedCopy {
   var result=new Dictionary<string,object> {
    {"status",req.dry_run?"ready":"copied"},{"source",model.GetPathName()},{"names",names},{"targets",destinations},
    {"dirty_source_documents",dirty.Distinct().ToArray()},{"components",components},{"volume_m3",mp.Volume},
-   {"source_saved",false},{"native_pack_and_go",true},{"backend","csharp_pia"},{"manual_review_required",true},{"cold_open_required",!req.dry_run}
+   {"retained_sources",names.Where((n,i)=>string.IsNullOrEmpty(destinations[i])).ToArray()},{"source_saved",false},{"native_pack_and_go",true},{"backend","csharp_pia"},{"manual_review_required",true},{"cold_open_required",!req.dry_run}
   };
   if(req.dry_run)return json.Serialize(result);
-  foreach(var dest in destinations)Directory.CreateDirectory(Path.GetDirectoryName(dest));
+  foreach(var dest in destinations.Where(p=>!string.IsNullOrEmpty(p)))Directory.CreateDirectory(Path.GetDirectoryName(dest));
   if(!pg.SetDocumentSaveToNames(destinations))throw new Exception("Native mapping rejected");
   Guard(sw,req.source);
   var codes=(int[])model.Extension.SavePackAndGo(pg);
-  if(codes==null||codes.Length!=destinations.Length||codes.Any(c=>c!=0)||destinations.Any(p=>!File.Exists(p)))throw new Exception("Native Pack and Go did not complete: "+json.Serialize(codes));
+  if(codes==null||codes.Length!=destinations.Length||codes.Where((c,i)=>!string.IsNullOrEmpty(destinations[i])).Any(c=>c!=0)||destinations.Where(p=>!string.IsNullOrEmpty(p)).Any(p=>!File.Exists(p)))throw new Exception("Native Pack and Go did not complete: "+json.Serialize(codes));
   Guard(sw,req.source);result["status_codes"]=codes;return json.Serialize(result);
  }
 }

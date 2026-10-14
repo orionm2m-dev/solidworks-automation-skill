@@ -46,3 +46,15 @@ def test_mcp_registers_guarded_rename_tool():
     import server
     assert 'solidworks_pack_and_go_renamed' in server.mcp._tool_manager._tools
     assert issubclass(server.SolidWorksPackRenameInput,server.ActiveDocumentInput)
+
+
+def test_explicit_retained_reference_maps_to_native_empty_name(tmp_path):
+    entries=mapping(tmp_path)
+    source=tmp_path/'shared.SLDPRT';source.write_bytes(b'shared')
+    entries.append(CopyEntry(source=str(source),target=str(source),keep_source=True))
+    assert validate_mapping(entries,[e.source for e in entries])==[entries[0].target,""]
+    assert source.read_bytes()==b'shared'
+
+def test_retained_reference_cannot_redirect(tmp_path):
+    entries=mapping(tmp_path);entries[0].keep_source=True
+    with pytest.raises(ValueError,match='exact source'):validate_mapping(entries,[entries[0].source])
