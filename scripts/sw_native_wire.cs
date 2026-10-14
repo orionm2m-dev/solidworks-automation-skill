@@ -28,11 +28,12 @@ public static class NativeWireTools {
  static IBody2[] Bodies(IModelDoc2 d){return ((object[])((IPartDoc)d).GetBodies2(-1,false)??new object[0]).Cast<IBody2>().ToArray();}
  static IComponent2[] Components(IModelDoc2 d){return ((object[])((IAssemblyDoc)d).GetComponents(false)??new object[0]).Cast<IComponent2>().ToArray();}
  static double[] Bounds(IBody2 b){return ((double[])b.GetBodyBox()).Select(v=>v*1000).ToArray();}
- static object BodyRow(IBody2 b){var m=b.GetMassProperties(1) as double[];return new {name=b.Name,type=b.GetType(),bounds_mm=Bounds(b),volume_mm3=m==null?0:m[3]*1e9,face_count=b.GetFaceCount()};}
+ static double[] BodyColor(IBody2 b){var c=b.MaterialPropertyValues2 as double[];return c!=null&&c.Length>=3&&c.Take(3).All(v=>v>=0&&v<=1)?c.Take(3).ToArray():null;}
+ static object BodyRow(IBody2 b){var m=b.GetMassProperties(1) as double[];return new {name=b.Name,type=b.GetType(),color=BodyColor(b),bounds_mm=Bounds(b),volume_mm3=m==null?0:m[3]*1e9,face_count=b.GetFaceCount()};}
  static object ComponentRow(IComponent2 c){return new{name=c.Name2,path=c.GetPathName(),suppression=c.GetSuppression(),fixed_component=c.IsFixed(),transform=(double[])c.Transform2.ArrayData};}
  static object Document(IModelDoc2 d){return new{title=d.GetTitle(),path=d.GetPathName(),type=d.GetType()};}
  static IEnumerable<IFeature> Features(IModelDoc2 d){for(var f=(IFeature)d.FirstFeature();f!=null;f=(IFeature)f.GetNextFeature())yield return f;}
- static void Paint(IFeature f,string name,double[] rgb){f.Name=name;var faces=f.GetFaces() as object[];if(faces==null||faces.Length==0)throw new Exception("Feature has no faces: "+name);var b=(IBody2)((IFace2)faces[0]).GetBody();b.Name=name;b.MaterialPropertyValues2=new[]{rgb[0],rgb[1],rgb[2],.55,.85,.25,.25,0.0,0.0};}
+ static void Paint(IFeature f,string name,double[] rgb){f.Name=name;var faces=f.GetFaces() as object[];if(faces==null||faces.Length==0)throw new Exception("Feature has no faces: "+name);var b=(IBody2)((IFace2)faces[0]).GetBody();b.Name=name;b.MaterialPropertyValues2=new[]{rgb[0],rgb[1],rgb[2],.55,.85,.25,.25,0.0,0.0};var actual=BodyColor(b);if(actual==null||actual.Zip(rgb,(a,c)=>Math.Abs(a-c)).Max()>1e-6)throw new Exception("Body colour readback mismatch");}
  static double Choose(int n,int k){double c=1;for(int i=1;i<=k;i++)c=c*(n+1-i)/i;return c;}
  static double[] Point(double[][] p,double t){int n=p.Length-1;var q=new double[3];for(int i=0;i<=n;i++)for(int a=0;a<3;a++)q[a]+=p[i][a]*Choose(n,i)*Math.Pow(1-t,n-i)*Math.Pow(t,i);return q;}
  static double Length(double[][] p){double len=0;var q=p[0];for(int i=1;i<=2000;i++){var r=Point(p,i/2000.0);len+=Math.Sqrt(q.Zip(r,(a,b)=>(a-b)*(a-b)).Sum());q=r;}return len;}
