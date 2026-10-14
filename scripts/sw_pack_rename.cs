@@ -80,7 +80,7 @@ public static class NativeNamedCopy {
   if(!pg.SetDocumentSaveToNames(destinations))throw new Exception("Native mapping rejected");
   Guard(sw,req.source);
   var codes=(int[])model.Extension.SavePackAndGo(pg);
-  if(codes==null||codes.Length!=destinations.Length||codes.Where((c,i)=>!string.IsNullOrEmpty(destinations[i])).Any(c=>c!=0)||destinations.Where(p=>!string.IsNullOrEmpty(p)).Any(p=>!File.Exists(p)))throw new Exception("Native Pack and Go did not complete: "+json.Serialize(codes));
+  if(codes==null||(codes.Length!=destinations.Length&&codes.Length!=destinations.Count(p=>!string.IsNullOrEmpty(p)))||codes.Any(c=>c!=0)||destinations.Where(p=>!string.IsNullOrEmpty(p)).Any(p=>!File.Exists(p)))throw new Exception("Native Pack and Go did not complete: "+json.Serialize(codes));
   Guard(sw,req.source);result["status_codes"]=codes;return json.Serialize(result);
  }
 }
