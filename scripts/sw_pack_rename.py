@@ -10,6 +10,7 @@ class CopyEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source: str = Field(min_length=1)
     target: str = Field(min_length=1)
+    keep_source: bool = False
 
 
 def canonical(path):
@@ -28,6 +29,13 @@ def validate_mapping(entries, native_names):
         if source.suffix.lower() != target.suffix.lower():
             raise ValueError("Document extension must be preserved")
         src, dst = canonical(source), canonical(target)
+        if entry.keep_source:
+            if src != dst or src in mapping:
+                raise ValueError("Retained reference must target its exact source once")
+            if not source.is_file():
+                raise FileNotFoundError(source)
+            mapping[src] = ""
+            continue
         if src in mapping or dst in targets or src == dst:
             raise ValueError("Duplicate or in-place mapping")
         if not source.is_file():
@@ -78,6 +86,8 @@ def copy_named_document_set(sw, model, entries, dry_run=True):
     if not dry_run:
         result['outputs']=[]
         for dest in result['targets']:
+            if not dest:
+                continue
             p=Path(dest)
             if not p.is_file() or p.stat().st_size==0:raise RuntimeError(f"Missing output {dest}")
             result['outputs'].append({'path':dest,'size':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()})
