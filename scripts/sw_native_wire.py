@@ -69,7 +69,7 @@ def invoke_native(sw, target, action, **values):
     expected=Path(target)
     if not expected.is_absolute(): raise ValueError('Absolute document path required')
     model=get(sw,'ActiveDoc')
-    if model is None or os.path.normcase(os.path.abspath(get(model,'GetPathName')))!=os.path.normcase(str(expected.resolve())):
+    if model is None or os.path.normcase(os.path.abspath(get(model,'GetPathName')))!=os.path.normcase(os.path.abspath(str(expected))):
         raise ValueError('Active document target mismatch')
     install=Path(discover_installation('solidworks')['executable']).parent
     interop=next((p for p in [install/'api/redist',install] if (p/'SolidWorks.Interop.sldworks.dll').is_file()),None)
