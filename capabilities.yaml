@@ -616,7 +616,7 @@
   "mcp_tools": [
     "solidworks_create_frame_cut"
   ],
-  "verified_versions": [],
+  "verified_versions": ["2026 SP4.1 (34.4.1)"],
   "limitations": [
     "固定参考平面，非关联基准；草图和切除为原生特征",
     "每次必须核对方向、壁厚、导出和装配干涉；失败不自动保存或回滚"
