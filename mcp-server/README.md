@@ -389,3 +389,7 @@ claude mcp add --scope user solidworks -- python C:\path\to\solidworks-automatio
 ### 任意平面盲切除
 
 `solidworks_create_frame_cut` 读取严格 JSON 轮廓并创建原生基准面、草图与切除。见 [参数及审核边界](../references/native-frame-cut.md)。必须指定 `expected_document_path`。
+
+## 原生圆截面路径工具
+
+五个受保护的试验性工具支持原生扫描、STEP 导入、实体审查/排除和保持位置的组件替换。规格、限制和审查要求见 [工具说明](../docs/native-wire-tools.md)。

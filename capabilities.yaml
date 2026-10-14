@@ -623,7 +623,29 @@
   ],
   "allowed_modes": [
     "interactive",
-    "reviewed"
+    "reviewed",
+    {
+      "id": "native_round_sweeps",
+      "label": "原生圆截面路径与机械导入",
+      "level": "pilot",
+      "backends": [
+        "solidworks-csharp-pia"
+      ],
+      "verified_versions": [],
+      "dependencies": [
+        "python",
+        "SOLIDWORKS PIA"
+      ],
+      "limitations": [
+        "严格 Bezier/直线路径与矩形拉伸；不是 SOLIDWORKS Routing。",
+        "只支持空零件构建和固定唯一组件替换；失败可能留下未保存特征，需要审查。",
+        "真实 CAD 验证及电缆工艺确认是交付前提。"
+      ],
+      "allowed_modes": [
+        "interactive",
+        "reviewed"
+      ]
+    }
   ]
 }
 ]

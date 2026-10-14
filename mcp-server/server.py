@@ -3902,6 +3902,10 @@ def solidworks_validate_motion_study(params: SolidWorksMotionValidationInput = S
     return _run_locked(op, params.response_format)
 
 
+from scripts.sw_native_wire import register_tools as _register_native_wire_tools
+_register_native_wire_tools(mcp, connect_solidworks, _run_locked, ResponseFormat)
+
+
 def main() -> None:
     """Run the SolidWorks MCP server over stdio."""
     if sys.stdout is not _MCP_STDOUT:
