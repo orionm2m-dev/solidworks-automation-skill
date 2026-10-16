@@ -28,8 +28,8 @@ class FrameCutSpec(BaseModel):
                 raise ValueError("Axes must be unit vectors")
         if abs(sum(a*b for a,b in zip(self.x_axis,self.y_axis))) > 1e-8:
             raise ValueError("Axes must be perpendicular")
-        if 2*self.radius_mm >= min(self.width_mm,self.height_mm):
-            raise ValueError("Radius must be less than half the profile size")
+        if 2*self.radius_mm > min(self.width_mm,self.height_mm):
+            raise ValueError("Radius must not exceed half the profile size")
         return self
 
 def create_frame_cut(sw, model, spec):

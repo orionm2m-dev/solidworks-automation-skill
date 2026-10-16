@@ -236,3 +236,8 @@ V2 附带 **37 个 deterministic reliability scenarios**，覆盖正常执行、
 <sub>关注抖音 @balance. · 嵌入式开发、SolidWorks 自动化和 AI 辅助工程实践持续更新</sub>
 
 多页原生工程图（pilot）：`solidworks_create_drawing_book` 在一个文档编号下创建有序图纸并导出完整 PDF/DXF，详见 [原生工程图布局](references/native-drawing-layout.md)。
+
+
+### 固定坐标系的圆孔与胶囊槽
+
+`solidworks_create_frame_cut` 支持 `2 * radius_mm == min(width_mm, height_mm)`。宽高相等时轮廓为圆；仅短边等于直径时为胶囊槽。精确为零的直线段不调用 CreateLine，四段圆弧仍组成闭合轮廓。坐标由显式正交框架转换，AddToDB 禁止自动吸附。生产使用仍须重建、导出并回读实际轮廓和轴线。输入验证有离线测试；新增轮廓的实机证据单独记录。
