@@ -12,7 +12,7 @@ def test_tilted_frame_accepted():
     a=math.radians(2)
     assert valid(y_axis=[0,math.cos(a),-math.sin(a)]).depth_mm==3
 
-@pytest.mark.parametrize("change",[dict(x_axis=[0,0,0]),dict(x_axis=[2,0,0]),dict(y_axis=[1,0,0]),dict(radius_mm=2),dict(depth_mm=0),dict(width_mm=float("nan")),dict(feature_name="../unsafe"),dict(overwrite=True)])
+@pytest.mark.parametrize("change",[dict(x_axis=[0,0,0]),dict(x_axis=[2,0,0]),dict(y_axis=[1,0,0]),dict(radius_mm=2.01),dict(depth_mm=0),dict(width_mm=float("nan")),dict(feature_name="../unsafe"),dict(overwrite=True)])
 def test_invalid_geometry_rejected(change):
     with pytest.raises(ValueError):valid(**change)
 
@@ -23,3 +23,9 @@ def test_guarded_mcp_tool():
     import server
     assert issubclass(server.SolidWorksFrameCutInput,server.ActiveDocumentInput)
     assert "solidworks_create_frame_cut" in server.mcp._tool_manager._tools
+
+
+@pytest.mark.parametrize("width,height,radius",[(6,2,1),(2,6,1),(6.7,6.7,3.35)])
+def test_closed_round_profiles_accepted(width,height,radius):
+    spec=valid(width_mm=width,height_mm=height,radius_mm=radius)
+    assert 2*spec.radius_mm==min(spec.width_mm,spec.height_mm)
