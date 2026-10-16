@@ -44,7 +44,7 @@ public static class NativeFrameCut {
   if(Math.Abs(basePoint[2])>1e-8||Math.Abs(Math.Abs(tip[2]-basePoint[2])-.001)>1e-8)throw new Exception("Sketch frame validation failed");
   double a=s.center_mm[0]-s.width_mm/2,b=s.center_mm[0]+s.width_mm/2,c=s.center_mm[1]-s.height_mm/2,d=s.center_mm[1]+s.height_mm/2,r=s.radius_mm;
   var segments=new List<ISketchSegment>();
-  Action<double,double,double,double> line=(x1,y1,x2,y2)=>{var p=Local(math,tr,s,x1,y1);var q=Local(math,tr,s,x2,y2);var e=(ISketchSegment)sk.CreateLine(p[0],p[1],0,q[0],q[1],0);if(e==null)throw new Exception("Line failed");segments.Add(e);};
+  Action<double,double,double,double> line=(x1,y1,x2,y2)=>{if(x1==x2 && y1==y2)return;var p=Local(math,tr,s,x1,y1);var q=Local(math,tr,s,x2,y2);var e=(ISketchSegment)sk.CreateLine(p[0],p[1],0,q[0],q[1],0);if(e==null)throw new Exception("Line failed");segments.Add(e);};
   Action<double,double,double,double,double,double> arc=(cx,cy,x1,y1,x2,y2)=>{var o=Local(math,tr,s,cx,cy);var p=Local(math,tr,s,x1,y1);var q=Local(math,tr,s,x2,y2);short sign=(short)((tip[2]>basePoint[2])?1:-1);var e=(ISketchSegment)sk.CreateArc(o[0],o[1],0,p[0],p[1],0,q[0],q[1],0,sign);if(e==null)throw new Exception("Arc failed");segments.Add(e);};
   sk.AddToDB=true;
   try{line(a+r,c,b-r,c);arc(b-r,c+r,b-r,c,b,c+r);line(b,c+r,b,d-r);arc(b-r,d-r,b,d-r,b-r,d);line(b-r,d,a+r,d);arc(a+r,d-r,a+r,d,a,d-r);line(a,d-r,a,c+r);arc(a+r,c+r,a,c+r,a+r,c);}

@@ -525,7 +525,7 @@
     },
 {
   "id": "native_frame_cut",
-  "label": "正交坐标系的原生圆角矩形盲切除",
+  "label": "正交坐标系的原生圆角矩形、圆形与胶囊盲切除",
   "level": "pilot",
   "backends": [
     "solidworks-csharp-pia"
