@@ -132,6 +132,64 @@ def inspect_operation(sw, clsid, typelib_path, *, setup_index, operation_index):
         report["selected_operation_unchanged"] = all(details[key] == selected[key] for key in
                                                       ("turn_operation_type", "toolpath_generated"))
 
+        # 只报告原生值；缺失工具、未知枚举和读取失败不能自动视为可加工。
+        def read_boolean(value):
+            if type(value) is not bool:
+                raise ValueError("CAM diagnostic value is not a Boolean")
+            return value
+
+        def read_integer(value):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError("CAM diagnostic value is not an integer")
+            return int(value)
+
+        value, available = optional("ICWOperation.Suppressed", lambda: read_boolean(
+            _member(operation, "Suppressed")))
+        details.update(suppressed=value, suppressed_available=available)
+
+        def read_feature_count():
+            collection = _typed(_member(operation, "IGetAllFeatures"), "ICWDispatchCollection", typelib_path)
+            count = read_integer(_member(collection, "Count"))
+            if not 0 <= count <= _LIMIT:
+                raise ValueError("CAM linked feature count exceeds qualification limit")
+            return count
+
+        value, available = optional("ICWOperation.IGetAllFeatures.Count", read_feature_count)
+        details.update(linked_feature_count=value, linked_feature_count_available=available)
+        tool = {"available": False, "present": None, "tool_type_raw": None,
+                "tool_type_available": False, "turn_tool_type_raw": None,
+                "turn_tool_type_available": False, "info_raw": None,
+                "info_available": False, "info_truncated": False,
+                "type_names_resolved": False}
+        details["tool"] = tool
+
+        def read_tool():
+            raw = _member(operation, "IGetTool")
+            return raw if raw is not None and bool(raw) else None
+
+        raw_tool, available = optional("ICWOperation.IGetTool", read_tool)
+        tool.update(available=available, present=(raw_tool is not None) if available else None)
+        if available and raw_tool is not None:
+            native_tool, typed_available = optional("ICWTool", lambda: _typed(raw_tool, "ICWTool", typelib_path))
+            if typed_available:
+                value, field_available = optional("ICWTool.ToolType", lambda: read_integer(
+                    _member(native_tool, "ToolType")))
+                tool.update(tool_type_raw=value, tool_type_available=field_available)
+
+                def read_tool_info():
+                    value = _member(native_tool, "GetToolInfoString")
+                    if not isinstance(value, str):
+                        raise ValueError("GetToolInfoString did not return a BSTR string")
+                    return value
+
+                value, field_available = optional("ICWTool.GetToolInfoString", read_tool_info)
+                tool.update(info_raw=value[:1000] if field_available else None,
+                            info_available=field_available,
+                            info_truncated=field_available and len(value) > 1000)
+            value, field_available = optional("ICWTurnTool.ToolType", lambda: read_integer(_member(
+                _typed(raw_tool, "ICWTurnTool", typelib_path), "ToolType")))
+            tool.update(turn_tool_type_raw=value, turn_tool_type_available=field_available)
+
         def read_time():
             value = _member(operation, "TimeTakenForGTP")
             if not isinstance(value, str):

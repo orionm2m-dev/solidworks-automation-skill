@@ -696,6 +696,44 @@ class SolidWorksCamToolpathInput(SolidWorksCamTargetInput):
         return value
 
 
+class SolidWorksCamSimulationInput(SolidWorksCamTargetInput):
+    """独立试件的整个文档仿真；必须明确同意范围并使用新的输出目录。"""
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_feature_count: int = Field(ge=1, le=262144, strict=True)
+    expected_operation_count: int = Field(ge=1, le=512, strict=True)
+    expected_operation_setup_count: int = Field(ge=1, le=512, strict=True)
+    expected_generated_operation_count: int = Field(ge=1, le=512, strict=True)
+    output_dir: str = Field(min_length=1, strict=True,
+        description="New absolute output directory; its parent must already exist. Never reuse after timeout.")
+    qualification_only: Literal[True]
+    acknowledge_document_wide_simulation: Literal[True]
+    message_policy: Literal["vendor_default"]
+
+    @field_validator("qualification_only", "acknowledge_document_wide_simulation", mode="before")
+    @classmethod
+    def simulation_acknowledgements_require_booleans(cls, value):
+        if type(value) is not bool:
+            raise ValueError("simulation acknowledgements must be JSON booleans")
+        return value
+
+    @field_validator("output_dir")
+    @classmethod
+    def simulation_output_directory_must_be_new(cls, value):
+        path = Path(value)
+        if not path.is_absolute():
+            raise ValueError("output_dir must be an absolute path")
+        if path.exists():
+            raise ValueError("output_dir must be new; existing simulation output cannot be replayed")
+        if not path.parent.is_dir():
+            raise ValueError("output_dir parent must be an existing directory")
+        return value
+
+
+class SolidWorksCamPreviewSimulationInput(SolidWorksCamSimulationInput):
+    """明确选择原生仿真播放或当前状态导出；不声称播放已完成。"""
+    action: Literal["launch_play", "export_state"]
+
+
 class SolidWorksCamJobStatusInput(BaseInput):
     """读取持久作业的结果和进程生存状态；不等待 CAD 互斥锁。"""
     job_directory: str = Field(min_length=1)
@@ -717,6 +755,26 @@ class SolidWorksCamStopObservationInput(SolidWorksCamJobStatusInput):
     def acknowledgement_requires_boolean(cls, value):
         if type(value) is not bool:
             raise ValueError("acknowledge_native_not_cancelled must be a JSON boolean")
+        return value
+
+
+class SolidWorksCamSavePromptInput(BaseInput):
+    """Windows UI 提示框辅助工具；不是原生 CAM API。"""
+    process_id: int = Field(gt=0, strict=True)
+    expected_document_basename: str = Field(min_length=1, max_length=255, strict=True)
+    action: Literal["inspect", "discard"] = "inspect"
+    acknowledge_discard: bool = Field(default=False, strict=True)
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON)
+
+    @field_validator("expected_document_basename", mode="before")
+    @classmethod
+    def require_exact_basename(cls, value):
+        if not isinstance(value, str):
+            raise ValueError("expected_document_basename must be a JSON string")
+        if (value != value.strip() or value in {".", ".."}
+                or any(char in value for char in '/\\:')
+                or any(ord(char) < 32 or ord(char) == 127 for char in value)):
+            raise ValueError("expected_document_basename must be an exact filename, not a path")
         return value
 
 
@@ -2115,6 +2173,48 @@ def solidworks_cam_run_qualification_step(params: SolidWorksCamQualificationInpu
     return _run_locked(op, params.response_format)
 
 
+@mcp.tool(name="solidworks_cam_run_simulation", title="Run Document-Wide Native CAM Qualification Simulation",
+          annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_run_simulation(params: SolidWorksCamSimulationInput) -> str:
+    """对已保存试件运行整个文档的原生仿真并导出证据；结果需要另行视觉和网格复核。"""
+    def op():
+        from scripts.sw_cam_simulation import run_simulation
+        sw, registration = _cam_target(params)
+        return run_simulation(
+            sw, registration["clsid"], str(Path(registration["addin_path"]).parent / "camworks.tlb"),
+            expected_document_path=params.expected_document_path,
+            expected_feature_count=params.expected_feature_count,
+            expected_operation_count=params.expected_operation_count,
+            expected_operation_setup_count=params.expected_operation_setup_count,
+            expected_generated_operation_count=params.expected_generated_operation_count,
+            output_dir=params.output_dir, qualification_only=params.qualification_only,
+            acknowledge_document_wide_simulation=params.acknowledge_document_wide_simulation,
+            message_policy=params.message_policy,
+        )
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_preview_simulation", title="Preview Document-Wide Native CAM Simulation",
+          annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_preview_simulation(params: SolidWorksCamPreviewSimulationInput) -> str:
+    """明确选择启动并播放原生仿真或导出当前状态；每次调用使用新的证据目录。"""
+    def op():
+        from scripts.sw_cam_simulation import preview_simulation
+        sw, registration = _cam_target(params)
+        return preview_simulation(
+            sw, registration["clsid"], str(Path(registration["addin_path"]).parent / "camworks.tlb"),
+            action=params.action, expected_document_path=params.expected_document_path,
+            expected_feature_count=params.expected_feature_count,
+            expected_operation_count=params.expected_operation_count,
+            expected_operation_setup_count=params.expected_operation_setup_count,
+            expected_generated_operation_count=params.expected_generated_operation_count,
+            output_dir=params.output_dir, qualification_only=params.qualification_only,
+            acknowledge_document_wide_simulation=params.acknowledge_document_wide_simulation,
+            message_policy=params.message_policy,
+        )
+    return _run_locked(op, params.response_format)
+
+
 @mcp.tool(name="solidworks_cam_prepare_toolpath_job", title="Prepare Native CAM Toolpath Job",
           annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
 def solidworks_cam_prepare_toolpath_job(params: SolidWorksCamToolpathInput) -> str:
@@ -2190,6 +2290,37 @@ def solidworks_cam_inspect_operation(params: SolidWorksCamOperationInput) -> str
                                  str(Path(registration["addin_path"]).parent / "camworks.tlb"),
                                  setup_index=params.setup_index, operation_index=params.operation_index)
     return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_save_prompt", title="Handle CAM Save Prompt (Windows UI Helper)",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_save_prompt(params: SolidWorksCamSavePromptInput) -> str:
+    """检查已绑定 PID 的 CAM 保存提示，明确授权后选择不保存；这是 Windows UI 辅助工具。"""
+    try:
+        if params.action == "discard" and params.acknowledge_discard is not True:
+            raise ValueError("discard requires acknowledge_discard=true")
+        _runtime_identity.assert_current()
+        environment_pid = os.environ.get("SOLIDWORKS_MCP_PROCESS_ID")
+        bindings = []
+        if _selected_process_id is not None:
+            if type(_selected_process_id) is not int or _selected_process_id <= 0:
+                raise ValueError("Invalid selected process binding")
+            bindings.append(_selected_process_id)
+        if environment_pid is not None:
+            if not re.fullmatch(r"[1-9][0-9]*", environment_pid):
+                raise ValueError("Invalid SOLIDWORKS_MCP_PROCESS_ID binding")
+            bindings.append(int(environment_pid))
+        if not bindings:
+            raise ValueError("CAM save prompt requires an existing selected or environment process binding")
+        if any(bound != params.process_id for bound in bindings):
+            raise ValueError("process_id does not match the existing MCP process binding")
+        # 模态提示可能阻塞持锁的 COM 调用；只执行经过限定的 UI 辅助工具。
+        from scripts.sw_cam_save_prompt import handle_cam_save_prompt
+        return _result(handle_cam_save_prompt(
+            params.process_id, expected_document_basename=params.expected_document_basename,
+            action=params.action, acknowledge_discard=params.acknowledge_discard), params.response_format)
+    except Exception as exc:
+        return _tool_error(exc, params.response_format)
 
 
 @mcp.tool(

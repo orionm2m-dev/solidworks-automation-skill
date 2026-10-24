@@ -1,11 +1,13 @@
 # SOLIDWORKS CAM native integration
 
-The CAM tools use the existing PID-bound SOLIDWORKS session and its operation
+The native CAM tools use the existing PID-bound SOLIDWORKS session and its operation
 mutex. They do not automate windows, start another CAD process, activate a
 license, or silently save a model. A saved document path (or exact unsaved
 title where applicable) is mandatory for live access.
-CAM tools never select a process themselves. The session must already have a
+Native CAM tools never select a process themselves. The session must already have a
 pinned PID; use `solidworks_connect(process_id=...)` to choose it explicitly.
+The separate `solidworks_cam_save_prompt` Windows UI helper is described below;
+it is not a native CAM API.
 
 ## Discovery and connection
 
@@ -100,9 +102,9 @@ idle turning calibration. Neither false=running nor true=completion of the
 selected turning operation is established. `attention_seconds` marks a long
 wait; it is not a cancellation deadline. Receipt, process-query and message-
 pump errors do not release the subscription while completion remains unknown.
-The worker can exit that wait only on confirmed completion or confirmed death/
-reuse of the selected CAD process. Killing the calling session is not safe
-cancellation of a native CAM calculation.
+The worker leaves that wait on verified generation, confirmed target-process
+death/reuse, or an explicitly requested observer cleanup as described below.
+Observer cleanup and killing the calling session are not native cancellation.
 
 Foreground execution is the verified transport design for short-lived MCP
 stdio clients: the Windows MCP SDK puts the server in a kill-on-close Job
@@ -136,7 +138,10 @@ means that the observer finished, not that machining completed.
 
 `solidworks_cam_inspect_operation` reads the selected operation's generated
 flag, raw GTP time string, optional object-scoped license getter and stock
-parameters. Missing interface/getter support remains explicitly unavailable.
+parameters. It also reads suppression, linked-feature count, actual tool presence,
+raw tool-type values and a bounded tool description. Unknown enum values remain
+unresolved; these getters do not qualify machining. Missing interface/getter
+support remains explicitly unavailable.
 The diagnostic read itself does not establish a terminal CAM execution state.
 
 Live qualification of the direct rough-face call on the simple cylinder
@@ -145,15 +150,77 @@ worker incorrectly treated the false success flag as pending indefinitely;
 its observer was stopped with the native outcome and Unadvise unconfirmed.
 The cooperative stop channel was added afterwards and is unit-tested only.
 The raw stock dimensions match that calibration's envelope; absent cutting
-allowance is a hypothesis, not a proven cause or a license finding. No material-
-removal simulation or manufacturing release was demonstrated.
+allowance is a hypothesis, not a proven cause or a license finding. That attempt
+produced no simulation evidence or manufacturing release.
 
 Closing that calibration with ordinary `needs_save=false` nevertheless raised
 a CAM save prompt. CAM persistence must be handled explicitly even after a
 failed generation attempt. The read-only recovery report now includes modal
-text and returns blocked even if COM getters still respond. No automatic
-button, focus or window control is used for CAM qualification.
+text and returns blocked even if COM getters still respond.
 Simulation remains a separate stage requiring valid stock and tool/holder data.
+
+`solidworks_cam_save_prompt` is a separate, explicitly authorized Windows UI
+helper, not native CAM automation. It requires an already bound matching PID,
+an exact SLDPRT basename, and the unique known Russian dialog titled
+`Предупреждение SOLIDWORKS CAM` with text `Сохранить изменения в <basename> ?`.
+Its default `action="inspect"` is read-only. `action="discard"` additionally
+requires strict `acknowledge_discard=true`; it rechecks the dialog and sends
+one notification to its identified No button. It does not use COM, acquire the
+possibly blocked CAM mutex, activate a window or retry a click. Dismissal and
+document save state are reported separately; availability of this helper is
+not evidence that a particular prompt was successfully dismissed.
+
+
+## Document-wide qualification simulation
+
+`solidworks_cam_run_simulation` invokes the native simulation for the entire
+active saved calibration part, not an individual selected operation. It
+requires `qualification_only=true`, the strict boolean
+`acknowledge_document_wide_simulation=true`, `message_policy="vendor_default"`,
+the exact saved `expected_document_path`, and observed `expected_feature_count`,
+`expected_operation_count`, `expected_operation_setup_count` and
+`expected_generated_operation_count`. Counts must be positive bounded integers.
+A new absolute `output_dir` with an existing parent holds the exclusive receipt
+and exported evidence. An existing output directory is refused; do not replay
+an uncertain or timed-out request with a new directory.
+
+The registered add-in and its `camworks.tlb` are verified through the existing
+PID/document guard. The whole call uses the shared operation mutex and records
+before/after document and CAM inventories. The core refuses an initially dirty
+or mismatched document. Document-wide acknowledgement allows inventory changes
+on the same part to be recorded while exporting evidence; it is not approval
+of those changes. Native messages, callback errors or cleanup failures block
+further steps under the vendor-default message policy.
+
+The native sequence is `RunSimulationSilent(True, False, False)`, followed by
+JPG and STL evidence export when its guards allow. Gouge and undercut counts
+are raw vendor outputs. The typed STL result order is `(error_code, saved_bool)`;
+the image exporter returns a save boolean. This tool does not launch CAD,
+explicitly generate toolpaths, post NC or save the SOLIDWORKS model.
+
+Verified exports return `status="review_required"`,
+`reason="SIMULATION_OUTPUTS_REQUIRE_REVIEW"`, `export_files_verified=true` and
+`may_continue=false`. `native_call_returned=true` is separate from
+`native_completion_verified=false`. A returned call or exported files do not
+establish completion quality, tool clearance, license scope or full DFM.
+Review the image and mesh separately before any further manufacturing decision.
+The MCP contract is covered by isolated mocks; implementation and passing tests
+alone do not establish live native simulation qualification.
+
+
+`solidworks_cam_preview_simulation` uses the same explicit saved-part,
+qualification, document-wide, count and message-policy guards, plus a required
+`action`. Each action needs its own new absolute output directory and exclusive
+receipt. `launch_play` calls only native `ActiveDocLaunchSimulation()` and
+`ActiveDocPlaySimulation()`; their return does not verify playback completion.
+`export_state` separately exports the current simulation image and STL. An
+image-export failure does not prevent the STL attempt while document identity
+and message guards remain valid; each export retains its own result.
+
+The preview tool never closes simulation, calls `RunSimulationSilent`, generates
+toolpaths, saves the model or posts NC. Results remain `review_required` with
+`may_continue=false`; completion is unverified. Image and mesh evidence require
+separate review. Mock coverage is not evidence of live playback qualification.
 
 ## Evidence and tests
 
@@ -175,9 +242,27 @@ supporting `ICWTurnOperation`. All five survived save, close and reopen.
 No CAM messages occurred in those live stages; actual delivery of a vendor
 message remains unobserved. Callback ABI was separately tested with real
 in-memory `IDispatch.Invoke`, both null and non-null result pointers.
-Turning entitlement, generated toolpaths and material-removal simulation
-remain unqualified. These calibration observations do not qualify a production
-machining process or certify all turning operation types.
+On a separate stepped calibration in SOLIDWORKS/CAM 2026 SP4, one selected
+rough-turn operation generated 36 toolpath records. Explicit save, close and
+reopen confirmed the same 36 records. This verifies generation and persistence
+for that selected operation, not all turning operation types.
+
+`RunSimulationSilent` returned raw counters `(0, 0)`, but image export returned
+false and produced no evidence files. Native preview launch and play then
+returned with unchanged CAM inventory. A separate `export_state` produced a
+real 400 x 300 JPG of 10,816 bytes, which was visually reviewed. STL export
+returned false with error 7 (`CW_EC_UNKNOWN_ERROR`). Repeating only export to
+a shorter project output path produced the same image hash and the same STL
+error; simulation was not rerun.
+
+Image export is therefore pilot-verified. Playback completion, the underlying
+simulation completion state and STL/mesh output remain unverified. Raw zero
+counters and an image do not establish a complete material-removal result,
+tool/holder clearance, general turning entitlement or full DFM. These results
+do not qualify a production machining process.
+
+The combined relevant mock/in-memory suite passed 467 tests; MCP validation
+registered 93 tools. Those checks are separate from the live observations above.
 
 The reusable `scripts/mcp_request.py` client executes JSON requests through the
 standard MCP protocol against a fresh server and saves a result after each
