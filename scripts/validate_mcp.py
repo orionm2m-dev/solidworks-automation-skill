@@ -18,6 +18,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SERVER_PATH = ROOT / "mcp-server" / "server.py"
 
 REQUIRED_TOOLS = {
+    "solidworks_cam_installation",
+    "solidworks_cam_status",
+    "solidworks_cam_load_addin",
+    "solidworks_cam_inspect_turning",
+    "solidworks_cam_set_turn_machine",
+    "solidworks_inspect_reference_planes",
     "cadstudio_resolve_backend",
     "cadstudio_write_open_format",
     "cadstudio_build_dxf_preview_scene",

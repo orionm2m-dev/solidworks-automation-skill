@@ -627,6 +627,34 @@ class SolidWorksHealthCheckInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
+class SolidWorksReferencePlanesInput(ActiveDocumentInput):
+    """读取已有基准面名称，无选择和编辑操作。"""
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+
+class SolidWorksCamInstallationInput(BaseInput):
+    """CAM 文件与注册表检查；不读取授权标识。"""
+
+    install_path: Optional[str] = Field(default=None, description="Optional absolute installation folder; never loaded as code.")
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+
+class SolidWorksCamTargetInput(ActiveDocumentInput):
+    """明确指定已登记的 CAM 加载项，并校验活动文档。"""
+
+    addin_clsid: str = Field(pattern=r"^\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}$",
+                            description="Exact CAM add-in CLSID from solidworks_cam_installation.")
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+
+class SolidWorksCamMachineInput(SolidWorksCamTargetInput):
+    """先检查并明确选取实际返回的 станок，仅允许空 CAM 设置。"""
+
+    machine_index: int = Field(ge=0, le=9999, strict=True)
+    expected_machine_type: int = Field(ge=0, le=10, strict=True)
+    expected_catalog_count: int = Field(ge=1, le=10000, strict=True)
+
+
 class SolidWorksSketchOnPlaneInput(ActiveDocumentInput):
     """Input for sketching on a plane and creating a boss extrude."""
 
@@ -1877,6 +1905,115 @@ def solidworks_list_instances() -> str:
 def solidworks_runtime_status() -> str:
     """不访问 COM，核对运行目录、启动时源摘要和当前源摘要。"""
     return _result(_runtime_identity.status(), ResponseFormat.JSON)
+
+
+@mcp.tool(
+    name="solidworks_inspect_reference_planes",
+    title="Inspect Native Reference Plane Names",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def solidworks_inspect_reference_planes(params: SolidWorksReferencePlanesInput) -> str:
+    """Read native reference plane names without selection, activation or edits."""
+    def op():
+        from scripts.sw_part import inspect_reference_planes
+        _sw, model = _active_model_required(params)
+        return {"status": "ok", "document": _model_summary(model), **inspect_reference_planes(model)}
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_cam_installation",
+    title="Inspect SOLIDWORKS CAM Installation",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def solidworks_cam_installation(params: SolidWorksCamInstallationInput = SolidWorksCamInstallationInput()) -> str:
+    """Read CAM registration, API and help file locations without COM or license activation."""
+    def op():
+        from scripts.sw_cam_installation import discover_cam_installations
+        if params.install_path and not Path(params.install_path).is_absolute():
+            raise ValueError("install_path must be absolute")
+        return {"status": "ok", **discover_cam_installations(params.install_path)}
+    return _run_locked(op, params.response_format, load_automation=False)
+
+
+def _cam_target(params):
+    """在 CAM 访问前拒绝未绑定进程、缺失文档目标或不完整的注册表发现。"""
+    from scripts.sw_cam_installation import discover_cam_installations
+    from scripts.sw_cam import select_registration
+    if _selected_process_id is None:
+        raise ValueError("Connect to an explicit SOLIDWORKS process before CAM inspection")
+    if not params.expected_document_path and not params.expected_document_title:
+        raise ValueError("CAM operations require an explicit document target")
+    inventory = discover_cam_installations()
+    if inventory["errors"]:
+        raise ValueError("CAM registration discovery has errors; inspect installation report first")
+    registration = select_registration(inventory, params.addin_clsid)
+    sw, model = _active_model_required(params)
+    # 版本专用加载项必须与已经绑定的 SOLIDWORKS 主版本相符。
+    year = int(str(get_com_member(sw, "RevisionNumber")).split(".")[0]) + 1992
+    registered_year = re.search(r"SOLIDWORKS (20\d{2})", registration["registry_key"], re.IGNORECASE)
+    if registered_year and int(registered_year[1]) != year:
+        raise ValueError("CAM registration belongs to another SOLIDWORKS major version")
+    return sw, registration
+
+
+@mcp.tool(
+    name="solidworks_cam_status",
+    title="Inspect Loaded SOLIDWORKS CAM API",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def solidworks_cam_status(params: SolidWorksCamTargetInput) -> str:
+    """Read loaded CAM version and demo mode; no auto-load, document creation, machining or entitlement inference."""
+    def op():
+        from scripts.sw_cam import inspect_cam
+        sw, registration = _cam_target(params)
+        return inspect_cam(sw, registration["clsid"])
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_cam_load_addin",
+    title="Load Registered SOLIDWORKS CAM Add-in",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def solidworks_cam_load_addin(params: SolidWorksCamTargetInput) -> str:
+    """Load the registry-verified CAM DLL into the pinned process and inspect API; no startup, licensing or model edits."""
+    def op():
+        from scripts.sw_cam import load_cam_addin
+        sw, registration = _cam_target(params)
+        return load_cam_addin(sw, registration["clsid"], registration["addin_path"])
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_cam_inspect_turning",
+    title="Inspect CAM Turning Machine Candidates",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def solidworks_cam_inspect_turning(params: SolidWorksCamTargetInput) -> str:
+    """Read current machine type and turning catalogue count for an explicitly targeted saved part."""
+    def op():
+        from scripts.sw_cam import inspect_turning
+        sw, registration = _cam_target(params)
+        return inspect_turning(sw, registration["clsid"],
+                               typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"))
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_cam_set_turn_machine",
+    title="Assign CAM Turning Machine to Empty Setup",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_cam_set_turn_machine(params: SolidWorksCamMachineInput) -> str:
+    """Assign a catalogue turning machine with explicit preconditions and readback; refuses existing setups and does not save."""
+    def op():
+        from scripts.sw_cam import set_turn_machine
+        sw, registration = _cam_target(params)
+        return set_turn_machine(sw, registration["clsid"], params.machine_index,
+                                params.expected_machine_type, params.expected_catalog_count,
+                                typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"))
+    return _run_locked(op, params.response_format)
 
 
 @mcp.tool(

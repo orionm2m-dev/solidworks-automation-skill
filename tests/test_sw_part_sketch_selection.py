@@ -147,5 +147,81 @@ class SketchSelectionTests(unittest.TestCase):
         self.assertNotIn(("草图1", "SKETCH"), model.Extension.calls)
 
 
+class ReferencePlaneTests(unittest.TestCase):
+    """验证多语言别名与只读、有限的实际平面枚举。"""
+
+    def test_standard_aliases_select_russian_plane(self):
+        """英语或中文标准名称应落到同一方向的俄语标准名称。"""
+        pairs = [("Front Plane", "前视基准面", "Спереди"),
+                 ("Top Plane", "上视基准面", "Сверху"),
+                 ("Right Plane", "右视基准面", "Справа")]
+        for english, chinese, russian in pairs:
+            for requested in (english, chinese, russian):
+                with self.subTest(requested=requested):
+                    model = FakeModel()
+                    calls = []
+
+                    def select(name, entity_type, *_args):
+                        calls.append(name)
+                        return name == russian and entity_type == "PLANE"
+
+                    model.Extension.SelectByID2 = select
+                    self.assertEqual(sw_part.start_sketch(model, requested), russian)
+                    self.assertIsNotNone(model.SketchManager.ActiveSketch)
+                    self.assertEqual(calls[-1], russian)
+
+    def test_custom_name_is_not_replaced_by_standard_plane(self):
+        """用户自定义名称必须原样保留，避免选错参考平面。"""
+        self.assertEqual(sw_part._get_plane_name_candidates("My datum"), ["My datum"])
+
+    def test_inspection_reads_actual_names_and_skips_other_features(self):
+        """检查只读成员，不调用选择、草图或重建接口。"""
+        tail = types.SimpleNamespace(Name="Custom datum", GetTypeName2="RefPlane", GetNextFeature=None)
+        other = types.SimpleNamespace(Name="Boss", GetTypeName2=lambda: "Boss", GetNextFeature=lambda: tail)
+        head = types.SimpleNamespace(Name="Спереди", GetTypeName2=lambda: "RefPlane", GetNextFeature=lambda: other)
+        result = sw_part.inspect_reference_planes(types.SimpleNamespace(FirstFeature=lambda: head))
+        self.assertEqual(result["planes"], [{"name": "Спереди", "type": "RefPlane"},
+                                           {"name": "Custom datum", "type": "RefPlane"}])
+        self.assertEqual(result["visited_features"], 3)
+        self.assertTrue(result["complete"])
+        self.assertFalse(result["truncated"])
+        self.assertEqual(result["errors"], [])
+
+    def test_feature_limit_is_reported(self):
+        """达到特征上限时不得宣称枚举完整。"""
+        tail = types.SimpleNamespace(Name="Сверху", GetTypeName2="RefPlane", GetNextFeature=None)
+        head = types.SimpleNamespace(Name="Спереди", GetTypeName2="RefPlane", GetNextFeature=tail)
+        result = sw_part.inspect_reference_planes(types.SimpleNamespace(FirstFeature=head), limit=1)
+        self.assertEqual(len(result["planes"]), 1)
+        self.assertEqual(result["truncation_reason"], "feature_limit")
+        self.assertTrue(result["truncated"])
+        self.assertFalse(result["complete"])
+
+    def test_cycle_and_read_error_remain_bounded(self):
+        """循环代理和读取错误必须返回有限的部分结果。"""
+        cycle = types.SimpleNamespace(Name="Спереди", GetTypeName2="RefPlane")
+        cycle.GetNextFeature = cycle
+        result = sw_part.inspect_reference_planes(types.SimpleNamespace(FirstFeature=cycle))
+        self.assertEqual(result["truncation_reason"], "feature_cycle")
+        self.assertEqual(result["visited_features"], 1)
+
+        def fail():
+            raise RuntimeError("mock COM failure")
+
+        cycle.GetNextFeature = fail
+        result = sw_part.inspect_reference_planes(types.SimpleNamespace(FirstFeature=cycle))
+        self.assertEqual(result["truncation_reason"], "read_error")
+        self.assertEqual(result["errors"][0]["member"], "GetNextFeature")
+
+    def test_empty_document_and_invalid_limit(self):
+        """空文档不是截断结果，非法上限在访问 COM 前拒绝。"""
+        result = sw_part.inspect_reference_planes(types.SimpleNamespace(FirstFeature=None))
+        self.assertEqual(result["planes"], [])
+        self.assertTrue(result["complete"])
+        for limit in (0, -1, True, 1.5, 4097):
+            with self.assertRaises(ValueError):
+                sw_part.inspect_reference_planes(object(), limit=limit)
+
+
 if __name__ == "__main__":
     unittest.main()

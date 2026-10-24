@@ -1,5 +1,14 @@
 # SolidWorks MCP Server
 
+## SOLIDWORKS CAM
+
+Native CAM discovery, loading and guarded inspection are documented in
+[`references/solidworks-cam.md`](../references/solidworks-cam.md). These tools
+require an already pinned process and an explicit document target. They do not use UI
+automation or infer a machining license from installed files. The reusable
+`scripts/mcp_request.py` client performs sequential protocol calls from JSON
+and records results without overwriting existing evidence.
+
 本目录提供一个本地 `stdio` MCP Server，同时暴露无 CAD 开放格式工具和 SolidWorks COM 白名单工具。MCP 与 CAD Studio、Skill、CLI 共用能力清单和数据协议。
 
 SolidWorks 是 Windows 桌面 COM 应用，因此本 server 默认使用 `stdio`。每个 server 可以绑定一个已运行的 SOLIDWORKS 进程；原生操作按目标 PID 使用跨进程 Windows mutex 串行执行。两个独立的 server 分别绑定不同 PID 时可以并行工作。

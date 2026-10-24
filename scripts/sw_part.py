@@ -37,12 +37,15 @@ def _callout_variant():
 pythoncom, _win32com, VARIANT = import_com_dependencies()
 
 PLANE_NAME_ALIASES = {
-    "Front Plane": ["Front Plane", "前视基准面"],
-    "Top Plane": ["Top Plane", "上视基准面"],
-    "Right Plane": ["Right Plane", "右视基准面"],
-    "前视基准面": ["前视基准面", "Front Plane"],
-    "上视基准面": ["上视基准面", "Top Plane"],
-    "右视基准面": ["右视基准面", "Right Plane"],
+    "Front Plane": ["Front Plane", "前视基准面", "Спереди"],
+    "Top Plane": ["Top Plane", "上视基准面", "Сверху"],
+    "Right Plane": ["Right Plane", "右视基准面", "Справа"],
+    "前视基准面": ["前视基准面", "Front Plane", "Спереди"],
+    "上视基准面": ["上视基准面", "Top Plane", "Сверху"],
+    "右视基准面": ["右视基准面", "Right Plane", "Справа"],
+    "Спереди": ["Спереди", "Front Plane", "前视基准面"],
+    "Сверху": ["Сверху", "Top Plane", "上视基准面"],
+    "Справа": ["Справа", "Right Plane", "右视基准面"],
 }
 
 SKETCH_NAME_PREFIX_ALIASES = {
@@ -212,6 +215,63 @@ def _select_by_id(extension, entity_name, entity_type, append=False, mark=0):
     return extension.SelectByID2(
         entity_name, entity_type, 0, 0, 0, append, mark, _empty_callout(), 0
     )
+
+
+def inspect_reference_planes(model, limit=256):
+    """只读枚举顶层参考平面的实际名称，不选择、重命名或重建模型。
+
+    参数:
+        model: 已明确指定的 IModelDoc2 文档。
+        limit: 最多遍历的顶层特征数，范围 1..4096；不是平面数量上限。
+    返回:
+        planes 列出实际 name/type；truncated 表示遍历提前停止。
+        errors 保留读取失败信息，complete 不会把部分结果标为完整结果。
+    """
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 4096:
+        raise ValueError("limit must be an integer between 1 and 4096")
+    result = {"planes": [], "truncated": False, "truncation_reason": None,
+              "visited_features": 0, "limit": limit, "read_only": True,
+              "complete": True, "errors": []}
+
+    def read_failed(member, exc):
+        result["errors"].append({"member": member, "error_type": type(exc).__name__})
+        result["complete"] = False
+
+    try:
+        feature = get_com_member(model, "FirstFeature")
+    except Exception as exc:
+        read_failed("FirstFeature", exc)
+        result.update(truncated=True, truncation_reason="read_error")
+        return result
+    # 保留代理引用以免 Python 重用 id；新建代理的 COM 环仍由 limit 限制。
+    retained = []
+    seen = set()
+    while feature is not None:
+        if result["visited_features"] >= limit:
+            result.update(truncated=True, truncation_reason="feature_limit", complete=False)
+            break
+        if id(feature) in seen:
+            result.update(truncated=True, truncation_reason="feature_cycle", complete=False)
+            break
+        seen.add(id(feature))
+        retained.append(feature)
+        result["visited_features"] += 1
+        try:
+            feature_type = get_com_member(feature, "GetTypeName2")
+            if feature_type == "RefPlane":
+                name = get_com_member(feature, "Name")
+                if not isinstance(name, str):
+                    raise TypeError("Reference plane name is not a string")
+                result["planes"].append({"name": name, "type": feature_type})
+        except Exception as exc:
+            read_failed("GetTypeName2/Name", exc)
+        try:
+            feature = get_com_member(feature, "GetNextFeature")
+        except Exception as exc:
+            read_failed("GetNextFeature", exc)
+            result.update(truncated=True, truncation_reason="read_error")
+            break
+    return result
 
 
 def _get_plane_name_candidates(plane_name):
@@ -492,6 +552,7 @@ def start_sketch(model, plane_name="Front Plane"):
         model: IModelDoc2
         plane_name: 基准面名称
             英文: "Front Plane", "Top Plane", "Right Plane"
+            俄文: "Спереди", "Сверху", "Справа"
             中文: "前视基准面", "上视基准面", "右视基准面"
     """
     model.ClearSelection2(True)

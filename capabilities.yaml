@@ -187,6 +187,16 @@
   ],
   "capabilities": [
     {
+      "id": "solidworks_cam_native",
+      "label": "SOLIDWORKS CAM 原生连接与车床配置",
+      "level": "pilot",
+      "backends": ["solidworks-com-pywin32"],
+      "verified_versions": ["2026"],
+      "dependencies": ["SolidWorks", "SOLIDWORKS CAM", "pywin32", "comtypes"],
+      "limitations": ["2026 SP4 已验证 PID 绑定、登记 DLL 加载、GetCWApp、版本/demo 读取和独立试件车床配置保存/重开回读", "安装、demo=false、机器目录和配置成功不证明 Turning 授权", "车床配置更改可能不设置 SOLIDWORKS 脏标志；保存与重开必须显式验证", "刀路和材料移除模拟需要各自的真机验证；生产发布未验证", "不调用许可证激活或未定义名称的模块检查；不自动处理窗口"],
+      "allowed_modes": ["interactive", "reviewed"]
+    },
+    {
       "id": "mcp_document_target_guard",
       "label": "MCP 文档目标保护与跨进程互斥",
       "level": "pilot",
