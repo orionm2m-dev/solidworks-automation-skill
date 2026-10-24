@@ -730,8 +730,59 @@ class SolidWorksCamSimulationInput(SolidWorksCamTargetInput):
 
 
 class SolidWorksCamPreviewSimulationInput(SolidWorksCamSimulationInput):
-    """明确选择原生仿真播放或当前状态导出；不声称播放已完成。"""
-    action: Literal["launch_play", "export_state"]
+    """明确选择原生仿真播放、状态导出或关闭；方法返回不证明动作已完成。"""
+    action: Literal["launch_play", "export_state", "close"]
+
+
+class SolidWorksCamExportGeometryInput(SolidWorksCamTargetInput):
+    """导出整份试件的 WIP、毛坯和目标几何；不把输出当作仿真帧。"""
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_feature_count: int = Field(ge=1, le=262144, strict=True)
+    expected_operation_count: int = Field(ge=1, le=512, strict=True)
+    expected_operation_setup_count: int = Field(ge=1, le=512, strict=True)
+    expected_generated_operation_count: int = Field(ge=1, le=512, strict=True)
+    output_dir: str = Field(min_length=1, strict=True,
+        description="New absolute local output directory; existing parent required, canonical UNC refused.")
+    qualification_only: Literal[True]
+    acknowledge_document_wide_export: Literal[True]
+    message_policy: Literal["vendor_default"]
+    export_kinds: list[Literal["wip", "stock", "target"]] = Field(
+        default_factory=lambda: ["wip"], min_length=1, max_length=3, strict=True,
+        description="Ordered unique export kinds; default selects only wip.")
+
+    @field_validator("export_kinds")
+    @classmethod
+    def geometry_export_kinds_must_be_unique(cls, value):
+        if len(value) != len(set(value)):
+            raise ValueError("export_kinds must contain unique entries")
+        return value
+
+    @field_validator("qualification_only", "acknowledge_document_wide_export", mode="before")
+    @classmethod
+    def geometry_export_acknowledgements_require_booleans(cls, value):
+        if type(value) is not bool:
+            raise ValueError("geometry export acknowledgements must be JSON booleans")
+        return value
+
+    @field_validator("output_dir")
+    @classmethod
+    def geometry_export_directory_must_be_new_and_local(cls, value):
+        path = Path(value)
+
+        def reject_unc(candidate):
+            # 扩展长度的本地盘符路径不是 UNC；映射盘仍按规范路径检查。
+            if candidate.drive.startswith("\\\\") and not re.fullmatch(r"\\\\\?\\[A-Za-z]:", candidate.drive):
+                raise ValueError("output_dir must be local; canonical UNC paths are not supported")
+
+        if not path.is_absolute():
+            raise ValueError("output_dir must be an absolute local path")
+        reject_unc(path)
+        if path.exists() or path.is_symlink():
+            raise ValueError("output_dir must be new; existing geometry exports cannot be replayed")
+        if not path.parent.is_dir():
+            raise ValueError("output_dir parent must be an existing directory")
+        reject_unc(path.resolve())
+        return value
 
 
 class SolidWorksCamJobStatusInput(BaseInput):
@@ -2197,7 +2248,7 @@ def solidworks_cam_run_simulation(params: SolidWorksCamSimulationInput) -> str:
 @mcp.tool(name="solidworks_cam_preview_simulation", title="Preview Document-Wide Native CAM Simulation",
           annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
 def solidworks_cam_preview_simulation(params: SolidWorksCamPreviewSimulationInput) -> str:
-    """明确选择启动并播放原生仿真或导出当前状态；每次调用使用新的证据目录。"""
+    """明确选择播放、导出或关闭原生仿真；每次调用使用新的证据目录。"""
     def op():
         from scripts.sw_cam_simulation import preview_simulation
         sw, registration = _cam_target(params)
@@ -2211,6 +2262,27 @@ def solidworks_cam_preview_simulation(params: SolidWorksCamPreviewSimulationInpu
             output_dir=params.output_dir, qualification_only=params.qualification_only,
             acknowledge_document_wide_simulation=params.acknowledge_document_wide_simulation,
             message_policy=params.message_policy,
+        )
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_export_geometry", title="Export Document-Wide Native CAM Geometry",
+          annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_export_geometry(params: SolidWorksCamExportGeometryInput) -> str:
+    """导出整份文档的 WIP、毛坯和目标证据；使用新本地目录并要求独立几何复核。"""
+    def op():
+        from scripts.sw_cam_simulation import export_geometry
+        sw, registration = _cam_target(params)
+        return export_geometry(
+            sw, registration["clsid"], str(Path(registration["addin_path"]).parent / "camworks.tlb"),
+            expected_document_path=params.expected_document_path,
+            expected_feature_count=params.expected_feature_count,
+            expected_operation_count=params.expected_operation_count,
+            expected_operation_setup_count=params.expected_operation_setup_count,
+            expected_generated_operation_count=params.expected_generated_operation_count,
+            output_dir=params.output_dir, qualification_only=params.qualification_only,
+            acknowledge_document_wide_export=params.acknowledge_document_wide_export,
+            message_policy=params.message_policy, export_kinds=params.export_kinds,
         )
     return _run_locked(op, params.response_format)
 

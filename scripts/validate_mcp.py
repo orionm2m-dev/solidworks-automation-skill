@@ -32,6 +32,7 @@ REQUIRED_TOOLS = {
     "solidworks_cam_save_prompt",
     "solidworks_cam_run_simulation",
     "solidworks_cam_preview_simulation",
+    "solidworks_cam_export_geometry",
     "solidworks_inspect_reference_planes",
     "cadstudio_resolve_backend",
     "cadstudio_write_open_format",

@@ -2,6 +2,7 @@
 from copy import deepcopy
 import hashlib
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -282,6 +283,7 @@ def test_comtypes_multiout_order_matches_vendor_declarations_in_memory():
             assert difference is True and save_stl is False and save_image is False
             return 2, 3
         def ActiveDocSaveStlFileFromSimulation(self, path, system, units):
+            assert system == "" and units == 0
             return 0, True
     owner = Server()
     interface = owner.QueryInterface(Contract)
@@ -468,3 +470,422 @@ def test_preview_existing_directory_prevents_launch_replay(probe):
         preview(probe)
     probe.context.assert_not_called()
     probe.app.ActiveDocLaunchSimulation.assert_not_called()
+
+
+
+def test_prepare_output_preserves_mapped_drive_while_resolving_separate_boundary(probe, monkeypatch):
+    from pathlib import PureWindowsPath
+
+    lexical_root = PureWindowsPath("Z:/project")
+    canonical_root = PureWindowsPath("//fixture-server/share/project")
+    created = []
+    class MappedPath:
+        def __init__(self, value): self.value = PureWindowsPath(value)
+        def __str__(self): return str(self.value)
+        @property
+        def parent(self): return MappedPath(self.value.parent)
+        def is_absolute(self): return self.value.is_absolute()
+        def is_dir(self): return self.value == lexical_root
+        def mkdir(self): created.append(str(self.value))
+        def resolve(self, strict=False):
+            assert strict is True
+            return canonical_root / self.value.relative_to(lexical_root)
+    real_path = simulation.Path
+    monkeypatch.setattr(simulation, "Path", lambda value: MappedPath(value) if str(value).startswith("Z:") else real_path(value))
+    counts, native_directory, canonical_directory = simulation._prepare_output(
+        expected_document_path=probe.state["document"]["path"], expected_feature_count=3,
+        expected_operation_count=5, expected_operation_setup_count=1, expected_generated_operation_count=1,
+        output_dir="Z:/project/new-export", qualification_only=True,
+        acknowledge_document_wide_simulation=True, message_policy="vendor_default")
+    assert str(native_directory) == str(lexical_root / "new-export")
+    assert canonical_directory == canonical_root / "new-export"
+    assert created == [str(lexical_root / "new-export")]
+    assert counts["generated_operation_count"] == 1
+
+
+def test_preview_sends_lexical_drive_paths_and_records_canonical_receipt(probe, monkeypatch):
+    from pathlib import PureWindowsPath
+
+    native_directory = PureWindowsPath("Z:/project/new-export")
+    probe.directory.mkdir()
+    canonical_directory = probe.directory.resolve(strict=True)
+    counts = {"feature_count": 3, "operation_count": 5, "operation_setup_count": 1, "generated_operation_count": 1}
+    monkeypatch.setattr(simulation, "_prepare_output", Mock(return_value=(counts, native_directory, canonical_directory)))
+    boundary = Mock()
+    monkeypatch.setattr(simulation, "_check_output_path", boundary)
+    probe.app.ActiveDocSaveSimulationImage = Mock(return_value=False)
+    probe.app.ActiveDocSaveStlFileFromSimulation = Mock(return_value=(7, False))
+    report = preview(probe, action="export_state")
+    image_path, stl_path = str(native_directory / "simulation.jpg"), str(native_directory / "simulation.stl")
+    probe.app.ActiveDocSaveSimulationImage.assert_called_once_with(image_path)
+    probe.app.ActiveDocSaveStlFileFromSimulation.assert_called_once_with(stl_path, "", 0)
+    assert report["native_calls"][0]["native_path"] == image_path
+    assert report["native_calls"][1]["native_path"] == stl_path
+    assert report["output_dir"] == str(native_directory)
+    assert report["output_dir_canonical"] == str(canonical_directory)
+    assert report["receipt_path"] == str(canonical_directory / "receipt.json")
+    assert json.loads(probe.receipt.read_text(encoding="utf-8")) == report
+    assert boundary.call_count == 4
+
+
+def test_output_boundary_rejects_changed_directory_mapping(probe, monkeypatch):
+    probe.directory.mkdir()
+    canonical = probe.directory.resolve(strict=True)
+    real_resolve = Path.resolve
+    def resolve(path, strict=False):
+        if path == probe.directory:
+            return canonical.parent / "redirected"
+        return real_resolve(path, strict=strict)
+    monkeypatch.setattr(Path, "resolve", resolve)
+    with pytest.raises(ValueError, match="identity changed"):
+        simulation._check_output_path(probe.directory / "simulation.stl", probe.directory, canonical)
+    probe.app.ActiveDocSaveStlFileFromSimulation.assert_not_called()
+
+
+def test_output_boundary_rejects_dangling_symlink_without_native_overwrite(probe, monkeypatch):
+    probe.directory.mkdir()
+    canonical = probe.directory.resolve(strict=True)
+    output = probe.directory / "simulation.stl"
+    real_is_symlink = Path.is_symlink
+    monkeypatch.setattr(Path, "is_symlink", lambda path: True if path == output else real_is_symlink(path))
+    with pytest.raises(FileExistsError):
+        simulation._check_output_path(output, probe.directory, canonical)
+    probe.app.ActiveDocSaveStlFileFromSimulation.assert_not_called()
+
+
+def test_output_boundary_rejects_canonical_escape(probe, monkeypatch):
+    probe.directory.mkdir()
+    canonical = probe.directory.resolve(strict=True)
+    output = probe.directory / "simulation.stl"
+    real_resolve = Path.resolve
+    def resolve(path, strict=False):
+        if path == output:
+            return canonical.parent / "outside" / "simulation.stl"
+        return real_resolve(path, strict=strict)
+    monkeypatch.setattr(Path, "resolve", resolve)
+    with pytest.raises(ValueError, match="escapes"):
+        simulation._check_output_path(output, probe.directory, canonical)
+    probe.app.ActiveDocSaveStlFileFromSimulation.assert_not_called()
+
+
+@pytest.fixture
+def geometry(probe):
+    state = probe.state
+    state.update(wip_return=True, stock_return=True, target_return=True, wip_files=True,
+                 on_wip=None, on_stock=None, on_target=None)
+    def export(kind, *args):
+        saved = json.loads(probe.receipt.read_text(encoding="utf-8"))
+        assert saved["phase"] == {"wip": "CreateSTLOfWIPs2", "stock": "CreateSTLOfStock", "target": "CreateSTLOfTarget"}[kind]
+        assert saved["native_calls"][-1]["returned"] is False
+        assert saved["native_calls"][-1]["attempted"] is True
+        assert args[2:] == ("", 0, 0) if kind == "wip" else args[1:] == ("", 0)
+        if state["on_" + kind]:
+            state["on_" + kind]()
+        if kind == "wip":
+            assert args[1] == "wip.stl" and args[0].endswith(os.sep)
+            if state["wip_files"]:
+                for name in ("wip_setup1.stl", "wip_setup2.stl"):
+                    # 与 vendor 原生实现相同的字符串拼接，不能用 Path 自动补分隔符。
+                    Path(args[0] + name).write_bytes(b"solid wip")
+        else:
+            Path(args[0]).write_bytes(("solid " + kind).encode())
+        return state[kind + "_return"]
+    machine = SimpleNamespace(**{name: Mock(side_effect=lambda *args, kind=kind: export(kind, *args))
+        for kind, name in (("wip", "CreateSTLOfWIPs2"), ("stock", "CreateSTLOfStock"), ("target", "CreateSTLOfTarget"))})
+    probe.typed.return_value = machine
+    def run(**changes):
+        return simulation.export_geometry(object(), "verified-clsid", "verified.tlb", **dict(
+            expected_document_path=state["document"]["path"], expected_feature_count=3, expected_operation_count=5,
+            expected_operation_setup_count=1, expected_generated_operation_count=1,
+            output_dir=str(probe.directory), qualification_only=True,
+            acknowledge_document_wide_export=True, message_policy="vendor_default",
+            export_kinds=["wip", "stock", "target"]) | changes)
+    return SimpleNamespace(run=run, machine=machine, probe=probe)
+
+
+def test_geometry_exports_all_wip_files_stock_target_and_bool_contract(geometry):
+    report = geometry.run()
+    assert report["status"] == "review_required" and report["export_files_verified"]
+    assert not report["may_continue"] and not report["simulation_frame_export_claimed"]
+    assert not report["simulation_requested"] and not report["explicit_gtp_requested"]
+    assert report["exports"]["wip"]["source"] == "all_wip_parts_all_setups"
+    assert len(report["exports"]["wip"]["files"]) == 2
+    assert report["native_calls_returned"] and report["messages"]["disconnected"]
+    assert not report["native_parameters"]["coordinate_system_and_unit_meaning_verified_for_entrypoint"]
+    for item in report["exports"].values():
+        assert item["native_return"] is True and item["contract_valid"]
+        for evidence in item["files"]:
+            assert evidence["bytes"] > 0 and len(evidence["sha256"]) == 64
+    assert json.loads(geometry.probe.receipt.read_text(encoding="utf-8")) == report
+    geometry.probe.native.assert_not_called()
+    geometry.probe.app.ActiveDocGTP.assert_not_called()
+    geometry.probe.app.ActiveDocSaveStlFileFromSimulation.assert_not_called()
+
+
+@pytest.mark.parametrize("returned", [False, 1, (0, True), None])
+def test_geometry_failed_wip_return_keeps_evidence_and_stops_all_following_exports(geometry, returned):
+    geometry.probe.state["wip_return"] = returned
+    report = geometry.run()
+    assert not report["export_files_verified"] and "wip" in report["export_errors"]
+    assert report["exports"]["wip"]["files"]
+    assert report["status"] == "error" and report["aborted_after_export"] == "wip"
+    assert report["remaining_exports_skipped"] == ["stock", "target"]
+    geometry.machine.CreateSTLOfStock.assert_not_called()
+    geometry.machine.CreateSTLOfTarget.assert_not_called()
+
+
+def test_geometry_true_without_wip_files_is_not_success(geometry):
+    geometry.probe.state["wip_files"] = False
+    report = geometry.run()
+    assert "wip" in report["export_errors"] and not report["exports"]["wip"]["verified"]
+    assert report["status"] == "error"
+    geometry.machine.CreateSTLOfStock.assert_not_called()
+    geometry.machine.CreateSTLOfTarget.assert_not_called()
+
+
+@pytest.mark.parametrize("change", ["document", "dirty", "inventory", "message"])
+def test_geometry_export_guard_stops_remaining_calls(geometry, change):
+    def changed():
+        state = geometry.probe.state
+        if change == "document":
+            state["document"]["path"] += ".foreign"
+        elif change == "dirty":
+            state["document"]["needs_save"] = True
+        elif change == "inventory":
+            state["inventory"]["feature_count"] += 1
+        else:
+            geometry.probe.session.report["event_count"] = 1
+    geometry.probe.state["on_wip"] = changed
+    report = geometry.run()
+    assert report["status"] == "review_required" and not report["may_continue"]
+    geometry.machine.CreateSTLOfStock.assert_not_called()
+    geometry.machine.CreateSTLOfTarget.assert_not_called()
+    assert report["messages"]["disconnected"]
+
+
+@pytest.mark.parametrize("changes", [{"qualification_only": 1}, {"acknowledge_document_wide_export": False},
+    {"expected_generated_operation_count": True}, {"expected_operation_count": 4}])
+def test_geometry_scope_and_counts_prevent_calls(geometry, changes):
+    if "expected_operation_count" in changes:
+        assert geometry.run(**changes)["status"] == "error"
+    else:
+        with pytest.raises(ValueError):
+            geometry.run(**changes)
+    geometry.machine.CreateSTLOfWIPs2.assert_not_called()
+
+
+def test_geometry_existing_directory_prevents_replay(geometry):
+    geometry.probe.directory.mkdir()
+    with pytest.raises(FileExistsError):
+        geometry.run()
+    geometry.probe.context.assert_not_called()
+
+
+def test_geometry_receipt_precedes_call_and_output_collision_is_not_overwritten(geometry, monkeypatch):
+    real_writer = simulation._write_receipt
+    path = geometry.probe.directory / "stock.stl"
+    def write(receipt, report, **kwargs):
+        value = real_writer(receipt, report, **kwargs)
+        if report["phase"] == "CreateSTLOfStock":
+            path.write_bytes(b"existing")
+        return value
+    monkeypatch.setattr(simulation, "_write_receipt", write)
+    report = geometry.run()
+    assert report["status"] == "error"
+    assert path.read_bytes() == b"existing"
+    geometry.machine.CreateSTLOfStock.assert_not_called()
+    geometry.machine.CreateSTLOfTarget.assert_not_called()
+
+
+def test_geometry_machine5_return_only_bool_abi_in_memory():
+    from ctypes import HRESULT, POINTER, c_int
+    from comtypes import COMObject, COMMETHOD, GUID, IUnknown
+    from comtypes.automation import BSTR, VARIANT_BOOL
+    from scripts.sw_cam_comtypes import _INTERFACES
+    assert _INTERFACES["ICWMachine5"] == "{3767818E-318E-4F18-BBD2-572DB04B45F0}"
+    class Contract(IUnknown):
+        _iid_ = GUID("{239AC565-3604-4345-AFC4-A0111CCF281B}")
+        _methods_ = [COMMETHOD([], HRESULT, "CreateSTLOfWIPs2", (["in"], BSTR, "folder"),
+            (["in"], BSTR, "filename"), (["in"], BSTR, "cs"), (["in"], c_int, "units"),
+            (["in"], c_int, "quality"), (["out", "retval"], POINTER(VARIANT_BOOL), "saved"))] + [
+            COMMETHOD([], HRESULT, name, (["in"], BSTR, "path"), (["in"], BSTR, "cs"),
+                (["in"], c_int, "units"), (["out", "retval"], POINTER(VARIANT_BOOL), "saved"))
+            for name in ("CreateSTLOfStock", "CreateSTLOfTarget")]
+    class Server(COMObject):
+        _com_interfaces_ = [Contract]
+        def CreateSTLOfWIPs2(self, folder, filename, cs, units, quality):
+            assert (folder, filename, cs, units, quality) == ("folder", "wip.stl", "", 0, 0)
+            return True
+        def CreateSTLOfStock(self, path, cs, units):
+            assert (path, cs, units) == ("stock.stl", "", 0)
+            return False
+        def CreateSTLOfTarget(self, path, cs, units):
+            assert (path, cs, units) == ("target.stl", "", 0)
+            return True
+    owner = Server()
+    pointer = owner.QueryInterface(Contract)
+    assert pointer.CreateSTLOfWIPs2("folder", "wip.stl", "", 0, 0) is True
+    assert pointer.CreateSTLOfStock("stock.stl", "", 0) is False
+    assert pointer.CreateSTLOfTarget("target.stl", "", 0) is True
+
+
+def test_geometry_preserves_extended_local_path(geometry):
+    native_directory = "\\\\?\\" + str(geometry.probe.directory)
+    report = geometry.run(output_dir=native_directory)
+    assert report["export_files_verified"] and report["output_dir"] == native_directory
+    assert report["native_calls"][0]["native_path"].startswith(native_directory)
+
+
+@pytest.mark.parametrize("failure", ["false", "invalid", "no_file", "exception"])
+def test_geometry_failure_never_reads_cad_after_failed_call(geometry, monkeypatch, failure):
+    def failed():
+        monkeypatch.setattr(simulation, "_inventory", Mock(side_effect=AssertionError("No CAD read after failure")))
+        monkeypatch.setattr(simulation, "document_snapshot", Mock(side_effect=AssertionError("No CAD read after failure")))
+        if failure == "exception":
+            raise RuntimeError("native export failed")
+    geometry.probe.state.update(on_wip=failed, wip_return=False if failure == "false" else
+                               (1 if failure == "invalid" else True), wip_files=failure != "no_file")
+    report = geometry.run()
+    assert report["status"] == ("uncertain" if failure == "exception" else "error")
+    assert report["messages"]["disconnected"] and not report["may_continue"]
+    simulation._inventory.assert_not_called()
+    simulation.document_snapshot.assert_not_called()
+    geometry.machine.CreateSTLOfStock.assert_not_called()
+    geometry.machine.CreateSTLOfTarget.assert_not_called()
+
+
+def test_geometry_persists_false_return_before_file_read_or_cleanup(geometry, monkeypatch):
+    real_evidence = simulation._file_evidence
+    def evidence(path):
+        durable = json.loads(geometry.probe.receipt.read_text(encoding="utf-8"))
+        assert durable["native_calls"][0]["attempted"] and durable["native_calls"][0]["returned"]
+        assert durable["exports"]["wip"]["native_return"] is False
+        return real_evidence(path)
+    monkeypatch.setattr(simulation, "_file_evidence", evidence)
+    geometry.probe.state["wip_return"] = False
+    assert geometry.run()["status"] == "error"
+
+
+def test_geometry_cannot_call_native_when_attempt_receipt_cannot_be_written(geometry, monkeypatch):
+    real_writer = simulation._write_receipt
+    def writer(path, report, **kwargs):
+        if report["native_calls"] and report["native_calls"][-1]["attempted"]:
+            raise OSError("Cannot persist attempt")
+        return real_writer(path, report, **kwargs)
+    monkeypatch.setattr(simulation, "_write_receipt", writer)
+    report = geometry.run()
+    assert report["status"] == "uncertain"
+    geometry.machine.CreateSTLOfWIPs2.assert_not_called()
+    geometry.machine.CreateSTLOfStock.assert_not_called()
+
+
+def test_geometry_stock_false_stops_target(geometry):
+    geometry.probe.state["stock_return"] = False
+    report = geometry.run()
+    assert report["status"] == "error" and report["aborted_after_export"] == "stock"
+    assert report["exports"]["wip"]["verified"] and not report["exports"]["stock"]["verified"]
+    geometry.machine.CreateSTLOfTarget.assert_not_called()
+
+
+@pytest.mark.parametrize("kinds", [["target"], ["stock"], ["wip"], ["target", "stock"]])
+def test_geometry_exports_only_requested_kinds_in_requested_order(geometry, kinds):
+    report = geometry.run(export_kinds=kinds)
+    expected = {"target": "CreateSTLOfTarget", "stock": "CreateSTLOfStock", "wip": "CreateSTLOfWIPs2"}
+    assert report["export_files_verified"] and report["export_kinds"] == kinds
+    assert [call["method"] for call in report["native_calls"]] == [expected[kind] for kind in kinds]
+    for kind in set(expected) - set(kinds):
+        getattr(geometry.machine, expected[kind]).assert_not_called()
+
+
+def test_geometry_default_requests_only_wip(geometry):
+    report = geometry.run(export_kinds=None)
+    assert report["export_kinds"] == ["wip"] and report["export_files_verified"]
+    geometry.machine.CreateSTLOfStock.assert_not_called()
+    geometry.machine.CreateSTLOfTarget.assert_not_called()
+
+
+@pytest.mark.parametrize("kinds", [[], "wip", ("wip",), [True], ["all"], ["wip", "wip"], ["wip", "stock", "target", "wip"]])
+def test_geometry_invalid_selector_prevents_directory_and_com(geometry, kinds):
+    with pytest.raises(ValueError):
+        geometry.run(export_kinds=kinds)
+    assert not geometry.probe.directory.exists()
+    geometry.probe.context.assert_not_called()
+
+
+def test_preview_explicit_close_calls_native_once_without_launch_or_exports(probe):
+    def close():
+        saved = json.loads(probe.receipt.read_text(encoding="utf-8"))
+        assert saved["phase"] == "ActiveDocCloseSimulation" and saved["preview_close_requested"]
+    probe.app.ActiveDocCloseSimulation = Mock(side_effect=close)
+    report = preview(probe, action="close")
+    assert report["status"] == "review_required" and report["preview_close_requested"]
+    assert not report["preview_visibility_verified"] and not report["may_continue"]
+    assert report["native_calls_returned"] and report["messages"]["disconnected"]
+    probe.app.ActiveDocCloseSimulation.assert_called_once_with()
+    probe.app.ActiveDocLaunchSimulation.assert_not_called()
+    probe.app.ActiveDocSaveSimulationImage.assert_not_called()
+    probe.app.ActiveDocSaveStlFileFromSimulation.assert_not_called()
+    probe.native.assert_not_called()
+
+
+def test_geometry_wip_native_folder_has_separator_and_concat_stays_in_owned_subdirectory(geometry):
+    report = geometry.run(export_kinds=["wip"])
+    folder = str(geometry.probe.directory / "wip") + os.sep
+    assert report["export_files_verified"]
+    assert report["native_calls"][0]["native_folder"] == folder
+    geometry.machine.CreateSTLOfWIPs2.assert_called_once_with(folder, "wip.stl", "", 0, 0)
+    assert all(Path(item["path"]).parent == geometry.probe.directory / "wip"
+               for item in report["exports"]["wip"]["files"])
+    assert not list(geometry.probe.directory.glob("wip*.stl"))
+
+
+def test_geometry_wip_collision_created_after_attempt_receipt_prevents_native_overwrite(geometry, monkeypatch):
+    original = simulation._write_receipt
+    collision = geometry.probe.directory / "wip" / "wip.stl"
+    def write(path, report, **kwargs):
+        value = original(path, report, **kwargs)
+        if report["native_calls"] and report["native_calls"][0]["attempted"]:
+            if not collision.exists():
+                collision.write_bytes(b"existing evidence")
+        return value
+    monkeypatch.setattr(simulation, "_write_receipt", write)
+    report = geometry.run(export_kinds=["wip"])
+    assert report["reason"] == "CAM_WIP_OUTPUT_DIRECTORY_CHANGED"
+    assert collision.read_bytes() == b"existing evidence"
+    geometry.machine.CreateSTLOfWIPs2.assert_not_called()
+
+
+@pytest.mark.parametrize("where", ["inventory", "final_document", "attempt_receipt"])
+def test_geometry_late_preflight_message_prevents_native_entry(geometry, monkeypatch, where):
+    original_inventory = simulation._inventory
+    original_document = simulation.document_snapshot
+    original_writer = simulation._write_receipt
+    final_reads = 0
+    def is_final_stage():
+        return geometry.probe.receipt.exists() and json.loads(
+            geometry.probe.receipt.read_text(encoding="utf-8"))["phase"] == "CreateSTLOfWIPs2"
+    def inventory(*args):
+        value = original_inventory(*args)
+        if where == "inventory" and is_final_stage():
+            geometry.probe.session.report["event_count"] = 1
+        return value
+    def document(*args):
+        nonlocal final_reads
+        value = original_document(*args)
+        if is_final_stage():
+            final_reads += 1
+            if where == "final_document" and final_reads == 2:
+                geometry.probe.session.report["event_count"] = 1
+        return value
+    def write(path, report, **kwargs):
+        value = original_writer(path, report, **kwargs)
+        if where == "attempt_receipt" and report["native_calls"] and report["native_calls"][0]["attempted"]:
+            geometry.probe.session.report["event_count"] = 1
+        return value
+    monkeypatch.setattr(simulation, "_inventory", inventory)
+    monkeypatch.setattr(simulation, "document_snapshot", document)
+    monkeypatch.setattr(simulation, "_write_receipt", write)
+    report = geometry.run(export_kinds=["wip"])
+    assert report["reason"] == "CAM_MESSAGES_REQUIRE_REVIEW" and not report["may_continue"]
+    assert report["messages"]["disconnected"]
+    geometry.machine.CreateSTLOfWIPs2.assert_not_called()

@@ -75,7 +75,7 @@ def test_schema_inherits_all_simulation_guards_and_requires_explicit_action():
     schema = server.SolidWorksCamPreviewSimulationInput.model_json_schema()
     base = server.SolidWorksCamSimulationInput.model_json_schema()
     assert set(schema["required"]) == set(base["required"]) | {"action"}
-    assert schema["properties"]["action"]["enum"] == ["launch_play", "export_state"]
+    assert schema["properties"]["action"]["enum"] == ["launch_play", "export_state", "close"]
     assert "default" not in schema["properties"]["action"]
     assert schema["properties"]["response_format"]["default"] == "json"
     tool = server.mcp._tool_manager._tools[TOOL]
@@ -86,7 +86,7 @@ def test_schema_inherits_all_simulation_guards_and_requires_explicit_action():
     assert tool.annotations.openWorldHint is False
 
 
-@pytest.mark.parametrize("action", ["launch_play", "export_state"])
+@pytest.mark.parametrize("action", ["launch_play", "export_state", "close"])
 def test_routes_exact_action_registered_typelib_and_all_guard_parameters(context, action):
     result = json.loads(server.solidworks_cam_preview_simulation(inputs(context, action=action)))
     assert result == context.run.return_value
@@ -104,7 +104,7 @@ def test_routes_exact_action_registered_typelib_and_all_guard_parameters(context
     assert not Path(context.output_dir).exists()
 
 
-@pytest.mark.parametrize("action", [None, "", "launch", "play", "close", "silent", "all", True, 1])
+@pytest.mark.parametrize("action", [None, "", "launch", "play", "silent", "all", True, 1])
 def test_action_is_not_coerced_or_extended_to_other_native_calls(context, action):
     with pytest.raises(ValueError):
         inputs(context, action=action)
@@ -158,13 +158,13 @@ def test_each_action_requires_new_absolute_output_directory(context, case):
         value = str(path)
     else:
         value = str(path / "missing" / "output")
-    for action in ("launch_play", "export_state"):
+    for action in ("launch_play", "export_state", "close"):
         with pytest.raises(ValueError):
             inputs(context, action=action, output_dir=value)
     context.run.assert_not_called()
 
 
-@pytest.mark.parametrize("action", ["launch_play", "export_state"])
+@pytest.mark.parametrize("action", ["launch_play", "export_state", "close"])
 @pytest.mark.parametrize("failure", ["unbound", "unknown_registration", "discovery_error", "wrong_document", "wrong_version"])
 def test_target_guards_block_both_actions_before_core(context, monkeypatch, action, failure):
     changes = {"action": action}
@@ -199,7 +199,7 @@ def test_core_error_is_structured_and_response_format_is_preserved(context):
     assert context.runners == [{"format": server.ResponseFormat.MARKDOWN, "automation": True}]
 
 
-def test_extra_options_cannot_request_save_close_or_generation(context):
+def test_extra_options_cannot_request_save_implicit_close_or_generation(context):
     for field in ("save_model", "close_simulation", "generate_toolpaths", "operation_index"):
         with pytest.raises(ValueError):
             inputs(context, **{field: True})

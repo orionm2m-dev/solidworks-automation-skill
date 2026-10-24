@@ -217,10 +217,69 @@ receipt. `launch_play` calls only native `ActiveDocLaunchSimulation()` and
 image-export failure does not prevent the STL attempt while document identity
 and message guards remain valid; each export retains its own result.
 
-The preview tool never closes simulation, calls `RunSimulationSilent`, generates
-toolpaths, saves the model or posts NC. Results remain `review_required` with
+Only explicit `action="close"` calls native `ActiveDocCloseSimulation()`
+(DISPID 43). Its return does not prove that preview closed; no completion getter
+is assumed. Other actions do not close simulation automatically. The preview
+tool never calls `RunSimulationSilent`, generates toolpaths, saves the model or
+posts NC. Results remain `review_required` with
 `may_continue=false`; completion is unverified. Image and mesh evidence require
 separate review. Mock coverage is not evidence of live playback qualification.
+
+
+## Document-wide CAM geometry export
+
+`solidworks_cam_export_geometry` requires the same saved-part, exact positive
+counts, strict `qualification_only=true` and vendor-default message policy,
+with a separate strict `acknowledge_document_wide_export=true`. Its output
+directory must be new, absolute and local after canonical path resolution;
+UNC paths, including mapped drives resolving to UNC, are refused.
+`export_kinds` is an ordered, unique JSON list of one to three entries from
+`"wip"`, `"stock"`, `"target"`; it defaults to `["wip"]`. Only explicitly
+selected kinds are called, in the supplied order; there is no default batch
+of all three exports.
+
+The typed `ICWMachine5.CreateSTLOfWIPs2(folder, "wip.stl", "", 0, 0)` exports
+WIPs across all setups, not the current simulation frame. The native folder
+argument includes the trailing Windows separator: the observed implementation
+concatenates folder and filename directly. An omitted separator previously
+created a sibling file instead of a file inside the expected WIP subdirectory.
+The receipt records the actual native folder and path; the tool uses a new,
+empty WIP subdirectory and refuses collisions before invocation. WIP, stock and target
+export methods return a Boolean only. The empty string and zero parameters
+are qualification values; their use does not verify units or coordinate
+interpretation. Any failed or invalid native export result, or missing/invalid
+output, immediately stops the batch. No subsequent stock/target export or CAD
+readback is permitted; only event-subscription cleanup is attempted. Verified
+files and hashes require separate mesh review; they do not establish simulation
+completion or full DFM, and `may_continue` remains false.
+
+Each attempted-call marker is persisted before entering native code and means
+intent, not proof of entry. The returned flag and strict Boolean result are
+persisted immediately after return, before any further CAD readback. A receipt
+write failure blocks continuation. Failed exports stop the batch; no retry or
+alternate export kind is selected automatically.
+
+On the saved stepped calibration in SOLIDWORKS/CAM 2026 SP4, the qualified
+sequence is an explicit native preview `action="close"`, then a separate
+geometry call with `export_kinds=["wip"]` and a new local output directory.
+No save, toolpath regeneration, UI action or NC output is part of this sequence.
+Closing preview was necessary for the observed successful sequence; the call's
+return does not establish a general vendor prerequisite or a closed-state getter.
+The corrected WIP export returned true and wrote the expected 50,384-byte STL.
+Independent mesh readback found 1,006 triangles, a watertight mesh and volume
+about 6,133.567 mm3, versus about 6,275.214 mm3 for stock: roughly 141.65 mm3
+removed by the one generated rough-turn operation. This is partial machining,
+not the final target shape or qualification of the four remaining operations.
+The corrected file and the earlier misplaced successful WIP had identical
+SHA-256 `633fe162f68a54ddcc0bce35bbd67a71d859643f2d1ebcff9a6d22f6436cb248`.
+
+An earlier WIP attempt while preview was open returned false, and SOLIDWORKS
+later exited during the old multi-export sequence. A stock file proves that
+stock export was entered despite the old receipt's false attempted flag; the
+native return and failure origin are unknown. That failed sequence is not
+qualified and is not replayed automatically. The single WIP result above does
+not establish safe export from an open simulation or make simulation-frame STL
+export supported.
 
 ## Evidence and tests
 
@@ -253,7 +312,17 @@ returned with unchanged CAM inventory. A separate `export_state` produced a
 real 400 x 300 JPG of 10,816 bytes, which was visually reviewed. STL export
 returned false with error 7 (`CW_EC_UNKNOWN_ERROR`). Repeating only export to
 a shorter project output path produced the same image hash and the same STL
-error; simulation was not rerun.
+error; simulation was not rerun. Preserving the requested drive-letter form
+and exporting to an actual local directory also retained error 7. The path fix
+is useful but did not resolve simulation-frame STL export. The supported WIP
+workflow above is a different native geometry source, not a silent replacement
+claim for the failed simulation exporter.
+
+Native exports preserve the caller's explicit absolute path for native API
+arguments. Canonical paths are recorded separately and used to check directory
+identity and output boundaries. File existence, nonzero size and SHA-256 are
+checked independently of a native success Boolean; mesh content still requires
+separate review.
 
 Image export is therefore pilot-verified. Playback completion, the underlying
 simulation completion state and STL/mesh output remain unverified. Raw zero
@@ -261,8 +330,8 @@ counters and an image do not establish a complete material-removal result,
 tool/holder clearance, general turning entitlement or full DFM. These results
 do not qualify a production machining process.
 
-The combined relevant mock/in-memory suite passed 467 tests; MCP validation
-registered 93 tools. Those checks are separate from the live observations above.
+Protocol validation checks registered tools without calling CAD. Regression
+tests use mocks and in-memory COM separately from the live observations above.
 
 The reusable `scripts/mcp_request.py` client executes JSON requests through the
 standard MCP protocol against a fresh server and saves a result after each
