@@ -127,9 +127,13 @@ def test_counts_reject_coercion_and_nonpositive_values(context, field, value):
     ("expected_operation_count", 512), ("expected_operation_setup_count", 512),
     ("expected_generated_operation_count", 512)])
 def test_count_upper_bounds_are_exact(context, field, maximum):
-    assert getattr(inputs(context, **{field: maximum}), field) == maximum
+    changes = {field: maximum}
+    if field == "expected_generated_operation_count":
+        changes["expected_operation_count"] = maximum
+    assert getattr(inputs(context, **changes), field) == maximum
+    changes[field] = maximum + 1
     with pytest.raises(ValueError):
-        inputs(context, **{field: maximum + 1})
+        inputs(context, **changes)
 
 
 @pytest.mark.parametrize("field", ["qualification_only", "acknowledge_document_wide_export"])
@@ -308,3 +312,52 @@ def test_explicit_all_export_kinds_preserve_order(context):
     assert params.export_kinds == order
     server.solidworks_cam_export_geometry(params)
     assert context.run.call_args.kwargs["export_kinds"] == order
+
+
+@pytest.mark.parametrize("kind", ["stock", "target"])
+def test_single_stock_or_target_can_route_with_all_zero_pre_machining_counts(context, kind):
+    params = inputs(context, export_kinds=[kind], expected_feature_count=0,
+                    expected_operation_count=0, expected_operation_setup_count=0,
+                    expected_generated_operation_count=0)
+    result = json.loads(server.solidworks_cam_export_geometry(params))
+    assert result["may_continue"] is False
+    kwargs = context.run.call_args.kwargs
+    assert kwargs["export_kinds"] == [kind]
+    for field in ("expected_feature_count", "expected_operation_count",
+                  "expected_operation_setup_count", "expected_generated_operation_count"):
+        assert kwargs[field] == 0
+
+
+@pytest.mark.parametrize("kinds", [["wip"], ["stock", "target"], ["stock", "wip"], ["target", "stock"]])
+@pytest.mark.parametrize("field", ["expected_feature_count", "expected_operation_count",
+                                   "expected_operation_setup_count", "expected_generated_operation_count"])
+def test_wip_or_mixed_selection_preserves_every_positive_count_guard(context, kinds, field):
+    with pytest.raises(ValueError, match="positive"):
+        inputs(context, export_kinds=kinds, **{field: 0})
+    context.run.assert_not_called()
+
+
+@pytest.mark.parametrize("field", ["expected_feature_count", "expected_operation_count",
+                                   "expected_operation_setup_count", "expected_generated_operation_count"])
+@pytest.mark.parametrize("value", [False, "0", 0.0, -1])
+def test_stock_zero_exception_keeps_strict_nonnegative_counts(context, field, value):
+    with pytest.raises(ValueError):
+        inputs(context, export_kinds=["stock"], **{field: value})
+    context.run.assert_not_called()
+
+
+@pytest.mark.parametrize("kinds", [["stock"], ["wip"], ["target"], ["stock", "target"]])
+def test_generated_count_cannot_exceed_operation_count_in_any_scope(context, kinds):
+    with pytest.raises(ValueError, match="exceeds"):
+        inputs(context, export_kinds=kinds, expected_operation_count=2,
+               expected_generated_operation_count=3)
+    context.run.assert_not_called()
+
+
+@pytest.mark.parametrize("kind", ["stock", "target"])
+def test_single_geometry_zero_mode_still_rejects_generated_without_operations(context, kind):
+    with pytest.raises(ValueError, match="exceeds"):
+        inputs(context, export_kinds=[kind], expected_feature_count=0,
+               expected_operation_count=0, expected_operation_setup_count=0,
+               expected_generated_operation_count=1)
+    context.run.assert_not_called()

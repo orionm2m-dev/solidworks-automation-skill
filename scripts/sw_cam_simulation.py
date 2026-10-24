@@ -41,7 +41,7 @@ def _file_evidence(path):
 
 def _prepare_output(*, expected_document_path, expected_feature_count, expected_operation_count,
                     expected_operation_setup_count, expected_generated_operation_count, output_dir,
-                    qualification_only, acknowledge_document_wide_simulation, message_policy):
+                    qualification_only, acknowledge_document_wide_simulation, message_policy, allow_prepath_geometry_counts=False):
     """校验显式试件范围并独占创建目录，禁止重放或覆盖已有证据。"""
     if (qualification_only is not True or acknowledge_document_wide_simulation is not True
             or message_policy != "vendor_default"):
@@ -51,8 +51,9 @@ def _prepare_output(*, expected_document_path, expected_feature_count, expected_
               "generated_operation_count": expected_generated_operation_count}
     for key, value in counts.items():
         maximum = 262144 if key == "feature_count" else 512
-        if type(value) is not int or not 1 <= value <= maximum:
-            raise ValueError(f"expected_{key} must be an integer in [1, {maximum}]")
+        minimum = 0 if allow_prepath_geometry_counts else 1
+        if type(value) is not int or not minimum <= value <= maximum:
+            raise ValueError(f"expected_{key} must be an integer in [{minimum}, {maximum}]")
     if expected_generated_operation_count > expected_operation_count:
         raise ValueError("Generated operation count exceeds operation count")
     if (not isinstance(expected_document_path, str) or not absolute_document_path(expected_document_path)
@@ -400,7 +401,7 @@ def export_geometry(sw, clsid, typelib_path, *, expected_document_path, expected
         expected_operation_count=expected_operation_count, expected_operation_setup_count=expected_operation_setup_count,
         expected_generated_operation_count=expected_generated_operation_count, output_dir=output_dir,
         qualification_only=qualification_only, acknowledge_document_wide_simulation=acknowledge_document_wide_export,
-        message_policy=message_policy)
+        message_policy=message_policy, allow_prepath_geometry_counts=kinds in (["stock"], ["target"]))
     receipt = canonical_directory / "receipt.json"
     report = {"status": "started", "phase": "preflight", "scope": "entire_active_cam_document",
               "qualification_only": True, "acknowledge_document_wide_export": True,
@@ -415,7 +416,8 @@ def export_geometry(sw, clsid, typelib_path, *, expected_document_path, expected
               "simulation_requested": False, "simulation_frame_export_claimed": False,
               "production_process_qualified": False, "message_policy": "vendor_default",
               "default_response_is_not_cancellation": True,
-              "native_parameters": {"reference_coordinate_system": "", "unit_code": 0,
+              "native_parameters": {"reference_coordinate_system_for_stock_and_wip": "", "unit_code": 0,
+                                    "target_reference_frame": "native_FCS",
                                     "wip_quality_code": 0, "wip_quality": "CW_STL_QUALITY_FINE",
                                     "coordinate_system_and_unit_meaning_verified_for_entrypoint": False},
               "required_reviews": ["stl_mesh_readback", "coordinate_system_and_units", "wip_scope_and_removal"]}
@@ -464,7 +466,7 @@ def export_geometry(sw, clsid, typelib_path, *, expected_document_path, expected
             guard()
             methods = {"wip": ("CreateSTLOfWIPs2", "all_wip_parts_all_setups"),
                        "stock": ("CreateSTLOfStock", "original_workpiece"),
-                       "target": ("CreateSTLOfTarget", "target_part")}
+                       "target": ("CreateSTLOfTargetInFCSSpace", "target_part_in_FCS")}
             for index, kind in enumerate(kinds):
                 name, source = methods[kind]
                 guard()
@@ -479,7 +481,7 @@ def export_geometry(sw, clsid, typelib_path, *, expected_document_path, expected
                     native_path = str(wip_directory / "wip.stl")
                 else:
                     _check_output_path(path, directory, canonical_directory)
-                    args = (str(path), "", 0)
+                    args = (str(path), 0) if kind == "target" else (str(path), "", 0)
                     native_path = str(path)
                 call = {"method": name, "native_path": native_path, "attempted": False, "returned": False}
                 if kind == "wip":

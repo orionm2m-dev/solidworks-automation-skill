@@ -575,10 +575,15 @@ def geometry(probe):
                  on_wip=None, on_stock=None, on_target=None)
     def export(kind, *args):
         saved = json.loads(probe.receipt.read_text(encoding="utf-8"))
-        assert saved["phase"] == {"wip": "CreateSTLOfWIPs2", "stock": "CreateSTLOfStock", "target": "CreateSTLOfTarget"}[kind]
+        assert saved["phase"] == {"wip": "CreateSTLOfWIPs2", "stock": "CreateSTLOfStock", "target": "CreateSTLOfTargetInFCSSpace"}[kind]
         assert saved["native_calls"][-1]["returned"] is False
         assert saved["native_calls"][-1]["attempted"] is True
-        assert args[2:] == ("", 0, 0) if kind == "wip" else args[1:] == ("", 0)
+        if kind == "wip":
+            assert args[2:] == ("", 0, 0)
+        elif kind == "stock":
+            assert args[1:] == ("", 0)
+        else:
+            assert args[1:] == (0,)
         if state["on_" + kind]:
             state["on_" + kind]()
         if kind == "wip":
@@ -591,7 +596,7 @@ def geometry(probe):
             Path(args[0]).write_bytes(("solid " + kind).encode())
         return state[kind + "_return"]
     machine = SimpleNamespace(**{name: Mock(side_effect=lambda *args, kind=kind: export(kind, *args))
-        for kind, name in (("wip", "CreateSTLOfWIPs2"), ("stock", "CreateSTLOfStock"), ("target", "CreateSTLOfTarget"))})
+        for kind, name in (("wip", "CreateSTLOfWIPs2"), ("stock", "CreateSTLOfStock"), ("target", "CreateSTLOfTargetInFCSSpace"))})
     probe.typed.return_value = machine
     def run(**changes):
         return simulation.export_geometry(object(), "verified-clsid", "verified.tlb", **dict(
@@ -631,7 +636,7 @@ def test_geometry_failed_wip_return_keeps_evidence_and_stops_all_following_expor
     assert report["status"] == "error" and report["aborted_after_export"] == "wip"
     assert report["remaining_exports_skipped"] == ["stock", "target"]
     geometry.machine.CreateSTLOfStock.assert_not_called()
-    geometry.machine.CreateSTLOfTarget.assert_not_called()
+    geometry.machine.CreateSTLOfTargetInFCSSpace.assert_not_called()
 
 
 def test_geometry_true_without_wip_files_is_not_success(geometry):
@@ -640,7 +645,7 @@ def test_geometry_true_without_wip_files_is_not_success(geometry):
     assert "wip" in report["export_errors"] and not report["exports"]["wip"]["verified"]
     assert report["status"] == "error"
     geometry.machine.CreateSTLOfStock.assert_not_called()
-    geometry.machine.CreateSTLOfTarget.assert_not_called()
+    geometry.machine.CreateSTLOfTargetInFCSSpace.assert_not_called()
 
 
 @pytest.mark.parametrize("change", ["document", "dirty", "inventory", "message"])
@@ -659,7 +664,7 @@ def test_geometry_export_guard_stops_remaining_calls(geometry, change):
     report = geometry.run()
     assert report["status"] == "review_required" and not report["may_continue"]
     geometry.machine.CreateSTLOfStock.assert_not_called()
-    geometry.machine.CreateSTLOfTarget.assert_not_called()
+    geometry.machine.CreateSTLOfTargetInFCSSpace.assert_not_called()
     assert report["messages"]["disconnected"]
 
 
@@ -694,7 +699,7 @@ def test_geometry_receipt_precedes_call_and_output_collision_is_not_overwritten(
     assert report["status"] == "error"
     assert path.read_bytes() == b"existing"
     geometry.machine.CreateSTLOfStock.assert_not_called()
-    geometry.machine.CreateSTLOfTarget.assert_not_called()
+    geometry.machine.CreateSTLOfTargetInFCSSpace.assert_not_called()
 
 
 def test_geometry_machine5_return_only_bool_abi_in_memory():
@@ -707,10 +712,11 @@ def test_geometry_machine5_return_only_bool_abi_in_memory():
         _iid_ = GUID("{239AC565-3604-4345-AFC4-A0111CCF281B}")
         _methods_ = [COMMETHOD([], HRESULT, "CreateSTLOfWIPs2", (["in"], BSTR, "folder"),
             (["in"], BSTR, "filename"), (["in"], BSTR, "cs"), (["in"], c_int, "units"),
-            (["in"], c_int, "quality"), (["out", "retval"], POINTER(VARIANT_BOOL), "saved"))] + [
-            COMMETHOD([], HRESULT, name, (["in"], BSTR, "path"), (["in"], BSTR, "cs"),
-                (["in"], c_int, "units"), (["out", "retval"], POINTER(VARIANT_BOOL), "saved"))
-            for name in ("CreateSTLOfStock", "CreateSTLOfTarget")]
+            (["in"], c_int, "quality"), (["out", "retval"], POINTER(VARIANT_BOOL), "saved")),
+            COMMETHOD([], HRESULT, "CreateSTLOfStock", (["in"], BSTR, "path"), (["in"], BSTR, "cs"),
+                (["in"], c_int, "units"), (["out", "retval"], POINTER(VARIANT_BOOL), "saved")),
+            COMMETHOD([], HRESULT, "CreateSTLOfTargetInFCSSpace", (["in"], BSTR, "path"),
+                (["in"], c_int, "units"), (["out", "retval"], POINTER(VARIANT_BOOL), "saved"))]
     class Server(COMObject):
         _com_interfaces_ = [Contract]
         def CreateSTLOfWIPs2(self, folder, filename, cs, units, quality):
@@ -719,14 +725,14 @@ def test_geometry_machine5_return_only_bool_abi_in_memory():
         def CreateSTLOfStock(self, path, cs, units):
             assert (path, cs, units) == ("stock.stl", "", 0)
             return False
-        def CreateSTLOfTarget(self, path, cs, units):
-            assert (path, cs, units) == ("target.stl", "", 0)
+        def CreateSTLOfTargetInFCSSpace(self, path, units):
+            assert (path, units) == ("target.stl", 0)
             return True
     owner = Server()
     pointer = owner.QueryInterface(Contract)
     assert pointer.CreateSTLOfWIPs2("folder", "wip.stl", "", 0, 0) is True
     assert pointer.CreateSTLOfStock("stock.stl", "", 0) is False
-    assert pointer.CreateSTLOfTarget("target.stl", "", 0) is True
+    assert pointer.CreateSTLOfTargetInFCSSpace("target.stl", 0) is True
 
 
 def test_geometry_preserves_extended_local_path(geometry):
@@ -751,7 +757,7 @@ def test_geometry_failure_never_reads_cad_after_failed_call(geometry, monkeypatc
     simulation._inventory.assert_not_called()
     simulation.document_snapshot.assert_not_called()
     geometry.machine.CreateSTLOfStock.assert_not_called()
-    geometry.machine.CreateSTLOfTarget.assert_not_called()
+    geometry.machine.CreateSTLOfTargetInFCSSpace.assert_not_called()
 
 
 def test_geometry_persists_false_return_before_file_read_or_cleanup(geometry, monkeypatch):
@@ -784,13 +790,13 @@ def test_geometry_stock_false_stops_target(geometry):
     report = geometry.run()
     assert report["status"] == "error" and report["aborted_after_export"] == "stock"
     assert report["exports"]["wip"]["verified"] and not report["exports"]["stock"]["verified"]
-    geometry.machine.CreateSTLOfTarget.assert_not_called()
+    geometry.machine.CreateSTLOfTargetInFCSSpace.assert_not_called()
 
 
 @pytest.mark.parametrize("kinds", [["target"], ["stock"], ["wip"], ["target", "stock"]])
 def test_geometry_exports_only_requested_kinds_in_requested_order(geometry, kinds):
     report = geometry.run(export_kinds=kinds)
-    expected = {"target": "CreateSTLOfTarget", "stock": "CreateSTLOfStock", "wip": "CreateSTLOfWIPs2"}
+    expected = {"target": "CreateSTLOfTargetInFCSSpace", "stock": "CreateSTLOfStock", "wip": "CreateSTLOfWIPs2"}
     assert report["export_files_verified"] and report["export_kinds"] == kinds
     assert [call["method"] for call in report["native_calls"]] == [expected[kind] for kind in kinds]
     for kind in set(expected) - set(kinds):
@@ -801,7 +807,7 @@ def test_geometry_default_requests_only_wip(geometry):
     report = geometry.run(export_kinds=None)
     assert report["export_kinds"] == ["wip"] and report["export_files_verified"]
     geometry.machine.CreateSTLOfStock.assert_not_called()
-    geometry.machine.CreateSTLOfTarget.assert_not_called()
+    geometry.machine.CreateSTLOfTargetInFCSSpace.assert_not_called()
 
 
 @pytest.mark.parametrize("kinds", [[], "wip", ("wip",), [True], ["all"], ["wip", "wip"], ["wip", "stock", "target", "wip"]])
@@ -888,4 +894,42 @@ def test_geometry_late_preflight_message_prevents_native_entry(geometry, monkeyp
     report = geometry.run(export_kinds=["wip"])
     assert report["reason"] == "CAM_MESSAGES_REQUIRE_REVIEW" and not report["may_continue"]
     assert report["messages"]["disconnected"]
+    geometry.machine.CreateSTLOfWIPs2.assert_not_called()
+
+
+def test_stock_only_export_before_afr_allows_exact_zero_counts(geometry):
+    geometry.probe.state["inventory"].update(feature_count=0,operation_count=0,operation_setup_count=0,operations=[])
+    report=geometry.run(export_kinds=["stock"],expected_feature_count=0,expected_operation_count=0,
+                        expected_operation_setup_count=0,expected_generated_operation_count=0)
+    assert report["export_files_verified"] and report["native_calls_returned"]
+    assert list(report["exports"])==["stock"]
+    geometry.machine.CreateSTLOfStock.assert_called_once()
+    geometry.machine.CreateSTLOfWIPs2.assert_not_called()
+    geometry.machine.CreateSTLOfTargetInFCSSpace.assert_not_called()
+
+
+@pytest.mark.parametrize("kinds", [["wip"],["stock","wip"],["stock","target"],["target","wip"]])
+def test_zero_counts_never_enable_wip_or_mixed_batch(geometry,kinds):
+    with pytest.raises(ValueError):
+        geometry.run(export_kinds=kinds,expected_feature_count=0,expected_operation_count=0,
+                     expected_operation_setup_count=0,expected_generated_operation_count=0)
+    geometry.probe.context.assert_not_called()
+    assert not geometry.probe.directory.exists()
+
+
+def test_stock_zero_expectations_must_match_actual_inventory(geometry):
+    report=geometry.run(export_kinds=["stock"],expected_feature_count=0,expected_operation_count=0,
+                        expected_operation_setup_count=0,expected_generated_operation_count=0)
+    assert report["status"]=="error"
+    geometry.machine.CreateSTLOfStock.assert_not_called()
+
+
+def test_target_only_before_afr_exports_fcs_geometry_with_two_native_arguments(geometry):
+    geometry.probe.state["inventory"].update(feature_count=0,operation_count=0,operation_setup_count=0,operations=[])
+    report=geometry.run(export_kinds=["target"],expected_feature_count=0,expected_operation_count=0,
+                        expected_operation_setup_count=0,expected_generated_operation_count=0)
+    assert report["export_files_verified"] and report["exports"]["target"]["source"]=="target_part_in_FCS"
+    assert report["native_parameters"]["target_reference_frame"]=="native_FCS"
+    geometry.machine.CreateSTLOfTargetInFCSSpace.assert_called_once_with(str(geometry.probe.directory/"target.stl"),0)
+    geometry.machine.CreateSTLOfStock.assert_not_called()
     geometry.machine.CreateSTLOfWIPs2.assert_not_called()

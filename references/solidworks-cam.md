@@ -52,6 +52,42 @@ separate observations; none is a complete entitlement or simulation test.
 
 `solidworks_cam_inspect_machining` reads feature setups, operation setups,
 turning operation types, generated-path flags and existing stock type.
+`solidworks_cam_inspect_turn_stock` separately reads raw bar-stock and minimum
+bounding-cylinder parameters, FCS name and raw SOLIDWORKS document units before
+feature recognition. It needs no selected operation or generated toolpath.
+Readback does not establish CAM parameter units, the radius/diameter meaning of
+OD offset, or a valid machining coordinate frame. It performs no stock setter.
+The unqualified turning `GetFCS` getter is disabled after native server error
+`0x80010105` in live inspection; `GetFCS1` is not tried as a fallback. The
+historical failure remains evidence. A null coordinate-system name is reported
+as unset, never as an identity transform. The inspector keeps frame verification
+false; separate target-in-FCS geometry checks must establish any part-specific
+coordinate mapping.
+
+`solidworks_cam_define_turn_stock` is a separate explicit pre-recognition step.
+It requires a clean saved qualification part, current bar-stock type, zero
+feature/operation/setup counts, exact `expected_bar_parameters_native`, new
+`bar_parameters_native`, `qualification_only=true`, vendor-default messages and
+a new exclusive JSON receipt. Both parameter objects have exactly `startZ`,
+`length`, `odOff`, `idOff`, `attribute`; numeric values are finite raw CAM numbers
+without unit conversion. Expected attribute may be 0/1/2; the new attribute must
+be SOLID=1 or CORED=2. `DefineTurnWorkpieceAsBarStock2` returns an integer
+`CWErrorCodes_e`: success is 0, not Boolean true. The core records intent/result
+and reads back parameters only after that success code. Final verification
+rechecks the document, empty CAM plan and raw bar values after clean event
+unsubscription; a cleanup change invalidates the final verified flag. It never auto-saves,
+recognizes features, generates operations/toolpaths or assigns a coordinate
+system. Receipt and readback do not prove units, stock allowance or machining
+frame correctness; those need separate qualification. On two separate saved
+product-derived copies, explicit bar definitions returned integer zero with
+exact requested raw-parameter readback. Independent stock export and analytic
+BRep containment subsequently verified the intended nominal cylinders and
+placement for those cases. Stock STL with an empty reference-system argument
+was in model/world coordinates there, while the bar start position was in CAM
+FCS; independently checked target-in-FCS geometry linked the two. This does
+not define a universal offset conversion or qualify chucking, saw allowance,
+material tolerances or production cutting conditions.
+
 `solidworks_cam_run_qualification_step` supports one of `subscribe`,
 `extract_features` or `generate_operations` on a separately saved calibration
 part. A strict JSON `qualification_only=true` and the explicit
@@ -228,7 +264,7 @@ separate review. Mock coverage is not evidence of live playback qualification.
 
 ## Document-wide CAM geometry export
 
-`solidworks_cam_export_geometry` requires the same saved-part, exact positive
+`solidworks_cam_export_geometry` requires the same saved-part, exact observed
 counts, strict `qualification_only=true` and vendor-default message policy,
 with a separate strict `acknowledge_document_wide_export=true`. Its output
 directory must be new, absolute and local after canonical path resolution;
@@ -237,6 +273,19 @@ UNC paths, including mapped drives resolving to UNC, are refused.
 `"wip"`, `"stock"`, `"target"`; it defaults to `["wip"]`. Only explicitly
 selected kinds are called, in the supplied order; there is no default batch
 of all three exports.
+Only the exact selection `["stock"]` or `["target"]` permits zero feature,
+operation, setup and generated-operation counts before feature recognition.
+WIP and every mixed selection require all counts to remain positive;
+generated-operation count must never exceed operation count. This exception
+adds no generation, stock mutation or coordinate-system change.
+The target route uses `ICWMachine5.CreateSTLOfTargetInFCSSpace(file, 0)`
+(DISPID 34), returns a single Boolean and reports `target_part_in_FCS`.
+It takes no coordinate-system string. The inspected vendor declaration states
+no feature-recognition prerequisite. This isolated pre-recognition export
+returned true with nonempty files on two product-derived copies; document and
+CAM inventories remained unchanged and no CAM events were reported. Independent
+geometry readback checked each frame against the corresponding source model.
+That result does not make the frame mapping universal or validate `GetFCS`.
 
 The typed `ICWMachine5.CreateSTLOfWIPs2(folder, "wip.stl", "", 0, 0)` exports
 WIPs across all setups, not the current simulation frame. The native folder
@@ -324,11 +373,32 @@ identity and output boundaries. File existence, nonzero size and SHA-256 are
 checked independently of a native success Boolean; mesh content still requires
 separate review.
 
-Image export is therefore pilot-verified. Playback completion, the underlying
-simulation completion state and STL/mesh output remain unverified. Raw zero
-counters and an image do not establish a complete material-removal result,
-tool/holder clearance, general turning entitlement or full DFM. These results
-do not qualify a production machining process.
+The same permanent workflow was then exercised on two separately saved
+product-derived CAM copies, using explicit stock definition and independent
+nominal stock containment/frame checks before feature recognition:
+
+| Qualification case | Recognized features | Operation setups | Planned operations | One selected rough operation: persisted records |
+|---|---:|---:|---:|---:|
+| A | 8 | 2 | 15 | 147 |
+| B | 5 | 1 | 9 | 95 |
+
+Each selected operation was generated by the foreground worker, then explicitly
+saved, closed and reopened with the same records confirmed. Only one rough-turn
+operation per case was generated. Native preview followed by explicit native
+close and a separate WIP export returned true for both; the actual WIP files
+were independently read and were watertight. This verifies the selected
+operation, persistence and WIP-output workflow for those copies. The remaining
+operations, final shape, tool/holder clearance, feeds/speeds and production
+process were not qualified; no NC was produced. Private source geometry,
+paths and complete receipts remain with the project evidence, not this module.
+
+Image export is pilot-verified. Playback completion and the underlying
+simulation completion state remain unverified; simulation-frame STL export
+still returns error 7 in the tested route and is unsupported. Reviewed native
+WIP geometry is a separate evidence source. Raw zero counters, an image or one
+rough-operation WIP do not establish complete material removal, general turning
+entitlement or full DFM. These results do not qualify a production machining
+process.
 
 Protocol validation checks registered tools without calling CAD. Regression
 tests use mocks and in-memory COM separately from the live observations above.

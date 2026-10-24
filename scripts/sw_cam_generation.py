@@ -344,3 +344,242 @@ def run_qualification_step(sw, clsid, typelib_path, *, step, expected_feature_co
             report["messages"] = messages.summary()
     _write_receipt(path, report)
     return report
+
+
+def inspect_turn_stock(sw, clsid, typelib_path):
+    """在 AFR 前只读车削毛坯、最小包络和 FCS；不设置参数或猜测原生单位。
+
+    返回 GetBarStockParameters、GetMinBarStockParams 的原始有限数值及文档单位数组。
+    FCS 名称不证明坐标轴方向，文档显示单位不证明 CAM offset 的单位或定义。
+    """
+    report = {"status": "error", "mutation_attempted": False, "generation_attempted": False,
+              "model_saved": False, "stock_parameters_modified": False, "diagnostics": [],
+              "native_length_units": "unknown", "offset_semantics_verified": False,
+              "frame_orientation_verified": False, "may_continue": False}
+    def optional(field, getter):
+        try:
+            return getter()
+        except Exception as exc:
+            report["diagnostics"].append({"field": field, "issue": _error(exc)})
+            return None
+    def values(raw, length):
+        if not isinstance(raw, (tuple, list)) or len(raw) != length:
+            raise ValueError("Unexpected CAM stock output shape")
+        result = []
+        for value in raw:
+            if type(value) not in (int, float) or not math.isfinite(value):
+                raise ValueError("CAM stock output must contain finite native numbers")
+            result.append(float(value))
+        return result
+    try:
+        before, _doc, _part, machine, _app = _context(sw, clsid, typelib_path)
+        report["document_before"] = before
+        initial = _inventory(machine, typelib_path)
+        report["inventory_before"] = initial
+        stock = _typed(_member(machine, "IGetWorkpiece"), "ICWTurnWorkpiece", typelib_path)
+        machine5 = _typed(machine, "ICWMachine5", typelib_path)
+        stock_type = _member(stock, "GetTurnWorkpieceType")
+        if type(stock_type) is not int:
+            raise ValueError("Unexpected CAM stock type contract")
+        report["stock_type"] = stock_type
+        report["minimum_bar_stock_native"] = optional("GetMinBarStockParams", lambda: dict(zip(
+            ("bounding_startZ", "bounding_length", "bounding_OD"),
+            values(_member(stock, "GetMinBarStockParams"), 3))))
+        report["bar_parameters_native"] = None
+        if stock_type == 3:
+            def bar_parameters():
+                raw = _member(stock, "GetBarStockParameters")
+                if not isinstance(raw, (tuple, list)) or len(raw) != 5 or type(raw[4]) is not int:
+                    raise ValueError("Unexpected GetBarStockParameters output contract")
+                result = dict(zip(("startZ", "length", "odOff", "idOff"), values(raw[:4], 4)))
+                result["attribute"] = raw[4]
+                return result
+            report["bar_parameters_native"] = optional("GetBarStockParameters", bar_parameters)
+        else:
+            report["bar_parameters_reason"] = "stock_type_is_not_barstock"
+        def coordinate_system():
+            name = _member(machine5, "GetCoordinateSystemName")
+            if name is not None and (not isinstance(name, str) or len(name) > 1000):
+                raise ValueError("Unexpected CAM coordinate-system name")
+            return name
+        report["coordinate_system_name"] = optional("GetCoordinateSystemName", coordinate_system)
+        report["coordinate_system_name_state"] = ("unavailable" if any(
+            item["field"] == "GetCoordinateSystemName" for item in report["diagnostics"]) else
+            ("unset" if not report["coordinate_system_name"] else "named"))
+        # GetFCS 在实际车削检查中触发服务器错误；不重试或改用未验证的 GetFCS1。
+        report.update(fcs_definition_raw=None, fcs_probe_performed=False,
+                      fcs_unavailable_reason="GetFCS_and_GetFCS1_unqualified_for_turning_not_called")
+        def document_units():
+            raw = _member(_member(sw, "ActiveDoc"), "GetUnits")
+            if not isinstance(raw, (tuple, list)) or not 1 <= len(raw) <= 32 or any(type(value) is not int for value in raw):
+                raise ValueError("Unexpected SOLIDWORKS document unit array")
+            return list(raw)
+        report["solidworks_document_units_raw"] = optional("IModelDoc2.GetUnits", document_units)
+        report["document_units_are_cam_units_proof"] = False
+        report["inventory_after"] = _inventory(machine, typelib_path)
+        report["document_after"] = document_snapshot(sw)
+        report["inventory_unchanged"] = report["inventory_after"] == initial
+        report["active_document_unchanged"] = report["document_after"] == before
+        report["diagnostics_complete"] = not report["diagnostics"]
+        report["status"] = "ok" if (report["inventory_unchanged"] and report["active_document_unchanged"]
+                                     and report["diagnostics_complete"]) else "review_required"
+        if report["status"] != "ok":
+            report["reason"] = "CAM_STOCK_INSPECTION_REQUIRES_REVIEW"
+    except Exception as exc:
+        report.update(status="error", reason="CAM_STOCK_INSPECTION_FAILED", issue=_error(exc))
+    return report
+
+
+def _native_bar_parameters(value, *, definition=False):
+    """校验明确提供的原生参数，不转换长度或推断偏移语义。"""
+    keys = {"startZ", "length", "odOff", "idOff", "attribute"}
+    if not isinstance(value, dict) or set(value) != keys:
+        raise ValueError("Exactly five native bar parameters are required")
+    result = {}
+    for key in ("startZ", "length", "odOff", "idOff"):
+        number = value[key]
+        if type(number) not in (int, float) or not math.isfinite(number):
+            raise ValueError("Native bar values must be finite JSON numbers")
+        result[key] = float(number)
+    allowed = (1, 2) if definition else (0, 1, 2)
+    if type(value["attribute"]) is not int or value["attribute"] not in allowed:
+        raise ValueError("Unsupported native stock attribute")
+    result["attribute"] = value["attribute"]
+    return result
+
+
+def define_turn_stock(sw, clsid, typelib_path, *, expected_document_path, expected_bar_parameters_native,
+                      bar_parameters_native, receipt_path, qualification_only, message_policy):
+    """仅在空 CAM 试验副本中定义显式原生棒料参数并回读；不运行 AFR/GTP 或保存。
+
+    调用方提供准确的旧状态与新原生数值。成功只证明参数回读，单位、实际包络和
+    FCS 仍需独立验证；不把 odOff 自动解释为直径或把零值当作安全坐标系。
+    """
+    from scripts.sw_cam_events import CamMessageSession
+    from scripts.sw_operation_guard import absolute_document_path, check_document_target
+    if qualification_only is not True or message_policy != "vendor_default":
+        raise ValueError("Explicit qualification-only/vendor-default policy is required")
+    if (not isinstance(expected_document_path, str) or not absolute_document_path(expected_document_path)
+            or Path(expected_document_path).suffix.casefold() != ".sldprt"):
+        raise ValueError("An exact absolute saved qualification part is required")
+    expected = _native_bar_parameters(expected_bar_parameters_native)
+    requested = _native_bar_parameters(bar_parameters_native, definition=True)
+    receipt = Path(receipt_path)
+    if not receipt.is_absolute() or receipt.suffix.casefold() != ".json" or not receipt.parent.is_dir():
+        raise ValueError("A new absolute JSON receipt with an existing parent is required")
+    report = {"status": "started", "phase": "preflight", "qualification_only": True,
+              "expected_document_path": expected_document_path, "expected_bar_parameters_native": expected,
+              "requested_bar_parameters_native": requested, "receipt_path": str(receipt),
+              "mutation_attempted": False, "native_call_returned": False, "native_error_code": None,
+              "attempt_marker_meaning": "durable_intent_before_native_call_not_proof_of_entry",
+              "stock_definition_verified": False, "model_saved": False, "generation_attempted": False,
+              "native_units_and_offset_semantics_verified": False, "frame_orientation_verified": False,
+              "message_policy": message_policy, "may_continue": False,
+              "required_reviews": ["export_stock_mesh_and_check_containment", "native_units_and_offsets", "FCS_orientation"]}
+    _write_receipt(receipt, report, create=True)
+    messages = None
+    try:
+        before, _doc, _part, machine, app = _context(sw, clsid, typelib_path)
+        report["document_before"] = before
+        check_document_target(before["path"], before["title"], expected_path=expected_document_path, required=True)
+        if before["needs_save"]:
+            raise ValueError("Stock definition requires a clean saved qualification part")
+        initial = _inventory(machine, typelib_path)
+        report["inventory_before"] = initial
+        if any(initial[key] != 0 for key in ("feature_setup_count", "feature_count", "operation_setup_count", "operation_count")):
+            raise ValueError("Stock definition requires no features, operations or setups before AFR")
+        stock = _typed(_member(machine, "IGetWorkpiece"), "ICWTurnWorkpiece", typelib_path)
+        def read_bar():
+            if _member(stock, "GetTurnWorkpieceType") != 3:
+                raise ValueError("The expected existing stock must be bar stock")
+            raw = _member(stock, "GetBarStockParameters")
+            if not isinstance(raw, (tuple, list)) or len(raw) != 5:
+                raise ValueError("Unexpected native bar parameter output")
+            return _native_bar_parameters(dict(zip(("startZ", "length", "odOff", "idOff", "attribute"), raw)))
+        report["bar_parameters_before"] = read_bar()
+        if report["bar_parameters_before"] != expected:
+            raise ValueError("Native bar-stock precondition changed")
+        messages = CamMessageSession(app, typelib_path)
+        def check_messages():
+            summary = messages.summary()
+            report["messages"] = summary
+            if (not summary.get("subscribed") or summary.get("event_count") or summary.get("overflow")
+                    or summary.get("callback_errors") or summary.get("callback_error_count")
+                    or summary.get("subscription_error") or summary.get("disconnect_errors")):
+                report["reason"] = "CAM_MESSAGES_REQUIRE_REVIEW"
+                raise ValueError("CAM messages require review; no further CAD calls")
+        def preflight():
+            check_messages()
+            if document_snapshot(sw) != before or _inventory(machine, typelib_path) != initial or read_bar() != expected:
+                raise ValueError("Document, CAM plan or stock changed before definition")
+            if document_snapshot(sw) != before:
+                raise ValueError("Document changed during final stock preflight")
+            check_messages()
+        with messages:
+            preflight()
+            report.update(phase="DefineTurnWorkpieceAsBarStock2", mutation_attempted=True)
+            _write_receipt(receipt, report)
+            preflight()
+            result = _member(stock, "DefineTurnWorkpieceAsBarStock2", requested["startZ"], requested["length"],
+                             requested["odOff"], requested["idOff"], requested["attribute"])
+            report["native_call_returned"] = True
+            report["native_error_code"] = result if type(result) is int else None
+            report["native_return_contract_valid"] = type(result) is int
+            report["phase"] = "native_call_returned"
+            _write_receipt(receipt, report)
+            if type(result) is not int or result != 0:
+                raise ValueError("DefineTurnWorkpieceAsBarStock2 did not return error code zero")
+            check_messages()
+            report["bar_parameters_after"] = read_bar()
+            check_messages()
+            report["inventory_after"] = _inventory(machine, typelib_path)
+            check_messages()
+            report["document_after"] = document_snapshot(sw)
+            check_messages()
+            after = report["document_after"]
+            same = after is not None and all(before[key] == after[key] for key in ("path", "title", "type"))
+            report["same_document"] = same
+            report["inventory_unchanged"] = report["inventory_after"] == initial
+            report["stock_definition_verified"] = (same and report["inventory_unchanged"]
+                                                     and report["bar_parameters_after"] == requested)
+            if not report["stock_definition_verified"]:
+                raise ValueError("Native stock readback did not exactly match the requested definition")
+            report.update(status="review_required", reason="CAM_STOCK_GEOMETRY_AND_FRAME_REQUIRE_REVIEW",
+                          stock_readback_before_cleanup_verified=True, stock_definition_verified=False,
+                          verification_scope="pending_event_cleanup")
+            _write_receipt(receipt, report)
+        check_messages()
+        if not report["messages"].get("disconnected"):
+            report["reason"] = "CAM_EVENT_CLEANUP_NOT_CONFIRMED"
+            raise ValueError("CAM event cleanup was not confirmed")
+        # Unadvise 也可能处理 COM 消息；最终证明必须在成功清理之后重新读取。
+        report.update(phase="post_cleanup_readback", same_document=None, inventory_unchanged=None)
+        report["bar_parameters_after_cleanup"] = read_bar()
+        check_messages()
+        report["inventory_after_cleanup"] = _inventory(machine, typelib_path)
+        check_messages()
+        after = document_snapshot(sw)
+        report["document_after_cleanup"] = after
+        check_messages()
+        report["same_document"] = after is not None and all(before[key] == after[key] for key in ("path", "title", "type"))
+        report["inventory_unchanged"] = report["inventory_after_cleanup"] == initial
+        report["stock_definition_verified"] = (report["same_document"] and report["inventory_unchanged"]
+                                                 and report["bar_parameters_after_cleanup"] == requested)
+        report["verification_scope"] = "after_event_cleanup"
+        if not report["stock_definition_verified"]:
+            report["reason"] = "CAM_STOCK_STATE_CHANGED_AFTER_EVENT_CLEANUP"
+            raise ValueError("Document, CAM plan or native stock changed during event cleanup")
+    except Exception as exc:
+        report["status"] = "uncertain" if report["mutation_attempted"] and not report["native_call_returned"] else "error"
+        report.setdefault("reason", "CAM_STOCK_DEFINITION_FAILED")
+        report["issue"] = _error(exc)
+    finally:
+        if messages is not None:
+            report["messages"] = messages.summary()
+        report["phase_at_finish"] = report["phase"]
+        report["phase"] = "finished"
+        try:
+            _write_receipt(receipt, report)
+        except Exception as exc:
+            report.update(status="uncertain", reason="CAM_RECEIPT_UPDATE_FAILED", receipt_write_error=_error(exc))
+    return report

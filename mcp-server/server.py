@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
 from mcp.server.fastmcp import FastMCP
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 _MCP_STDOUT = sys.stdout
@@ -647,6 +647,71 @@ class SolidWorksCamTargetInput(ActiveDocumentInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
+class SolidWorksCamBarParametersInput(BaseInput):
+    """原生棒料五字段；不猜测单位或把偏移解释为直径。"""
+    startZ: float = Field(strict=True, allow_inf_nan=False)
+    length: float = Field(strict=True, allow_inf_nan=False)
+    odOff: float = Field(strict=True, allow_inf_nan=False)
+    idOff: float = Field(strict=True, allow_inf_nan=False)
+    attribute: int = Field(ge=0, le=2, strict=True)
+
+    @field_validator("startZ", "length", "odOff", "idOff", mode="before")
+    @classmethod
+    def native_parameters_require_finite_json_numbers(cls, value):
+        if type(value) not in {int, float}:
+            raise ValueError("Native bar parameters must be JSON numbers, not booleans or strings")
+        try:
+            finite = math.isfinite(float(value))
+        except (ValueError, OverflowError):
+            finite = False
+        if not finite:
+            raise ValueError("Native bar parameters must be finite doubles")
+        return value
+
+
+class SolidWorksCamDefineTurnStockInput(SolidWorksCamTargetInput):
+    """识别特征之前按精确原始前置值定义棒料，写入独立回执。"""
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_bar_parameters_native: SolidWorksCamBarParametersInput
+    bar_parameters_native: SolidWorksCamBarParametersInput
+    receipt_path: str = Field(min_length=1, strict=True,
+        description="New absolute JSON receipt path; parent must exist. Do not replay uncertain calls.")
+    qualification_only: Literal[True]
+    message_policy: Literal["vendor_default"]
+
+    @field_validator("qualification_only", mode="before")
+    @classmethod
+    def stock_definition_requires_boolean(cls, value):
+        if type(value) is not bool:
+            raise ValueError("qualification_only must be a JSON boolean")
+        return value
+
+    @model_validator(mode="after")
+    def new_stock_attribute_must_be_known(self):
+        if self.bar_parameters_native.attribute not in {1, 2}:
+            raise ValueError("New stock attribute must be SOLID=1 or CORED=2")
+        return self
+
+    @field_validator("expected_document_path")
+    @classmethod
+    def stock_definition_requires_part_path(cls, value):
+        if Path(value).suffix.casefold() != ".sldprt":
+            raise ValueError("expected_document_path must identify a saved SLDPRT")
+        return value
+
+    @field_validator("receipt_path")
+    @classmethod
+    def stock_definition_receipt_must_be_new(cls, value):
+        path = Path(value)
+        if not path.is_absolute() or path.suffix.casefold() != ".json":
+            raise ValueError("receipt_path must be an absolute JSON path")
+        if path.exists() or path.is_symlink():
+            raise ValueError("receipt_path must be new; existing receipts cannot be replayed")
+        if not path.parent.is_dir():
+            raise ValueError("receipt_path parent must be an existing directory")
+        return value
+
+
 class SolidWorksCamMachineInput(SolidWorksCamTargetInput):
     """先检查并明确选取实际返回的机器，仅允许空 CAM 设置。"""
 
@@ -737,10 +802,10 @@ class SolidWorksCamPreviewSimulationInput(SolidWorksCamSimulationInput):
 class SolidWorksCamExportGeometryInput(SolidWorksCamTargetInput):
     """导出整份试件的 WIP、毛坯和目标几何；不把输出当作仿真帧。"""
     expected_document_path: str = Field(min_length=1, strict=True)
-    expected_feature_count: int = Field(ge=1, le=262144, strict=True)
-    expected_operation_count: int = Field(ge=1, le=512, strict=True)
-    expected_operation_setup_count: int = Field(ge=1, le=512, strict=True)
-    expected_generated_operation_count: int = Field(ge=1, le=512, strict=True)
+    expected_feature_count: int = Field(ge=0, le=262144, strict=True)
+    expected_operation_count: int = Field(ge=0, le=512, strict=True)
+    expected_operation_setup_count: int = Field(ge=0, le=512, strict=True)
+    expected_generated_operation_count: int = Field(ge=0, le=512, strict=True)
     output_dir: str = Field(min_length=1, strict=True,
         description="New absolute local output directory; existing parent required, canonical UNC refused.")
     qualification_only: Literal[True]
@@ -749,6 +814,16 @@ class SolidWorksCamExportGeometryInput(SolidWorksCamTargetInput):
     export_kinds: list[Literal["wip", "stock", "target"]] = Field(
         default_factory=lambda: ["wip"], min_length=1, max_length=3, strict=True,
         description="Ordered unique export kinds; default selects only wip.")
+
+    @model_validator(mode="after")
+    def geometry_export_counts_match_selected_scope(self):
+        counts = (self.expected_feature_count, self.expected_operation_count,
+                  self.expected_operation_setup_count, self.expected_generated_operation_count)
+        if self.export_kinds not in (["stock"], ["target"]) and any(value < 1 for value in counts):
+            raise ValueError("WIP or mixed export requires positive feature/operation/setup/generated counts")
+        if self.expected_generated_operation_count > self.expected_operation_count:
+            raise ValueError("Generated operation count exceeds operation count")
+        return self
 
     @field_validator("export_kinds")
     @classmethod
@@ -2187,6 +2262,39 @@ def solidworks_cam_set_turn_machine(params: SolidWorksCamMachineInput) -> str:
         return set_turn_machine(sw, registration["clsid"], params.machine_index,
                                 params.expected_machine_type, params.expected_catalog_count,
                                 typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"))
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_inspect_turn_stock", title="Inspect Native CAM Turning Stock Before Machining",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_inspect_turn_stock(params: SolidWorksCamTargetInput) -> str:
+    """只读检查车削毛坯原始尺寸、FCS 名称和文档单位；不要求选择操作或生成刀路。"""
+    def op():
+        from scripts.sw_cam_generation import inspect_turn_stock
+        sw, registration = _cam_target(params)
+        return inspect_turn_stock(
+            sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"),
+        )
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_define_turn_stock", title="Define Native CAM Turning Bar Stock Before Machining",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_define_turn_stock(params: SolidWorksCamDefineTurnStockInput) -> str:
+    """在空加工计划中按显式原生参数定义棒料；不保存、不识别特征、不生成刀路。"""
+    def op():
+        from scripts.sw_cam_generation import define_turn_stock
+        sw, registration = _cam_target(params)
+        return define_turn_stock(
+            sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"),
+            expected_document_path=params.expected_document_path,
+            expected_bar_parameters_native=params.expected_bar_parameters_native.model_dump(),
+            bar_parameters_native=params.bar_parameters_native.model_dump(),
+            receipt_path=params.receipt_path, qualification_only=params.qualification_only,
+            message_policy=params.message_policy,
+        )
     return _run_locked(op, params.response_format)
 
 
