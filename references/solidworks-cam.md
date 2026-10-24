@@ -416,3 +416,58 @@ documentation: [GetAddInObject](https://help.solidworks.com/2024/English/api/sld
 [LoadAddIn](https://help.solidworks.com/2025/English/api/sldworksapi/SolidWorks.Interop.sldworks~SolidWorks.Interop.sldworks.ISldWorks~LoadAddIn.html).
 
 Vendor help and extracted type libraries are not redistributed in this repository.
+
+## 只读关联轮廓与刀具尺寸
+
+`solidworks_cam_inspect_operation_profile` 使用既有 PID 绑定和精确文档门禁。
+参数为 `addin_clsid`、`expected_document_path`、零基 `setup_index` /
+`operation_index` 及必填的 `expected_operation_type`（严格整数 1–16）。
+它不生成刀路、不创建或编辑操作、不保存，也不读取已知不支持的对象授权 getter。
+
+原生读取链为 `ICWOperation.IGetAllFeatures` → `ICWFeature` /
+`ICWTurnFeature`。它返回名称、原始类型和属性、最小/最大直径、起终点，
+并通过 `IGetEnumTurnSegments` 读取至多 64 个关联特征、合计 512 个段。
+`ICWTurnSegment.GetLineSegmentParam(feature)` 的 OUT 顺序为
+起始直径、结束直径、轴向长度、真实长度、锥角、成功 BOOL；
+`GetArcSegmentParam(feature)` 为起始直径、结束直径、轴向长度、半径、
+中心位置对象、成功 BOOL。位置对象经 `ICWPosition.GetCoordinates` 返回三个数值。
+这些声明来自 CAM 2026 类型库；仅 LINE=0、ARC=1 读取对应参数，
+其他曲线类型保留端点，并明确没有专用参数。
+GetAllowance 在一次原生资格读取中返回 false；厂商文档未定义此值的含义。
+该可选 getter 不属于几何识别的必要输入，当前不调用，也不把缺失值当成零余量。
+
+刀具由 `IGetTool` 取得。必须先区分通用 `ICWTool.ToolType`、
+`ICWTurnTool.ToolType` 与 `InsertType`：它们不是同一个枚举。
+仅 GROOVE=2 / THREAD=3 读取 Width 和 length；仅 GROOVE 读取两端圆角，
+其他插片按类型库限定读取适用尺寸。通过 `IGetTurnToolHolder` 取得
+`ICWTurnToolHolder`，DEFAULT=1 读取 ShankWidth，BORE_BAR=2 读取
+BoringBarDiameter，同时报告适用的长度、偏置、角度和操作方向原始值。
+不依赖工具目录中的显示名称推断几何或用途。
+
+任一原生异常、无效 OUT 形状、非 BOOL 状态或非有限成功输出立即停止后续读取，
+报告失败阶段并保留此前已经读取的特征、段、刀具和夹持器字段；没有重试或降级调用。
+线/弧参数 getter 的 BOOL=false 单独标为 native_returned_false，不使用其未确认的 OUT
+数值；已读端点继续保留。geometry_parameters_complete 表示支持的段参数是否齐全，
+不证明几何或加工正确。正常返回时检查前后文档及 CAM 清单相同。
+输出始终标记单位、坐标系、刀具适配及生产过程未验证，并设置
+`may_continue=false`；读到 profile 或宽度不能直接授权后续 GTP。
+已在文档外确定的坐标变换及实体几何应独立用于核对槽口位置、宽度和圆角。
+在 SOLIDWORKS CAM 2026 SP4 上，修复后对两个独立产品派生 CAM 副本进行了七次
+只读检查，包含粗车、精车及槽操作；每次活动文档与 CAM 清单前后均相同。
+一个槽特征的五个原生段与独立实体审查中的槽口位置、直径和两端圆角对应，
+同时成功读取了槽刀宽度、圆角、厚度及镗杆式夹持器尺寸。该特征的原始坐标
+在这次对照中符合模型世界坐标和毫米数值，而非已单独确定的 FCS 轴向坐标；
+这不是所有 CAM getter、零件或刀具的通用坐标/单位规则。完整私有几何及回执
+保留在项目证据中。Mock/schema/OUT 检查与这些实际 CAD 观察分开记录。
+
+类型库确认方向枚举 4 为 CW_TURN_TOOL_ORIENT_DOWN_LEFT，5 为
+CW_TURN_TOOL_ORIENT_LEFT_UP。枚举名称本身不证明刀具坐标相对模型或 FCS 的
+完整变换；Width、Radius1/Radius2 的 getter 声明未给出可用于该证明的轴向映射
+或单位。当前没有确认可用 allowance、刀具/夹持器间隙或刀刃与槽底的适配。
+不能仅按宽度减去两个圆角计算的名义平直段，宣称该刀具能或不能完成槽底；
+须先验证实际刀具方向及几何。以上七次成功只验证读取路径和该案例的轮廓对应，
+不验证后续 GTP、螺纹或完整加工过程。
+
+类型库中的车削螺纹操作枚举为 `CW_TURN_OP_THREAD=12`。
+没有这种操作时，不得把粗车或切槽结果称为已加工螺纹。
+本阶段没有新增螺纹操作 writer。

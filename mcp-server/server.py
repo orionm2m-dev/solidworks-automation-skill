@@ -872,6 +872,11 @@ class SolidWorksCamOperationInput(SolidWorksCamTargetInput):
     operation_index: int = Field(ge=0, le=511, strict=True)
 
 
+class SolidWorksCamOperationProfileInput(SolidWorksCamOperationInput):
+    """只读关联轮廓与刀具，必须确认选定操作的原生类型。"""
+    expected_operation_type: int = Field(ge=1, le=16, strict=True)
+
+
 class SolidWorksCamStopObservationInput(SolidWorksCamJobStatusInput):
     """明确知道停止订阅并不取消原生 CAM 计算。"""
     acknowledge_native_not_cancelled: Literal[True]
@@ -2469,6 +2474,20 @@ def solidworks_cam_inspect_operation(params: SolidWorksCamOperationInput) -> str
         return inspect_operation(sw, registration["clsid"],
                                  str(Path(registration["addin_path"]).parent / "camworks.tlb"),
                                  setup_index=params.setup_index, operation_index=params.operation_index)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_inspect_operation_profile", title="Inspect Native CAM Linked Profile and Tool",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_inspect_operation_profile(params: SolidWorksCamOperationProfileInput) -> str:
+    """只读所选操作的关联特征、原始轮廓和适用刀具尺寸；不生成、不验证单位或可达性。"""
+    def op():
+        from scripts.sw_cam_operation_profile import inspect_operation_profile
+        sw, registration = _cam_target(params)
+        return inspect_operation_profile(sw, registration["clsid"],
+            str(Path(registration["addin_path"]).parent / "camworks.tlb"),
+            setup_index=params.setup_index, operation_index=params.operation_index,
+            expected_operation_type=params.expected_operation_type)
     return _run_locked(op, params.response_format)
 
 

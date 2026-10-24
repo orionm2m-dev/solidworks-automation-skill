@@ -31,6 +31,7 @@ REQUIRED_TOOLS = {
     "solidworks_cam_job_status",
     "solidworks_cam_stop_observation",
     "solidworks_cam_inspect_operation",
+    "solidworks_cam_inspect_operation_profile",
     "solidworks_cam_save_prompt",
     "solidworks_cam_run_simulation",
     "solidworks_cam_preview_simulation",
