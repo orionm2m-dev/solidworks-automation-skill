@@ -48,12 +48,35 @@ entry, successful machine assignment and the presence of a turning DLL are
 separate observations; none is a complete entitlement or simulation test.
 `Module(...)` changes activation and is intentionally not exposed.
 
-Before generating operations, implement the documented CAM message event
-handler with explicit responses. Without it, CAM may display blocking dialogs.
-Successful generation must be checked by operation type, generated-toolpath
-state and nonzero toolpath record count. A simulation requires valid stock,
-tool/holder geometry and a separately checked result, not merely a successful
-method return.
+`solidworks_cam_inspect_machining` reads feature setups, operation setups,
+turning operation types, generated-path flags and existing stock type.
+`solidworks_cam_run_qualification_step` supports one of `subscribe`,
+`extract_features` or `generate_operations` on a separately saved calibration
+part. A strict JSON `qualification_only=true` and the explicit
+`message_policy="vendor_default"` are required. It never saves or posts NC.
+
+Native `_IDialogEvents` subscription is held for the whole step. Vendor help
+documents that clients may omit `SetResponse`, in which case CAM continues
+with its defaults. The calibration policy records that as `default_unknown`;
+it is not cancellation or rollback. No numeric response codes are guessed.
+Any message, callback error or disconnect failure blocks downstream steps.
+A message during a native call cannot undo that call. Client batch execution
+stops when a tool reports `may_continue=false`.
+
+Preconditions require a clean saved part and exact observed feature, operation
+and operation-setup counts. Extraction requires an empty CAM plan. Operation
+generation uses `CW_GOP_REGENERATE=2` only with recognized features and zero
+existing operations. Empty operation setups created by native extraction are
+allowed only when their count was explicitly observed. Each step creates a new
+exclusive JSON receipt before native changes; an existing receipt cannot be
+replayed after an uncertain timeout. Source and result inventories are recorded.
+
+GTP and simulation are not exposed by this qualification tool. The inspected
+API provides `IsBackgroundProcessForGTPOver` but no verified setter disabling
+background GTP. A future tool must keep its COM apartment and event sink alive
+until generation actually ends; a timeout is not cancellation. Successful GTP
+must be checked by generated-path state and nonzero path records. Simulation
+also needs valid stock and tool/holder geometry with separately checked results.
 
 ## Evidence and tests
 
@@ -68,8 +91,16 @@ original assembly was restored without saving it.
 The CAM assignment did not set the SOLIDWORKS dirty flag in that live test.
 Do not use `needs_save=false` as proof that CAM data was persisted; callers must
 explicitly save an intended CAM change and verify it after reopening.
-Machine selection and persistence are verified. Turning entitlement, operation
-generation, toolpaths and material-removal simulation remain unqualified.
+Machine selection and persistence are verified. In a subsequent calibration,
+event subscription/unsubscription succeeded, native extraction produced three
+features, and native operation-plan generation produced five operations
+supporting `ICWTurnOperation`. All five survived save, close and reopen.
+No CAM messages occurred in those live stages; actual delivery of a vendor
+message remains unobserved. Callback ABI was separately tested with real
+in-memory `IDispatch.Invoke`, both null and non-null result pointers.
+Turning entitlement, generated toolpaths and material-removal simulation
+remain unqualified. These calibration observations do not qualify a production
+machining process or certify all turning operation types.
 
 The reusable `scripts/mcp_request.py` client executes JSON requests through the
 standard MCP protocol against a fresh server and saves a result after each

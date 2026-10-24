@@ -648,11 +648,30 @@ class SolidWorksCamTargetInput(ActiveDocumentInput):
 
 
 class SolidWorksCamMachineInput(SolidWorksCamTargetInput):
-    """先检查并明确选取实际返回的 станок，仅允许空 CAM 设置。"""
+    """先检查并明确选取实际返回的机器，仅允许空 CAM 设置。"""
 
     machine_index: int = Field(ge=0, le=9999, strict=True)
     expected_machine_type: int = Field(ge=0, le=10, strict=True)
     expected_catalog_count: int = Field(ge=1, le=10000, strict=True)
+
+
+class SolidWorksCamQualificationInput(SolidWorksCamTargetInput):
+    """仅针对独立试件的单步 CAM 验证；每步使用新的持久回执。"""
+    step: Literal["subscribe", "extract_features", "generate_operations"]
+    expected_feature_count: int = Field(ge=0, le=262144, strict=True)
+    expected_operation_count: int = Field(ge=0, le=512, strict=True)
+    expected_operation_setup_count: int = Field(default=0, ge=0, le=512, strict=True,
+        description="Exact observed count; native extraction may create empty operation setups.")
+    receipt_path: str = Field(min_length=1, description="New absolute JSON receipt path; parent directory must exist.")
+    qualification_only: Literal[True]
+    message_policy: Literal["vendor_default"]
+
+    @field_validator("qualification_only", mode="before")
+    @classmethod
+    def qualification_requires_boolean(cls, value):
+        if type(value) is not bool:
+            raise ValueError("qualification_only must be a JSON boolean")
+        return value
 
 
 class SolidWorksSketchOnPlaneInput(ActiveDocumentInput):
@@ -2013,6 +2032,40 @@ def solidworks_cam_set_turn_machine(params: SolidWorksCamMachineInput) -> str:
         return set_turn_machine(sw, registration["clsid"], params.machine_index,
                                 params.expected_machine_type, params.expected_catalog_count,
                                 typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"))
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_inspect_machining", title="Inspect Native CAM Machining State",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_inspect_machining(params: SolidWorksCamTargetInput) -> str:
+    """Read turning stock type, recognized features, operations and generated path record counts; no edits."""
+    def op():
+        from scripts.sw_cam_generation import inspect_machining
+        sw, registration = _cam_target(params)
+        return inspect_machining(sw, registration["clsid"],
+                                 str(Path(registration["addin_path"]).parent / "camworks.tlb"))
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_run_qualification_step", title="Run One Native CAM Qualification Step",
+          annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_run_qualification_step(params: SolidWorksCamQualificationInput) -> str:
+    """For a separate calibration part only: native event subscription and one guarded EMF/GOP step.
+
+    Messages use documented vendor defaults, which can continue the current operation;
+    they are not cancellation or rollback. Any event prevents automatic downstream
+    continuation. Never saves, posts NC, controls windows or runs on an existing CAM plan.
+    """
+    def op():
+        from scripts.sw_cam_generation import run_qualification_step
+        sw, registration = _cam_target(params)
+        return run_qualification_step(sw, registration["clsid"],
+                                      str(Path(registration["addin_path"]).parent / "camworks.tlb"),
+                                      step=params.step, expected_feature_count=params.expected_feature_count,
+                                      expected_operation_count=params.expected_operation_count,
+                                      receipt_path=params.receipt_path, qualification_only=params.qualification_only,
+                                      message_policy=params.message_policy,
+                                      expected_operation_setup_count=params.expected_operation_setup_count)
     return _run_locked(op, params.response_format)
 
 

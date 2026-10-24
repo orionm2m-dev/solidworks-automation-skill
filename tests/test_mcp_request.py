@@ -103,6 +103,8 @@ def test_success_preserves_each_result_and_environment(tmp_path, fake_server, mo
 
 @pytest.mark.parametrize("result", [
     CallToolResult(content=[], isError=True),
+    CallToolResult(content=[], structuredContent={"status": "review_required", "may_continue": False}),
+    CallToolResult(content=[TextContent(type="text", text='{"result": {"status": "ok", "may_continue": false}}')]),
     CallToolResult(content=[], structuredContent={"status": "error"}),
     CallToolResult(content=[], structuredContent={"result": {"status": "blocked"}}),
     CallToolResult(content=[TextContent(type="text", text='{"status": "error"}')]),
@@ -186,3 +188,16 @@ def test_small_plain_data_value_is_preserved():
     assert client._small_payload({"data": "ordinary structured value"}) == {
         "data": "ordinary structured value"
     }
+
+
+
+def test_review_report_without_explicit_stop_flag_can_continue(tmp_path, fake_server):
+    """普通预览报告不因 review_required 被误判为停止后续请求。"""
+    fake_server[0].call_tool.return_value = CallToolResult(
+        content=[], structuredContent={"status": "review_required"}
+    )
+    code, report = run_batch(tmp_path, [{"name": "first"}, {"name": "second"}])
+    assert code == 0
+    assert report["status"] == "success"
+    assert len(report["results"]) == 2
+    assert fake_server[0].call_tool.await_count == 2

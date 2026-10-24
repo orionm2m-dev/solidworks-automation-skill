@@ -79,6 +79,8 @@ def _inner_error(value: Any) -> str | None:
     if isinstance(value, dict):
         if value.get("isError") is True:
             return "MCP isError=true"
+        if value.get("may_continue") is False:
+            return "Structured may_continue=false"
         status = value.get("status")
         if isinstance(status, str) and status.lower() in {"error", "blocked", "failed"}:
             return f"Structured status={status}"

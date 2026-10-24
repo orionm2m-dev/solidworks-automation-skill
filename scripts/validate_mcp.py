@@ -23,6 +23,8 @@ REQUIRED_TOOLS = {
     "solidworks_cam_load_addin",
     "solidworks_cam_inspect_turning",
     "solidworks_cam_set_turn_machine",
+    "solidworks_cam_inspect_machining",
+    "solidworks_cam_run_qualification_step",
     "solidworks_inspect_reference_planes",
     "cadstudio_resolve_backend",
     "cadstudio_write_open_format",

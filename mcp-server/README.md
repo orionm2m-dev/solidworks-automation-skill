@@ -5,8 +5,12 @@
 Native CAM discovery, loading and guarded inspection are documented in
 [`references/solidworks-cam.md`](../references/solidworks-cam.md). These tools
 require an already pinned process and an explicit document target. They do not use UI
-automation or infer a machining license from installed files. The reusable
-`scripts/mcp_request.py` client performs sequential protocol calls from JSON
+automation or infer a machining license from installed files.
+
+The calibration-step tool supports native feature extraction and
+operation-plan generation with event logging, exact inventory preconditions and
+exclusive receipts. It does not generate toolpaths, post NC or save the part.
+The reusable `scripts/mcp_request.py` client performs sequential protocol calls from JSON
 and records results without overwriting existing evidence.
 
 本目录提供一个本地 `stdio` MCP Server，同时暴露无 CAD 开放格式工具和 SolidWorks COM 白名单工具。MCP 与 CAD Studio、Skill、CLI 共用能力清单和数据协议。
