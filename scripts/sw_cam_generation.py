@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 
@@ -80,6 +81,107 @@ def inspect_machining(sw, clsid, typelib_path):
                 "active_document_unchanged": before == after, "model_saved": False}
     except Exception as exc:
         return {"status": "error", "reason": "CAM_MACHINING_INSPECTION_FAILED", "issue": _error(exc)}
+
+
+def inspect_operation(sw, clsid, typelib_path, *, setup_index, operation_index):
+    """只读指定车削操作的诊断值；不把成功标志误认为后台执行状态。
+
+    参数为已绑定的 SOLIDWORKS 会话、已验证的插件/类型库及零基操作索引。
+    返回文档与清单前后快照、原生诊断值及可选 getter 的失败信息；不生成或保存。
+    """
+    report = {"status": "error", "mutation_attempted": False, "generation_attempted": False,
+              "model_saved": False, "native_execution_state": "unknown", "diagnostics": []}
+
+    def optional(field, read):
+        try:
+            return read(), True
+        except Exception as exc:
+            report["diagnostics"].append({"field": field, "issue": _error(exc)})
+            return None, False
+
+    def finite(value):
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("CAM diagnostic number is not finite")
+        return number
+
+    try:
+        for name, value in (("setup_index", setup_index), ("operation_index", operation_index)):
+            if type(value) is not int or not 0 <= value < _LIMIT:
+                raise ValueError(f"{name} must be an integer in [0, {_LIMIT - 1}]")
+        before, _doc, _part, machine, _app = _context(sw, clsid, typelib_path)
+        report["document_before"] = before
+        initial = _inventory(machine, typelib_path)
+        report["inventory"] = initial
+        selected = next((item for item in initial["operations"]
+                         if item["setup_index"] == setup_index and
+                         item["operation_index"] == operation_index), None)
+        if selected is None:
+            raise ValueError("Selected CAM operation is outside the inspected inventory")
+        setups = _collection(_member(machine, "IGetEnumOpSetups"), typelib_path)
+        setup = _typed(setups[setup_index], "ICWBaseOpSetup", typelib_path)
+        operations = _collection(_member(setup, "IGetEnumOperations"), typelib_path)
+        raw_operation = operations[operation_index]
+        operation = _typed(raw_operation, "ICWOperation", typelib_path)
+        turning = _typed(raw_operation, "ICWTurnOperation", typelib_path)
+        details = {**selected, "turn_operation_type": int(_member(turning, "OpernType")),
+                   "toolpath_generated": bool(_member(operation, "GetIsToolpathGenerated")),
+                   "feed_length_native_units": None, "feed_length_available": False,
+                   "length_units_verified": False}
+        report["selected_operation"] = details
+        report["selected_operation_unchanged"] = all(details[key] == selected[key] for key in
+                                                      ("turn_operation_type", "toolpath_generated"))
+
+        def read_time():
+            value = _member(operation, "TimeTakenForGTP")
+            if not isinstance(value, str):
+                raise ValueError("TimeTakenForGTP did not return a BSTR string")
+            return value
+
+        value, available = optional("TimeTakenForGTP", read_time)
+        details.update(time_taken_for_gtp_raw=value[:1000] if available else None,
+                       time_taken_for_gtp_available=available,
+                       time_taken_for_gtp_truncated=available and len(value) > 1000)
+        licensed, available = optional("ICWObject.GetIsLicensed", lambda: bool(_member(
+            _typed(raw_operation, "ICWObject", typelib_path), "GetIsLicensed")))
+        details["object_license"] = {"available": available, "is_licensed": licensed,
+                                     "scope": "unknown", "source": "ICWObject.GetIsLicensed"}
+        # 没有生成结果时不读取依赖刀路的长度；不推断长度单位。
+        if details["toolpath_generated"]:
+            value, available = optional("ToolpathFeedLength", lambda: finite(
+                _member(operation, "ToolpathFeedLength")))
+            details.update(feed_length_native_units=value, feed_length_available=available)
+        stock = {**initial["stock"], "bar_parameters_available": False, "bar_parameters": None}
+        report["stock"] = stock
+        if stock["type"] == 3:  # CW_TURN_WP_BARSTOCK；其他类型不调用棒料专用 getter。
+            def read_bar_parameters():
+                workpiece = _typed(_member(machine, "IGetWorkpiece"), "ICWTurnWorkpiece", typelib_path)
+                values = _member(workpiece, "GetBarStockParameters")
+                if not isinstance(values, (tuple, list)) or len(values) != 5:
+                    raise ValueError("Unexpected GetBarStockParameters output shape")
+                result = dict(zip(("startZ", "length", "odOff", "idOff"), map(finite, values[:4])))
+                result["eCWTurnWpAttribute"] = int(values[4])
+                return result
+
+            value, available = optional("GetBarStockParameters", read_bar_parameters)
+            stock.update(bar_parameters=value, bar_parameters_available=available)
+        else:
+            stock["bar_parameters_reason"] = "stock_type_is_not_barstock"
+        after_inventory = _inventory(machine, typelib_path)
+        after = document_snapshot(sw)
+        report.update(inventory_after=after_inventory, document_after=after,
+                      inventory_unchanged=initial == after_inventory,
+                      active_document_unchanged=before == after,
+                      diagnostics_complete=not report["diagnostics"])
+        unchanged = (report["inventory_unchanged"] and report["active_document_unchanged"] and
+                     report["selected_operation_unchanged"])
+        report["status"] = "ok" if unchanged else "review_required"
+        if not unchanged:
+            report.update(reason="CAM_STATE_CHANGED_DURING_INSPECTION", may_continue=False)
+    except Exception as exc:
+        report.update(status="error", reason="CAM_OPERATION_INSPECTION_FAILED", issue=_error(exc),
+                      may_continue=False)
+    return report
 
 
 def _write_receipt(path, report, *, create=False):

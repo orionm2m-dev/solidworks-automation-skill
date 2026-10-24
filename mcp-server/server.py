@@ -674,6 +674,52 @@ class SolidWorksCamQualificationInput(SolidWorksCamTargetInput):
         return value
 
 
+class SolidWorksCamToolpathInput(SolidWorksCamTargetInput):
+    """为独立试件准备持久刀路作业，禁止把超时当作取消。"""
+    expected_document_path: str = Field(min_length=1)
+    expected_feature_count: int = Field(ge=1, le=262144, strict=True)
+    expected_operation_count: int = Field(ge=1, le=512, strict=True)
+    expected_operation_setup_count: int = Field(ge=1, le=512, strict=True)
+    setup_index: int = Field(ge=0, le=511, strict=True)
+    operation_index: int = Field(ge=0, le=511, strict=True)
+    expected_operation_type: int = Field(ge=1, le=16, strict=True)
+    attention_seconds: int = Field(default=60, ge=5, le=3600, strict=True,
+        description="Attention threshold only; never a timeout or cancellation.")
+    qualification_only: Literal[True]
+    message_policy: Literal["vendor_default"]
+
+    @field_validator("qualification_only", mode="before")
+    @classmethod
+    def qualification_requires_boolean(cls, value):
+        if type(value) is not bool:
+            raise ValueError("qualification_only must be a JSON boolean")
+        return value
+
+
+class SolidWorksCamJobStatusInput(BaseInput):
+    """读取持久作业的结果和进程生存状态；不等待 CAD 互斥锁。"""
+    job_directory: str = Field(min_length=1)
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON)
+
+
+class SolidWorksCamOperationInput(SolidWorksCamTargetInput):
+    """只读检查明确指定的操作；授权值只代表该原生对象。"""
+    setup_index: int = Field(ge=0, le=511, strict=True)
+    operation_index: int = Field(ge=0, le=511, strict=True)
+
+
+class SolidWorksCamStopObservationInput(SolidWorksCamJobStatusInput):
+    """明确知道停止订阅并不取消原生 CAM 计算。"""
+    acknowledge_native_not_cancelled: Literal[True]
+
+    @field_validator("acknowledge_native_not_cancelled", mode="before")
+    @classmethod
+    def acknowledgement_requires_boolean(cls, value):
+        if type(value) is not bool:
+            raise ValueError("acknowledge_native_not_cancelled must be a JSON boolean")
+        return value
+
+
 class SolidWorksSketchOnPlaneInput(ActiveDocumentInput):
     """Input for sketching on a plane and creating a boss extrude."""
 
@@ -2069,6 +2115,83 @@ def solidworks_cam_run_qualification_step(params: SolidWorksCamQualificationInpu
     return _run_locked(op, params.response_format)
 
 
+@mcp.tool(name="solidworks_cam_prepare_toolpath_job", title="Prepare Native CAM Toolpath Job",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_prepare_toolpath_job(params: SolidWorksCamToolpathInput) -> str:
+    """验证进程、文档和注册表并返回作业配置；不启动、不计算、不保存。
+
+    配置交给永久原生模块 scripts.sw_cam_jobs。短命 stdio MCP 的 Windows
+    Job Object 可能禁止子进程脱离；此时必须使用模块的前台模式，保持调用
+    会话直到完成，不能把挂起的 CAM 移交给会被关闭的临时子进程。
+    """
+    def op():
+        from scripts.sw_cam_generation import inspect_machining
+        from scripts.sw_cam_jobs import process_identity
+        sw, registration = _cam_target(params)
+        observed = process_identity(_selected_process_id)
+        if observed.get("alive") is not True or observed.get("create_time") is None:
+            raise ValueError("Cannot verify the existing SOLIDWORKS process lifetime")
+        typelib = str(Path(registration["addin_path"]).parent / "camworks.tlb")
+        inspected = inspect_machining(sw, registration["clsid"], typelib)
+        if inspected.get("status") != "ok":
+            return inspected
+        if inspected["document_before"]["needs_save"]:
+            raise ValueError("Save the separate calibration part before preparing a path")
+        for key in ("feature_count", "operation_count", "operation_setup_count"):
+            if inspected["inventory"][key] != getattr(params, "expected_" + key):
+                raise ValueError("CAM inventory changed: " + key)
+        selected = next((item for item in inspected["inventory"]["operations"]
+                         if item["setup_index"] == params.setup_index and
+                         item["operation_index"] == params.operation_index), None)
+        if selected is None or selected["turn_operation_type"] != params.expected_operation_type:
+            raise ValueError("Selected turning operation changed")
+        if selected["toolpath_generated"]:
+            raise ValueError("The selected operation already has a generated path")
+        config = params.model_dump(exclude={"response_format", "expected_document_title"})
+        config.update(process_id=_selected_process_id, process_create_time=observed["create_time"],
+                      typelib_path=typelib, addin_clsid=registration["clsid"])
+        return {"status": "prepared", "job_started": False, "config": config,
+                "inventory": inspected["inventory"], "model_saved": False,
+                "execution_module": "scripts.sw_cam_jobs"}
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_job_status", title="Read Native CAM Job Status",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_job_status(params: SolidWorksCamJobStatusInput) -> str:
+    """读取持久回执和执行进程状态，不调用 CAM，也不重试或终止任务。"""
+    try:
+        from scripts.sw_cam_jobs import inspect_job
+        return _result(inspect_job(params.job_directory), params.response_format)
+    except Exception as exc:
+        return _tool_error(exc, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_stop_observation", title="Request CAM Observer Cleanup",
+          annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_stop_observation(params: SolidWorksCamStopObservationInput) -> str:
+    """请求等待中的 worker 正常解除事件订阅；不终止进程，不取消原生 CAM。"""
+    try:
+        from scripts.sw_cam_jobs import request_observation_stop
+        return _result(request_observation_stop(params.job_directory,
+                       acknowledge_native_not_cancelled=params.acknowledge_native_not_cancelled), params.response_format)
+    except Exception as exc:
+        return _tool_error(exc, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_inspect_operation", title="Inspect Native CAM Operation Diagnostics",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_inspect_operation(params: SolidWorksCamOperationInput) -> str:
+    """读取选定操作的生成标记、计时和原生对象授权值；不重试计算或改变许可证。"""
+    def op():
+        from scripts.sw_cam_generation import inspect_operation
+        sw, registration = _cam_target(params)
+        return inspect_operation(sw, registration["clsid"],
+                                 str(Path(registration["addin_path"]).parent / "camworks.tlb"),
+                                 setup_index=params.setup_index, operation_index=params.operation_index)
+    return _run_locked(op, params.response_format)
+
+
 @mcp.tool(
     name="solidworks_health_check",
     title="Check SolidWorks Automation Health",
@@ -2158,7 +2281,20 @@ def _enumerate_solidworks_windows(process_id=None):
         if class_name == "#32770" and (
             "SolidWorks" in title or "SOLIDWORKS" in title
         ):
-            dialogs.append({"handle": handle, "title": title, "class": class_name})
+            detail = {"handle": handle, "title": title, "class": class_name, "texts": []}
+            def read_child(child, _unused):
+                # 只读标准控件文字，不发点击、键盘、关闭或焦点命令。
+                if len(detail["texts"]) >= 40:
+                    return False
+                text = win32gui.GetWindowText(child)
+                if text:
+                    detail["texts"].append({"class": win32gui.GetClassName(child), "text": text[:2000]})
+                return True
+            try:
+                win32gui.EnumChildWindows(handle, read_child, None)
+            except Exception as exc:
+                detail["text_error"] = type(exc).__name__
+            dialogs.append(detail)
         return True
 
     try:
@@ -2254,7 +2390,10 @@ def solidworks_recover(params: SolidWorksRecoverInput = SolidWorksRecoverInput()
         probe["com_status"] = com_status
         probe["com_detail"] = com_detail
 
-        if com_status == "responsive":
+        blocked = bool(dialogs and not dismissed)
+        if blocked:
+            next_step = "已发现未处理的模态提示；COM 能响应不表示可继续建模。先审查提示，不自动关闭。"
+        elif com_status == "responsive":
             next_step = "会话正常，可以继续调用建模工具。"
         elif com_status == "locked":
             next_step = (
@@ -2265,7 +2404,8 @@ def solidworks_recover(params: SolidWorksRecoverInput = SolidWorksRecoverInput()
             next_step = "COM 未恢复，建议重启 SolidWorks 后重新连接。"
 
         return {
-            "status": com_status,
+            "status": "blocked" if blocked else com_status,
+            "may_continue": com_status == "responsive" and not blocked,
             "probe": probe,
             "next_step": next_step,
         }

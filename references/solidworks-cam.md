@@ -71,12 +71,89 @@ allowed only when their count was explicitly observed. Each step creates a new
 exclusive JSON receipt before native changes; an existing receipt cannot be
 replayed after an uncertain timeout. Source and result inventories are recorded.
 
-GTP and simulation are not exposed by this qualification tool. The inspected
-API provides `IsBackgroundProcessForGTPOver` but no verified setter disabling
-background GTP. A future tool must keep its COM apartment and event sink alive
-until generation actually ends; a timeout is not cancellation. Successful GTP
-must be checked by generated-path state and nonzero path records. Simulation
-also needs valid stock and tool/holder geometry with separately checked results.
+GTP and simulation are not exposed by this single-step qualification tool.
+The inspected API provides `IsBackgroundProcessForGTPOver` but no verified
+setter disabling background GTP.
+
+## Persistent single-operation GTP
+
+`solidworks_cam_prepare_toolpath_job` validates a clean separate saved part,
+the selected PID and creation time, registered add-in, observed feature/setup/
+operation counts and the selected turning operation type. It returns a config;
+it does not start generation. Save the returned config as JSON in the project.
+
+The permanent native module consumes that config:
+
+```text
+python -m scripts.sw_cam_jobs --start-config ABS_CONFIG_JSON --job-directory NEW_ABS_DIRECTORY --foreground
+```
+
+Its worker owns the PID operation mutex, COM apartment and native event
+subscription for the complete calculation. It calls only the selected
+`ICWTurnOperation.GenerateToolpath`, refuses existing generated paths, and
+waits for the same operation's `GetIsToolpathGenerated` transition from false
+to true after the native call returns. The vendor describes this getter as
+successful operation generation. The global `IsBackgroundProcessForGTPOver`
+flag is diagnostic only: the vendor Process Manager help describes 3-axis and
+4/5-axis simultaneous milling, and the global flag was false on an untouched
+idle turning calibration. Neither false=running nor true=completion of the
+selected turning operation is established. `attention_seconds` marks a long
+wait; it is not a cancellation deadline. Receipt, process-query and message-
+pump errors do not release the subscription while completion remains unknown.
+The worker can exit that wait only on confirmed completion or confirmed death/
+reuse of the selected CAD process. Killing the calling session is not safe
+cancellation of a native CAM calculation.
+
+Foreground execution is the verified transport design for short-lived MCP
+stdio clients: the Windows MCP SDK puts the server in a kill-on-close Job
+Object. A child cannot silently detach from that ownership. The optional
+background launcher requests explicit breakaway and refuses if unavailable;
+it never retries without breakaway. No window automation, shell command,
+arbitrary code payload, license activation or automatic model save is used.
+
+`solidworks_cam_job_status` reads the durable state and worker PID/creation
+time without acquiring the CAD lock. Source fingerprints, process identity,
+registration and document target are checked again in the worker. New job
+directories and exclusive claim files prevent replay. A disappeared worker
+without a terminal receipt is uncertain, never a successful calculation.
+
+Success needs the selected generated flag, nonzero path records and finite
+positive feed length, plus unchanged other operations and clean message
+handling. Native length units are reported as unverified rather than assumed.
+Save and reopen the intended calibration separately to check persistence.
+This is not proof of production machining, tool clearance or license scope.
+In particular, a false generated flag is a success predicate returning false,
+not a documented running state. The turning API does not provide a verified
+terminal-failure or cancellation channel. Unknown results must not be retried.
+
+`solidworks_cam_stop_observation` requires the strict boolean
+`acknowledge_native_not_cancelled=true`. It writes a job-bound request, which
+the worker can service only after the current COM call returns. The worker
+unsubscribes normally and returns `uncertain`, `observation_stopped=true`,
+`native_cancelled=false`, `may_continue=false`. This is observer cleanup,
+not cancellation of CAM or proof of completion. `finished=true` in this case
+means that the observer finished, not that machining completed.
+
+`solidworks_cam_inspect_operation` reads the selected operation's generated
+flag, raw GTP time string, optional object-scoped license getter and stock
+parameters. Missing interface/getter support remains explicitly unavailable.
+The diagnostic read itself does not establish a terminal CAM execution state.
+
+Live qualification of the direct rough-face call on the simple cylinder
+returned without a generated path, timing string or CAM message. A prior
+worker incorrectly treated the false success flag as pending indefinitely;
+its observer was stopped with the native outcome and Unadvise unconfirmed.
+The cooperative stop channel was added afterwards and is unit-tested only.
+The raw stock dimensions match that calibration's envelope; absent cutting
+allowance is a hypothesis, not a proven cause or a license finding. No material-
+removal simulation or manufacturing release was demonstrated.
+
+Closing that calibration with ordinary `needs_save=false` nevertheless raised
+a CAM save prompt. CAM persistence must be handled explicitly even after a
+failed generation attempt. The read-only recovery report now includes modal
+text and returns blocked even if COM getters still respond. No automatic
+button, focus or window control is used for CAM qualification.
+Simulation remains a separate stage requiring valid stock and tool/holder data.
 
 ## Evidence and tests
 

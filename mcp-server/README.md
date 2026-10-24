@@ -7,6 +7,12 @@ Native CAM discovery, loading and guarded inspection are documented in
 require an already pinned process and an explicit document target. They do not use UI
 automation or infer a machining license from installed files.
 
+Single-operation toolpath qualification uses `solidworks_cam_prepare_toolpath_job`
+and the persistent `scripts.sw_cam_jobs` native module. Job status, cooperative
+observer cleanup and operation diagnostics have dedicated MCP tools. The
+observed turning GTP call has not yet produced a verified path; a false success
+flag is not a proven running state, and observer cleanup is not CAM cancellation.
+
 The calibration-step tool supports native feature extraction and
 operation-plan generation with event logging, exact inventory preconditions and
 exclusive receipts. It does not generate toolpaths, post NC or save the part.
