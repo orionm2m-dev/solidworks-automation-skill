@@ -1079,6 +1079,54 @@ class SolidWorksCamTurnFeatureInput(SolidWorksCamOperationProfileInput):
         return self
 
 
+class SolidWorksCamTurnFeatureAttributeInput(SolidWorksCamTargetInput):
+    """按特征原生 ID 检查或单独设置 TechDB 策略；不推断 THREAD 条件已配置。"""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    feature_setup_index: int = Field(ge=0, le=511, strict=True)
+    expected_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_turn_feature_type: int = Field(ge=0, le=2147483647, strict=True)
+    action: Literal["inspect", "prepare", "apply"] = "inspect"
+    qualification_only: Literal[True]
+    message_policy: Literal["vendor_default"]
+    attribute_name: Optional[str] = Field(default=None, min_length=1, max_length=1000, strict=True)
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    read_techdb_path: bool = Field(default=False, strict=True)
+
+    @field_validator("qualification_only", mode="before")
+    @classmethod
+    def feature_attribute_requires_boolean(cls, value):
+        if type(value) is not bool:
+            raise ValueError("qualification_only must be a JSON boolean")
+        return value
+
+    @field_validator("expected_document_path")
+    @classmethod
+    def feature_attribute_requires_saved_part(cls, value):
+        if not Path(value).is_absolute() or Path(value).suffix.casefold() != ".sldprt":
+            raise ValueError("expected_document_path must be an absolute saved SLDPRT")
+        return value
+
+    @model_validator(mode="after")
+    def feature_attribute_action_contract(self):
+        if self.read_techdb_path and self.action != "inspect":
+            raise ValueError("read_techdb_path=true is allowed only for inspect")
+        if self.action in {"prepare", "apply"} and self.attribute_name is None:
+            raise ValueError("prepare/apply requires the exact nonempty attribute_name")
+        if self.action != "apply":
+            if self.expected_state_sha256 is not None or self.receipt_path is not None:
+                raise ValueError("inspect/prepare cannot accept state SHA or receipt_path")
+            return self
+        if self.expected_state_sha256 is None or self.receipt_path is None:
+            raise ValueError("apply requires an exact prepared state SHA and a new receipt")
+        path = Path(self.receipt_path)
+        if (not path.is_absolute() or path.suffix.casefold() != ".json"
+                or not path.parent.is_dir() or path.exists() or path.is_symlink()):
+            raise ValueError("receipt_path must be a new absolute JSON file with an existing parent")
+        return self
+
+
 class SolidWorksCamDocumentLifecycleInput(SolidWorksCamTargetInput):
     """已绑定 PID/精确零件的 CAM 原生保存与关闭；不处理已打开的模态窗口。"""
     expected_document_path: str = Field(min_length=1, strict=True)
@@ -2806,6 +2854,19 @@ def solidworks_cam_qualify_turn_feature(params: SolidWorksCamTurnFeatureInput) -
         sw, registration = _cam_target(params)
         values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
         return qualify_turn_feature(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_configure_turn_feature_attribute", title="Inspect or Qualify One Turning Feature Strategy",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_configure_turn_feature_attribute(params: SolidWorksCamTurnFeatureAttributeInput) -> str:
+    """读取精确特征策略，prepare/apply 单独设置属性；不生成、不保存、不宣称螺纹已合格。"""
+    def op():
+        from scripts.sw_cam_turn_feature_attribute import configure_turn_feature_attribute
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return configure_turn_feature_attribute(sw, registration["clsid"],
             typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
     return _run_locked(op, params.response_format)
 

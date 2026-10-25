@@ -36,6 +36,7 @@ REQUIRED_TOOLS = {
     "solidworks_cam_inspect_qualification_context",
     "solidworks_cam_qualify_thread_operation",
     "solidworks_cam_qualify_turn_feature",
+    "solidworks_cam_configure_turn_feature_attribute",
     "solidworks_cam_document_lifecycle",
     "solidworks_cam_inspect_thread_operation",
     "solidworks_cam_save_prompt",

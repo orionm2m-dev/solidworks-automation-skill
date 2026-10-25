@@ -447,3 +447,34 @@ def test_arc_centre_exception_preserves_confirmed_numeric_out_values(graph):
     assert graph.inventories.call_count == 1
     graph.snapshots.assert_not_called()
     assert_read_only(graph, report)
+
+
+def test_profile_optional_collection_reader_gets_remaining_budget_before_items(graph, monkeypatch):
+    from scripts import sw_cam_turn_feature_attribute as attribute
+    monkeypatch.setattr(attribute, "_typed", lambda obj, *_: obj)
+    collection = SimpleNamespace(Count=2, Item=Mock())
+    graph.feature.IGetEnumTurnSegments.return_value = collection
+    monkeypatch.setattr(profile, "_collection", Mock(side_effect=AssertionError("Ungarded collection bypass")))
+    reader = Mock(side_effect=lambda raw, limit: attribute._items(raw, TLB, profile._member, limit=limit))
+    with pytest.raises(ValueError, match="remaining qualification bound"):
+        profile._read_profile(graph.raw_feature, TLB, profile._member, [511], collection_reader=reader)
+    reader.assert_called_once_with(collection, 1)
+    collection.Item.assert_not_called()
+    graph.line.GetTurnSegmentType.assert_not_called()
+
+
+def test_profile_nested_item_event_stops_later_items_and_segment_getters(graph, monkeypatch):
+    from scripts import sw_cam_turn_feature_attribute as attribute
+    monkeypatch.setattr(attribute, "_typed", lambda obj, *_: obj)
+    collection = SimpleNamespace(Count=2, Item=Mock(return_value=graph.raw_line))
+    graph.feature.IGetEnumTurnSegments.return_value = collection
+    def guarded(obj, name, *args):
+        value = profile._member(obj, name, *args)
+        if obj is collection and name == "Item":
+            raise ValueError("CAM event after Item")
+        return value
+    with pytest.raises(ValueError, match="CAM event after Item"):
+        profile._read_profile(graph.raw_feature, TLB, guarded, [0],
+            collection_reader=lambda raw, limit: attribute._items(raw, TLB, guarded, limit=limit))
+    collection.Item.assert_called_once_with(0)
+    graph.line.GetTurnSegmentType.assert_not_called()

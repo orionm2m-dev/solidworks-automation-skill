@@ -20,11 +20,11 @@ _MASS_SIGNIFICANT_DIGITS = 12
 _MASS_RELATIVE_TOLERANCE = 1e-10
 
 
-def _state_digest(state):
+def _state_digest(state, *, mass_significant_digits=_MASS_SIGNIFICANT_DIGITS):
     canonical = deepcopy(state)
     for body in canonical["solids"]:
         body["mass_properties_native"] = [
-            0.0 if _number(value) == 0 else float(format(_number(value), f".{_MASS_SIGNIFICANT_DIGITS}g"))
+            0.0 if _number(value) == 0 else float(format(_number(value), f".{mass_significant_digits}g"))
             for value in body["mass_properties_native"]]
     return _digest(canonical)
 

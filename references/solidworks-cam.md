@@ -742,7 +742,7 @@ persistence_verified 始终 false，保存数据是否恢复必须由另一次�
 现有窗口，也没有保证 SaveActiveDocument 在已阻塞的 CloseDoc 内可安全重入；
 它不是已有模态框的 dismiss/answer API，不使用 HWND、Windows 消息或 UI 操作。
 厂商没有在已检查页面定义 SetResponse 的响应常量。HRESULT S_OK 和 COM Invoke
-结果里的零不是 CAM 的 Yes/No 回答。当前 native lifecycle 路径已实现但未 live 资格验证。
+结果里的零不是 CAM 的 Yes/No 回答。活体资格仅覆盖下面列出的独立工作副本案例。
 
 
 ### 显式隔离启动与空文档会话寿命
@@ -767,7 +767,66 @@ exact-PID-label 等待失败；随后明确 PID 的重新连接、打开与持�
 拒绝；不会隐式修改现有会话的控制权。
 
 2026 SP4 资格试验中，CAM CloseActiveDocument 返回后一次应用进程退出，后续文档
-枚举失败；先前 UserControl 未测量，退出原因未确定，close 尚未获得活体资格。
+枚举失败；先前 UserControl 未测量，退出原因未确定，该次 close 不构成成功资格。
 独立内存 COM 回归确认 ICWApp 的 CloseActiveDocument/SaveActiveDocument 使用精确
 IID 的 vtable 方法，不经过默认 IDispatch.Invoke，不调用 Terminate。
 此 ABI 结果不能替代保存文件重新打开和实例存活的实测验证。
+
+后续 2026 SP4 单一工作副本试验中，先确认 UserControl=true，再分别明确调用
+native save、native close、重新打开及只读检查。目标确实关闭，自有精确 PID 在
+关闭后仍存活；重开后单线特征的 Thread 策略恢复，CAM 消息为零。该案例验证带
+UserControl 门禁的保存/关闭/重开流程，不证明旧实例退出原因，不验证所有模型、
+Save/Restore 选项组合或有消息时的默认保存响应，也不扩大模态窗口处理能力。
+
+
+## 单线车削特征的目录策略（受限活体验证）
+
+`solidworks_cam_configure_turn_feature_attribute` 提供 inspect、prepare、apply；
+参数为已绑定 PID、准确的 saved-part 路径、feature_setup_index、正数
+expected_feature_native_id、expected_turn_feature_type、qualification_only=true 和
+message_policy=vendor_default。inspect 可带 attribute_name，以及仅检查时允许的
+read_techdb_path=true。prepare/apply 必须给出完整原生 attribute_name，不去空格、
+拆分或忽略大小写；apply 另需 prepare 的 expected_state_sha256 和新独占 receipt_path。
+
+ICWTurnFeature.IGetAllAttributes（DISPID8）返回 VARIANT；保留转换后的形状，只接受
+有界、无重复的完整 BSTR 名称列表。GetTdbIdForAttribute（DISPID9）从实际目录名称
+解析 LONG ID，不硬编码 Thread 的 ID。该方法没有成功 BOOL；非正 ID 的语义尚未
+资格化，只可诊断，不可写入。Attribute（DISPID4）为 LONG propget/propput，写入
+没有 BOOL 返回值。apply 只写一次，并先立即读回 Attribute 与 GetAttributeName，
+再在事件订阅有效时检查完整后快照；不猜测 Update/Rebuild 调用。
+
+prepare/apply 要求 clean saved-part、目标恰为一条非退化直线、没有任何操作关联
+目标 feature；绑定文件 SHA、模型实体/特征、全部有界 CAM profile、操作 ID/关联与
+刀路记录数。只允许目标策略 ID/名称及文档 dirty flag 改变。这里不读取刀路坐标，
+不会把计数/关联不变描述为完整刀路几何证明。快照之间及写入前核对文档，getter
+之间只做本地 CAM 消息检查，包括 context 和 profile 内嵌的 Count/Item；集合先核对
+剩余预算，再读取 Item。最后完整 CAM 快照在取消订阅前取得，取消订阅后只检查
+事件清理状态、SW 文档状态及磁盘哈希，不再访问 CAM；不把它描述为清理后完整 CAM
+证明。消息/回调/清理异常立即停止，无重试或自动回滚。
+
+可选 ICWApp4.IGetTechDBPath（DISPID62）是无入参 METHOD，返回 BSTR；仅报告
+原生路径，不读取数据库内容、不启动/切换数据库、不进行 SQL 写入。接口 ABI 来自
+已安装 25.0 typelib；2026 SP4 单一工作副本上已只读验证返回实际活动 TechDB 路径。
+这不验证数据库切换/写入或所需螺纹条件的存在。离线测试覆盖目录、严格 schema、路由、
+单次属性写入、事件停止、部分诊断和全部允许变化的边界。
+
+策略设为 Thread 不等于 Thread Condition 已选定。螺距、螺纹深度、大小径、单位、
+刀具及生产资格均不因此确认。工具不运行 GOP/THREAD 插入/GTP，不保存；保存与
+重开持久化检查是单独的明确步骤。apply 成功读回仍返回 review_required 和
+may_continue=false，保留这些未完成的资格限制。
+
+此 attribute 工具只对 solids.mass_properties_native 的 SHA 规范化使用 11 位有效
+数字，最大相对量化步长为 1e-10；原始浮点数据完整保留，独立语义比较继续采用
+相对容差 1e-10、绝对容差 0。文件、包围盒、profile、操作和关联均精确比较。
+实测约 4.24e-12 的惯量相对漂移在旧 12 位指纹中跨格，新规范化能稳定识别该组
+输入；这不是容差相近必然同哈希的承诺，舍入边界仍可安全拒绝。规则改变后必须
+重新 prepare，不自动重试 apply。既有单线创建工具的默认 12 位规则不变。
+
+2026 SP4 活体案例：在一个 clean 工作副本上，目录实际返回 Thread，动态解析的
+策略 ID 为 18（该数据库的观测值，绝不是固定映射）。对无关联操作的已验证单线
+feature 完成 prepare 和一次 apply，立即 ID/名称回读及订阅内完整后快照通过；
+消息数为零、Unadvise 确认。随后用独立生命周期工具保存、关闭、重开，Thread
+策略仍在，文件 SHA 与保存后的文件一致。9 features、15 operations、零 THREAD
+operations，以及旧操作 ID/关联/刀路记录数保持不变；未比较刀路坐标。未运行 GOP
+或 GTP，未配置 M60 Thread Condition、螺距或深度，不代表完整螺纹加工或生产放行。
+这个持久化证明属于已实测副本；attribute apply 本身仍不保存、不声明持久化。

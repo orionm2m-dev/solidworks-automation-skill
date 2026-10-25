@@ -74,7 +74,7 @@ def _read_segment(raw, feature, typelib_path, read, result=None):
     return result
 
 
-def _read_profile(raw, typelib_path, read, budget, result=None):
+def _read_profile(raw, typelib_path, read, budget, result=None, *, collection_reader=None):
     result = {} if result is None else result
     base = _typed(raw, "ICWFeature", typelib_path)
     turn = _typed(raw, "ICWTurnFeature", typelib_path)
@@ -87,7 +87,9 @@ def _read_profile(raw, typelib_path, read, budget, result=None):
         map(_number, _values(read(turn, "GetMinMaxDiameter"), 2))))
     result["start_native"] = list(map(_number, _values(read(turn, "GetStartPosition"), 3)))
     result["end_native"] = list(map(_number, _values(read(turn, "GetEndPosition"), 3)))
-    segments = _collection(read(turn, "IGetEnumTurnSegments"), typelib_path)
+    raw_segments = read(turn, "IGetEnumTurnSegments")
+    segments = (_collection(raw_segments, typelib_path) if collection_reader is None
+                else collection_reader(raw_segments, _MAX_SEGMENTS - budget[0]))
     budget[0] += len(segments)
     if budget[0] > _MAX_SEGMENTS:
         raise ValueError("Linked profile segment count exceeds inspection limit")
