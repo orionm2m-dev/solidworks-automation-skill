@@ -310,3 +310,266 @@ def test_class_resolution_programming_error_is_not_silently_ignored(harness, mon
     assert error.value.code == "SW_ROT_UNAVAILABLE"
     assert "unavailable API" in str(error.value)
     harness.legacy.assert_not_called()
+
+
+class LaunchedApp:
+    """记录所有读写，避免把已有实例修改伪装成独立启动。"""
+    def __init__(self, events, pid=999, revision="34.4.1"):
+        self.events, self.pid = events, pid
+        self.RevisionNumber, self.ActiveDoc = revision, None
+        self._user_control, self._visible = False, False
+        self.ExitApp = Mock(side_effect=AssertionError("不得关闭实例"))
+
+    def GetProcessID(self):
+        self.events.append(("pid", self.pid))
+        return self.pid
+
+    @property
+    def UserControl(self):
+        self.events.append(("control_read", self._user_control))
+        return self._user_control
+
+    @UserControl.setter
+    def UserControl(self, value):
+        self.events.append(("control_write", value))
+        self._user_control = value
+
+    @property
+    def Visible(self):
+        return self._visible
+
+    @Visible.setter
+    def Visible(self, value):
+        self.events.append(("visible_write", value))
+        self._visible = value
+
+
+@pytest.fixture
+def isolated(harness, monkeypatch):
+    events = []
+    wanted = LaunchedApp(events)
+    rot = harness.install([("SolidWorks_PID_999", wanted)])
+    connection.pythoncom.CLSCTX_LOCAL_SERVER = 4
+    snapshots = iter(({123}, {123, 999}))
+
+    def snapshot():
+        value = next(snapshots)
+        events.append(("snapshot", value))
+        return frozenset(value)
+
+    def launch(*args, **kwargs):
+        events.append(("launch", args, kwargs))
+        return wanted
+
+    snapshot_mock = Mock(side_effect=snapshot)
+    launch_mock = Mock(side_effect=launch)
+    monkeypatch.setattr(connection, "_snapshot_process_ids", snapshot_mock)
+    monkeypatch.setattr(connection.win32com_client, "DispatchEx", launch_mock, raising=False)
+    closer = Mock(side_effect=AssertionError("不得关闭或终止任何进程"))
+    monkeypatch.setattr(connection, "close_owned_solidworks", closer)
+    return SimpleNamespace(app=wanted, events=events, rot=rot, snapshot=snapshot_mock,
+                           launch=launch_mock, closer=closer, harness=harness)
+
+
+def test_isolated_launch_proves_new_pid_before_mutations_and_binds_rot(isolated, monkeypatch):
+    monkeypatch.setenv("SOLIDWORKS_MCP_PROCESS_ID", "123")
+    sw, model, metadata = connection.connect_solidworks(
+        version=2026, launch_new_instance=True, return_metadata=True)
+    assert sw is isolated.app and model is None
+    assert [event[0] for event in isolated.events[:6]] == [
+        "snapshot", "launch", "pid", "snapshot", "pid", "control_write"]
+    assert isolated.events.count(("control_write", True)) == 1
+    assert isolated.events.count(("visible_write", True)) == 1
+    isolated.launch.assert_called_once_with("SldWorks.Application.34", clsctx=4)
+    assert isolated.rot.bound == ["SolidWorks_PID_999"]
+    assert metadata["process_id"] == 999
+    assert metadata["requested_process_id"] is None
+    assert metadata["new_process_verified"] is metadata["user_control"] is True
+    assert metadata["started_by_cad_studio"] is metadata["launch_new_instance"] is True
+    assert metadata["moniker"] == "SolidWorks_PID_999"
+    assert metadata["moniker_verified"] is True
+    assert metadata["connection_source"] == "exact_pid_rot"
+    assert connection.os.environ["SOLIDWORKS_MCP_PROCESS_ID"] == "123"
+    isolated.harness.legacy.assert_not_called()
+    isolated.closer.assert_not_called()
+    isolated.app.ExitApp.assert_not_called()
+
+
+@pytest.mark.parametrize("options", [
+    {"process_id": 123}, {"process_id": 0}, {"process_id": False},
+    {"visible": False}, {"visible": 1}, {"wait_seconds": 0},
+    {"wait_seconds": 61}, {"wait_seconds": float("inf")},
+    {"wait_seconds": float("nan")}, {"wait_seconds": "5"},
+])
+def test_isolated_invalid_options_stop_before_installation_and_activation(isolated, options):
+    with pytest.raises(ValueError):
+        connection.connect_solidworks(launch_new_instance=True, **options)
+    isolated.harness.ensure.assert_not_called()
+    isolated.snapshot.assert_not_called()
+    isolated.launch.assert_not_called()
+
+
+@pytest.mark.parametrize("flag", [1, 0, "true", None])
+def test_isolated_launch_flag_is_strict_boolean(isolated, flag):
+    with pytest.raises(ValueError, match="boolean"):
+        connection.connect_solidworks(launch_new_instance=flag)
+    isolated.launch.assert_not_called()
+
+
+def test_isolated_mode_does_not_parse_stale_environment_binding(isolated, monkeypatch):
+    monkeypatch.setenv("SOLIDWORKS_MCP_PROCESS_ID", "stale")
+    assert connection.connect_solidworks(launch_new_instance=True)[0] is isolated.app
+
+
+@pytest.mark.parametrize("pid", [123, 0, True, None, "999"])
+def test_isolated_existing_or_invalid_pid_never_changes_application(isolated, pid):
+    isolated.app.pid = pid
+    with pytest.raises(connection.SolidWorksConnectionError):
+        connection.connect_solidworks(launch_new_instance=True)
+    assert not any(event[0].endswith("_write") for event in isolated.events)
+    isolated.harness.legacy.assert_not_called()
+    isolated.closer.assert_not_called()
+    isolated.app.ExitApp.assert_not_called()
+
+
+def test_isolated_pid_must_be_present_in_os_snapshot(isolated):
+    isolated.snapshot.side_effect = [{123}, {123}]
+    with pytest.raises(connection.SolidWorksConnectionError) as error:
+        connection.connect_solidworks(launch_new_instance=True)
+    assert error.value.code == "SW_NEW_PROCESS_NOT_PROVEN"
+    assert "999" in str(error.value)
+    assert not any(event[0].endswith("_write") for event in isolated.events)
+    isolated.closer.assert_not_called()
+
+
+def test_isolated_snapshot_failure_never_activates_class_factory(isolated):
+    isolated.snapshot.side_effect = connection.SolidWorksConnectionError(
+        "SW_PROCESS_SNAPSHOT_FAILED", "launch_preflight", "unavailable")
+    with pytest.raises(connection.SolidWorksConnectionError) as error:
+        connection.connect_solidworks(launch_new_instance=True)
+    assert error.value.code == "SW_PROCESS_SNAPSHOT_FAILED"
+    isolated.launch.assert_not_called()
+
+
+def test_isolated_version_mismatch_never_changes_application(isolated):
+    isolated.app.RevisionNumber = "33.1.0"
+    with pytest.raises(connection.SolidWorksConnectionError) as error:
+        connection.connect_solidworks(version=2026, launch_new_instance=True)
+    assert error.value.code == "SW_VERSION_MISMATCH"
+    assert "999" in str(error.value)
+    assert not any(event[0].endswith("_write") for event in isolated.events)
+    isolated.closer.assert_not_called()
+
+
+def test_isolated_identity_change_before_control_stops_without_writes(isolated, monkeypatch):
+    monkeypatch.setattr(isolated.app, "GetProcessID", Mock(side_effect=[999, 123]))
+    with pytest.raises(connection.SolidWorksConnectionError) as error:
+        connection.connect_solidworks(launch_new_instance=True)
+    assert error.value.code == "SW_PROCESS_MISMATCH"
+    assert not any(event[0].endswith("_write") for event in isolated.events)
+    isolated.closer.assert_not_called()
+
+
+def test_isolated_user_control_readback_must_be_true(isolated, monkeypatch):
+    original = connection.get_com_member
+    monkeypatch.setattr(connection, "get_com_member", lambda obj, name, *args:
+                        1 if name == "UserControl" else original(obj, name, *args))
+    with pytest.raises(connection.SolidWorksConnectionError) as error:
+        connection.connect_solidworks(launch_new_instance=True)
+    assert error.value.code == "SW_USER_CONTROL_UNVERIFIED"
+    assert "999" in str(error.value)
+    assert not any(event[0] == "visible_write" for event in isolated.events)
+    isolated.closer.assert_not_called()
+
+
+def test_isolated_rot_wait_is_bounded_and_never_closes_new_process(isolated, monkeypatch):
+    monkeypatch.setattr(connection, "_connect_process", Mock(side_effect=
+                        connection.SolidWorksConnectionError("SW_PROCESS_NOT_FOUND", "attach", "not registered")))
+    monkeypatch.setattr(connection, "_wait_until_ready", lambda *args: None)
+    monkeypatch.setattr(connection.time, "monotonic", Mock(side_effect=[0, 61]))
+    sw, _, metadata = connection.connect_solidworks(
+        launch_new_instance=True, wait_seconds=1, return_metadata=True)
+    assert sw is isolated.app
+    assert metadata["moniker"] is None
+    assert metadata["moniker_verified"] is False
+    assert metadata["connection_source"] == "held_verified_new_process"
+    assert metadata["new_process_verified"] is metadata["user_control"] is True
+    assert metadata["process_id"] == 999
+    isolated.launch.assert_called_once()
+    isolated.closer.assert_not_called()
+    isolated.app.ExitApp.assert_not_called()
+
+
+def test_isolated_rot_mismatch_never_returns_foreign_proxy(isolated, monkeypatch):
+    monkeypatch.setattr(connection, "_connect_process", Mock(return_value=(app(123), "wrong")))
+    with pytest.raises(connection.SolidWorksConnectionError) as error:
+        connection.connect_solidworks(launch_new_instance=True)
+    assert error.value.code == "SW_PROCESS_MISMATCH"
+    assert "999" in str(error.value)
+    isolated.closer.assert_not_called()
+
+
+def test_os_snapshot_rejects_incomplete_or_malformed_enumeration(monkeypatch):
+    enumerator = Mock(return_value=[0, True])
+    monkeypatch.setitem(sys.modules, "win32process", SimpleNamespace(EnumProcesses=enumerator))
+    with pytest.raises(connection.SolidWorksConnectionError) as error:
+        connection._snapshot_process_ids()
+    assert error.value.code == "SW_PROCESS_SNAPSHOT_FAILED"
+    enumerator.return_value = [0, connection.os.getpid()]
+    assert connection._snapshot_process_ids() == frozenset(enumerator.return_value)
+
+
+
+def test_isolated_rot_never_binds_generic_alias_even_while_waiting(isolated, monkeypatch):
+    foreign = LaunchedApp([], pid=123)
+    isolated.rot.entries = [(FakeMoniker("SldWorks.Application"), foreign)]
+    monkeypatch.setattr(connection, "_wait_until_ready", lambda *args: None)
+    monkeypatch.setattr(connection.time, "monotonic", Mock(side_effect=[0, 61]))
+    sw, _, metadata = connection.connect_solidworks(
+        launch_new_instance=True, wait_seconds=1, return_metadata=True)
+    assert sw is isolated.app
+    assert metadata["connection_source"] == "held_verified_new_process"
+    assert isolated.rot.bound == []
+    assert foreign.events == []
+    isolated.closer.assert_not_called()
+
+
+@pytest.mark.parametrize("change, code", [
+    ("pid", "SW_PROCESS_MISMATCH"), ("control", "SW_USER_CONTROL_UNVERIFIED"),
+])
+def test_held_proxy_requires_fresh_pid_and_user_control_proof(isolated, monkeypatch, change, code):
+    monkeypatch.setattr(connection, "_connect_process", Mock(side_effect=
+                        connection.SolidWorksConnectionError("SW_PROCESS_NOT_FOUND", "attach", "missing")))
+    monkeypatch.setattr(connection, "_wait_until_ready", lambda *args: None)
+    monkeypatch.setattr(connection.time, "monotonic", Mock(side_effect=[0, 61]))
+    if change == "pid":
+        monkeypatch.setattr(isolated.app, "GetProcessID", Mock(side_effect=[999, 999, 999, 123]))
+    else:
+        original = connection.get_com_member
+        control = iter([True, False])
+        monkeypatch.setattr(connection, "get_com_member", lambda obj, name, *args:
+                            next(control) if name == "UserControl" else original(obj, name, *args))
+    with pytest.raises(connection.SolidWorksConnectionError) as error:
+        connection.connect_solidworks(launch_new_instance=True, wait_seconds=1)
+    assert error.value.code == code
+    isolated.launch.assert_called_once()
+    isolated.closer.assert_not_called()
+
+
+def test_rot_errors_do_not_enable_held_proxy_fallback(isolated, monkeypatch):
+    monkeypatch.setattr(connection, "_connect_process", Mock(side_effect=
+                        connection.SolidWorksConnectionError("SW_ROT_UNAVAILABLE", "attach", "failed")))
+    with pytest.raises(connection.SolidWorksConnectionError) as error:
+        connection.connect_solidworks(launch_new_instance=True)
+    assert error.value.code == "SW_ROT_UNAVAILABLE"
+    isolated.closer.assert_not_called()
+
+
+def test_broken_exact_rot_proxy_is_not_treated_as_missing(isolated):
+    isolated.rot.entries = [(FakeMoniker("SolidWorks_PID_999"), RuntimeError("broken exact object"))]
+    with pytest.raises(connection.SolidWorksConnectionError) as error:
+        connection.connect_solidworks(launch_new_instance=True)
+    assert error.value.code == "SW_PROCESS_UNVERIFIED"
+    assert "999" in str(error.value)
+    assert isolated.rot.bound == ["SolidWorks_PID_999"]
+    isolated.closer.assert_not_called()

@@ -259,3 +259,28 @@ def test_real_standard_stream_pointer_uses_direct_qi_without_pywin32_transport(m
     data, count = result.RemoteRead(8)
     assert bytes(data[:count]) == b"typed-qi"
     transport.assert_not_called()
+
+
+def test_exact_app_interface_calls_close_vtable_without_dispatch_or_terminate():
+    # 仅内存 COM 对象；真实生成的 ICWApp ABI，不连接或激活 CAD。
+    from pathlib import Path
+    from comtypes import COMObject, IUnknown
+    from scripts.sw_cam import _member
+    from scripts.sw_cam_generation import _typed
+    path = Path(r"D:\Program Files\SOLIDWORKS Corp\SOLIDWORKS CAM\camworks.tlb")
+    if not path.is_file():
+        pytest.skip("Installed CAM 2026 typelib is unavailable")
+    module = bridge._load_type_library(str(path))
+    calls = []
+    class App(COMObject):
+        _com_interfaces_ = [module.ICWApp]
+        def CloseActiveDocument(self): calls.append("CloseActiveDocument"); return 0
+        def SaveActiveDocument(self): calls.append("SaveActiveDocument"); return 0
+        def Terminate(self): calls.append("Terminate"); return 0
+        def IDispatch_Invoke(self, *args): calls.append("IDispatch.Invoke"); return -2147467263
+    app = App()
+    pointer = _typed(app.QueryInterface(IUnknown), "ICWApp", str(path))
+    assert str(pointer._iid_).upper() == "{6015E884-0B0D-11D6-A982-00062999E55F}"
+    _member(pointer, "CloseActiveDocument")
+    _member(pointer, "SaveActiveDocument")
+    assert calls == ["CloseActiveDocument", "SaveActiveDocument"]

@@ -195,7 +195,7 @@ def connect_solidworks(*args, **kwargs):
     """将整个 MCP 进程固定到已验证的 SOLIDWORKS PID；不缓存跨线程 COM 指针。"""
     global _selected_process_id
     requested = kwargs.get("process_id")
-    if requested is None and _selected_process_id is not None:
+    if requested is None and _selected_process_id is not None and not kwargs.get("launch_new_instance", False):
         kwargs["process_id"] = _selected_process_id
     result = _connect_solidworks_backend(*args, **kwargs)
     actual = int(get_com_member(result[0], "GetProcessID"))
@@ -343,9 +343,19 @@ class SolidWorksConnectInput(BaseInput):
         description="Select an existing SOLIDWORKS PID for this MCP server. Missing targets fail without launching or selecting another instance.",
     )
 
+    launch_new_instance: bool = Field(default=False, strict=True,
+        description="Explicitly create an isolated instance; verify its PID is new before any visibility/UserControl write. Never attaches a pre-existing process.")
     visible: bool = Field(default=True, description="Whether a newly started SolidWorks instance should be visible.")
     wait_seconds: int = Field(default=5, ge=0, le=60, description="Seconds to wait after starting SolidWorks.")
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+    @model_validator(mode="after")
+    def isolated_launch_contract(self):
+        if self.launch_new_instance and self.process_id is not None:
+            raise ValueError("launch_new_instance and process_id are mutually exclusive")
+        if self.launch_new_instance and self.visible is not True:
+            raise ValueError("Isolated persistent launch requires visible=true and verified UserControl=true")
+        return self
 
 
 class CadStudioBackendRouteInput(BaseInput):
@@ -1020,6 +1030,82 @@ class SolidWorksCamThreadInspectionInput(SolidWorksCamOperationProfileInput):
         if not Path(value).is_absolute() or Path(value).suffix.casefold() != ".sldprt":
             raise ValueError("expected_document_path must be an absolute saved SLDPRT")
         return value
+
+
+class SolidWorksCamTurnFeatureInput(SolidWorksCamOperationProfileInput):
+    """显式假设类型映射的一条直线特征资格试验；保存为独立 action。"""
+    expected_document_path: str = Field(min_length=1, strict=True)
+    linked_feature_index: int = Field(ge=0, le=63, strict=True)
+    segment_index: int = Field(ge=0, le=511, strict=True)
+    feature_setup_index: int = Field(ge=0, le=511, strict=True)
+    candidate_feature_type: int = Field(ge=0, le=2147483647, strict=True)
+    native_to_model_scale: float = Field(gt=0, le=1, strict=True, allow_inf_nan=False)
+    sketch_name: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,79}$", strict=True)
+    action: Literal["inspect", "prepare", "apply", "save_candidate"] = "prepare"
+    qualification_only: Literal[True]
+    acknowledge_unverified_type_mapping: Literal[True]
+    message_policy: Literal["vendor_default"]
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    expected_new_feature_native_id: Optional[int] = Field(default=None, gt=0, le=4294967295, strict=True)
+
+    @field_validator("qualification_only", "acknowledge_unverified_type_mapping", mode="before")
+    @classmethod
+    def turn_feature_requires_boolean(cls, value):
+        if type(value) is not bool:
+            raise ValueError("Qualification acknowledgements must be JSON booleans")
+        return value
+
+    @field_validator("expected_document_path")
+    @classmethod
+    def turn_feature_requires_saved_part(cls, value):
+        if not Path(value).is_absolute() or Path(value).suffix.casefold() != ".sldprt":
+            raise ValueError("expected_document_path must be an absolute saved SLDPRT")
+        return value
+
+    @model_validator(mode="after")
+    def turn_feature_action_contract(self):
+        if self.action in {"inspect", "prepare"}:
+            if any(value is not None for value in (self.expected_state_sha256, self.receipt_path, self.expected_new_feature_native_id)):
+                raise ValueError("inspect/prepare cannot accept mutation inputs")
+            return self
+        if self.expected_state_sha256 is None or self.receipt_path is None:
+            raise ValueError("apply/save_candidate requires an exact state SHA and a new receipt")
+        path = Path(self.receipt_path)
+        if not path.is_absolute() or path.suffix.casefold() != ".json" or not path.parent.is_dir() or path.exists() or path.is_symlink():
+            raise ValueError("receipt_path must be a new absolute JSON file with an existing parent")
+        if (self.action == "save_candidate") != (self.expected_new_feature_native_id is not None):
+            raise ValueError("Only save_candidate requires the exact created feature native ID")
+        return self
+
+
+class SolidWorksCamDocumentLifecycleInput(SolidWorksCamTargetInput):
+    """已绑定 PID/精确零件的 CAM 原生保存与关闭；不处理已打开的模态窗口。"""
+    expected_document_path: str = Field(min_length=1, strict=True)
+    action: Literal["prepare", "save", "close"] = "prepare"
+    message_policy: Literal["vendor_default"]
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+
+    @field_validator("expected_document_path")
+    @classmethod
+    def lifecycle_requires_saved_part(cls, value):
+        if not Path(value).is_absolute() or Path(value).suffix.casefold() != ".sldprt":
+            raise ValueError("expected_document_path must be an exact absolute saved SLDPRT")
+        return value
+
+    @model_validator(mode="after")
+    def lifecycle_action_contract(self):
+        if self.action == "prepare":
+            if self.expected_state_sha256 is not None or self.receipt_path is not None:
+                raise ValueError("prepare cannot accept mutation inputs")
+            return self
+        if self.expected_state_sha256 is None or self.receipt_path is None:
+            raise ValueError("save/close requires exact prepared state SHA and a new receipt")
+        path = Path(self.receipt_path)
+        if not path.is_absolute() or path.suffix.casefold() != ".json" or not path.parent.is_dir() or path.exists() or path.is_symlink():
+            raise ValueError("receipt_path must be a new absolute JSON file with an existing parent")
+        return self
 
 
 class SolidWorksCamStopObservationInput(SolidWorksCamJobStatusInput):
@@ -2261,9 +2347,9 @@ def cadstudio_create_ocp_surface(params: CadStudioOcpSurfaceInput) -> str:
     name="solidworks_connect",
     title="Connect to SolidWorks",
     annotations={
-        "readOnlyHint": True,
+        "readOnlyHint": False,
         "destructiveHint": False,
-        "idempotentHint": True,
+        "idempotentHint": False,
         "openWorldHint": False,
     },
 )
@@ -2271,11 +2357,16 @@ def solidworks_connect(params: SolidWorksConnectInput = SolidWorksConnectInput()
     """Connect and pin this MCP server to a verified SOLIDWORKS process; explicit PID never falls back or starts one."""
 
     def op():
-        sw, model = connect_solidworks(wait_seconds=params.wait_seconds, visible=params.visible, process_id=params.process_id)
+        options = dict(wait_seconds=params.wait_seconds, visible=params.visible, process_id=params.process_id)
+        if params.launch_new_instance:
+            options.update(launch_new_instance=True, return_metadata=True)
+        connected = connect_solidworks(**options)
+        sw, model = connected[:2]
         return {
             "process_id": _selected_process_id,
             "session_target": {"process_id": _selected_process_id, "scope": "mcp_server", "strict": True},
             "status": "ok",
+            **({"connection": connected[2]} if params.launch_new_instance else {}),
             "revision": get_com_member(sw, "RevisionNumber"),
             "active_document": _model_summary(model) if model else None,
         }
@@ -2703,6 +2794,34 @@ def solidworks_cam_inspect_thread_operation(params: SolidWorksCamThreadInspectio
             expected_document_path=params.expected_document_path, setup_index=params.setup_index,
             operation_index=params.operation_index, expected_operation_type=params.expected_operation_type,
             expected_thread_native_id=params.expected_thread_native_id)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_qualify_turn_feature", title="Qualify One Native Collinear Turning Feature",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_qualify_turn_feature(params: SolidWorksCamTurnFeatureInput) -> str:
+    """inspect 允许已有草图/脏状态但不授权写入；prepare/apply 验证直线特征，save_candidate 独立保存。"""
+    def op():
+        from scripts.sw_cam_turn_feature import qualify_turn_feature
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return qualify_turn_feature(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_document_lifecycle", title="Prepare, Save or Close One Native CAM Document",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_document_lifecycle(params: SolidWorksCamDocumentLifecycleInput) -> str:
+    """先订阅 CAM 消息，再单独保存或关闭精确文档；默认响应不代表确认保存。"""
+    def op():
+        from scripts.sw_cam_lifecycle import document_lifecycle
+        sw, registration = _cam_target(params)
+        return document_lifecycle(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"),
+            expected_document_path=params.expected_document_path, action=params.action,
+            message_policy=params.message_policy, expected_state_sha256=params.expected_state_sha256,
+            receipt_path=params.receipt_path)
     return _run_locked(op, params.response_format)
 
 

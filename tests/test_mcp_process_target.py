@@ -41,6 +41,37 @@ class McpProcessTargetTests(unittest.TestCase):
             server.connect_solidworks(wait_seconds=1)
         self.assertEqual(backend.call_args.kwargs["process_id"], 1234)
 
+    def test_isolated_launch_bypasses_previous_binding_and_pins_new_pid(self):
+        server._selected_process_id = 1234
+        os.environ["SOLIDWORKS_MCP_PROCESS_ID"] = "1234"
+        metadata = {"launch_new_instance": True, "new_process_verified": True, "user_control": True}
+        with patch.object(server, "_connect_solidworks_backend", return_value=(self.app(5678), None, metadata), create=True) as backend:
+            answer = json.loads(server.solidworks_connect(server.SolidWorksConnectInput(launch_new_instance=True)))
+        self.assertEqual(backend.call_args.kwargs, dict(wait_seconds=5, visible=True, process_id=None,
+            launch_new_instance=True, return_metadata=True))
+        self.assertEqual(answer["process_id"], 5678)
+        self.assertEqual(answer["connection"], metadata)
+        self.assertEqual(os.environ["SOLIDWORKS_MCP_PROCESS_ID"], "5678")
+        annotation = server.mcp._tool_manager._tools["solidworks_connect"].annotations
+        self.assertFalse(annotation.readOnlyHint)
+        self.assertFalse(annotation.idempotentHint)
+
+    def test_failed_isolated_launch_preserves_previous_binding(self):
+        server._selected_process_id = 1234
+        os.environ["SOLIDWORKS_MCP_PROCESS_ID"] = "1234"
+        with patch.object(server, "_connect_solidworks_backend", side_effect=RuntimeError("new PID not proved"), create=True):
+            answer = json.loads(server.solidworks_connect(server.SolidWorksConnectInput(launch_new_instance=True)))
+        self.assertEqual(answer["status"], "error")
+        self.assertEqual(server._selected_process_id, 1234)
+        self.assertEqual(os.environ["SOLIDWORKS_MCP_PROCESS_ID"], "1234")
+
+    def test_isolated_launch_schema_is_explicit_and_exclusive(self):
+        for values in [dict(launch_new_instance=1), dict(launch_new_instance="true"),
+                       dict(launch_new_instance=None), dict(launch_new_instance=True, process_id=1234),
+                       dict(launch_new_instance=True, visible=False)]:
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                server.SolidWorksConnectInput(**values)
+
     def test_default_connection_pins_returned_pid(self):
         with patch.object(server, "_connect_solidworks_backend", return_value=(self.app(1234), None), create=True):
             server.connect_solidworks()

@@ -651,7 +651,123 @@ expected_operation_type=12、正 ULONG expected_thread_native_id；没有 prepar
 精确正 ID / 类型12 / 未生成刀路一致，16 个标量读回成功，文档、操作清单和
 已保存文件哈希均保持不变。返回 review_required 是元数据不完整的明确门禁，
 不是 M60 已配置或物理工艺通过。随后调用方使用独立的常规保存工具保存检查点；
-插入/读取工具本身仍不保存，此检查点尚未通过关闭重开验证。
+插入/读取工具本身仍不保存。后续关闭重开未恢复这项默认 THREAD（其余已验证
+刀路仍存在），因此该写入路径未通过持久化验证，旧 native ID 已失效；原因未确定。
 运行环境为 Windows / Python 3.10.11；116 个 core mock 测试和 108 个 MCP
 schema/route 测试覆盖边界与禁用调用，协议列表确认 101 个工具可见。
 这些测试数量与实际原生验证范围分开记录，不声明其他 SOLIDWORKS 版本已验证。
+
+
+## 单条共线车削特征的受控资格试验
+
+厂商 CAM_Help.chm 的 `thrd_drl_cutoff/thread_operation.htm` 要求一个 THREAD
+feature 由一个或多个共线 segment 组成；不共线的完整外形不是有效 thread profile。
+`thread_tab_machining_parameters_dialog_box.htm` 将 Start/End length 描述为
+feature 范围的增量，不能把它们当作独立绝对 Z 边界。Thread depth 与每刀深度不同；
+前者与 OD/ID feature 的 major/minor diameter 和 Thread Condition 有关。
+之前一次完整外形上的默认 THREAD 插入虽有内存读回，常规保存返回成功后重开却
+没有恢复该操作；原因未确定，旧 native ID 不能重用。不得重放该无效插入来试错。
+
+`solidworks_cam_qualify_turn_feature` 的 prepare/apply 只验证一个独立直线 CAM
+feature，不插入 THREAD、不设置 pitch/depth、不生成刀路。需要独立保存的干净
+试件、精确文档/add-in、source operation/type/linked_feature_index/segment_index、
+feature_setup_index、candidate_feature_type、显式 native_to_model_scale（到模型米）、
+新的 ASCII sketch_name，以及 qualification_only=true、
+acknowledge_unverified_type_mapping=true 和 message_policy=vendor_default。
+候选类型必须等于源 feature 实际读到的原始类型，但这是显式待验证的映射假设，
+不是声称 CreateTurnFeature 的 LONG 类型参数有已记录的枚举映射。
+坐标比例只适用于调用方已有几何证据的 profile，不建立全局 CAM 单位约定。
+
+prepare 只读源直线、全部有界 CAM profile、操作 ID/关联/已有刀路记录、实体
+边界/质量属性、模型特征、保存文件哈希及实际参考平面。限定 profile 必须位于
+模型 XZ 子午面；从 RefPlane.Transform 验证实际平面，不按 Top/Front 名称猜轴。
+apply 绑定完整 prepare SHA 和新独占 JSON 回执；建立单一 2D sketch 时使用实际
+ISketch.ModelToSketchTransform 和逆变换验证 model-space 端点。随后仅调用一次
+`ICWTurnSetup.CreateTurnFeature(LONG candidate_type, BSTR exact_sketch_name)`，
+返回 IDispatch，无 BOOL 成功返回值。要求恰好新增一个正 ID 的预期类型 feature、
+一条共线 segment、相同原始端点/尺寸，旧 feature/profile、操作/刀路、实体和磁盘
+文件保持不变。CAM 消息、失败或任何额外变化均停止；不自动删对象或重试。
+
+inspect 使用同一组明确目标/源段参数，允许脏文档及已经存在的目标 sketch；
+返回完整当前快照而不声明 prepare/apply_eligible，不接收 state SHA、receipt 或新 ID。
+原生创建已返回但对象为空时，保留 native_result_present=false，只读完整后快照；
+仅当恰好出现一个正 ID 且通过同一套完整几何/旧数据不变检查，才以 snapshot delta
+恢复新特征身份并明确标记 null_result_recovered_by_exact_delta。零个或多个新增项、
+消息及任何额外变化仍停止；不重放创建。中断后的独立 inspect 也不授权重放 apply。
+快照 getter 间只查本地 CAM 消息，快照前后和每次写入前仍核对精确文档。
+质量属性保留原始诊断，SHA 使用 12 位有效数字；只对对应质量项允许 1e-10 相对误差
+（绝对容差为零）。文件、包围盒、profile、操作和刀路仍精确比较。
+
+save_candidate 是另一次显式 action，必须提供创建后 state SHA、新独占 receipt
+及 expected_new_feature_native_id。只调用 `ICWApp.SaveActiveDocument()`；HRESULT
+正常返回与内存/文件读回分开报告，persistence_verified 始终 false，必须另行
+关闭/重开验证。厂商 `common/saving_machining_data.htm` 要求 Save/Restore part
+在保存和打开时启用；本工具不读取/修改未公开的选项、不把该选项猜作既往丢失原因，
+也不把更新 CAM 树或 rebuild 猜作 commit。已有正常刀路能恢复不等于每种新对象都
+已验证持久化。mock/ABI/协议通过不是生产或 M60 资格。
+
+2026 SP4 已实测一个来自既有 OD profile 的单一直线：模型草图端点回读通过；
+CreateTurnFeature 参数候选 1 返回空对象，但随后独立 inspect 确认恰好新增一个
+原始类型 1 的单线 feature，完整增量检查通过。独立 CAM 保存后在新实例重新打开，
+该 feature 及原有 15 operations、两条既有刀路（147/79 records）均恢复，文件哈希不变。
+这只资格化该输入类型/直线几何案例和明确保存后的持久化，不建立通用输入枚举映射，
+不配置 THREAD/M60、刀具、螺纹深度或制造公差。新版同调用 null-delta 恢复有离线回归；
+活体证据来自分开的 create-null、inspect、save、reopen，不声称新版恢复分支已再运行。
+
+
+## CAM 原生文档保存与关闭
+
+`solidworks_cam_document_lifecycle` 使用已明确绑定的 PID 和完整 saved-part 路径，
+分别提供 prepare、save、close 三个 action。prepare 只读文档、CAM inventory 和
+磁盘 SHA-256，返回整个状态的 state_sha256。save/close 各自要求这个精确状态哈希
+及新的独占 receipt_path；不会自动串联 save 与 close，不重复不确定请求。
+message_policy 必须明确为 vendor_default，不能提交猜测的 Yes/No/Cancel 数字。
+
+`welcometopic.htm` 的 Listening to events 与 Open, Close, Save file 段落明确说明：
+预先注册的客户端收到原本会显示阻塞消息框的事件；不调用 SetResponse 时 CAM
+使用默认值。CloseActiveDocument 在 Save/Restore 关闭时可发出 CAM 数据保存事件。
+工具在原生操作之前进入 CamMessageSession，再重新核对文档、inventory 和文件哈希，
+持久化 intent，随后只调用一次 ICWApp.SaveActiveDocument（DISPID12）或
+CloseActiveDocument（DISPID3）。两者无入参、HRESULT-only；不是带 BOOL 成功返回值的
+接口。close 还要求 SW save flag 为 clean，但这不证明 CAM 内部数据也是 clean。
+
+每次原生返回先写回执；任何 CAM message/回调/清理问题均要求 review，停止后续
+CAD 读取，不把 default_unknown 解释成已确认保存或已取消。没有消息时，save 检查
+同一文档与 inventory，文件变化另列；close 仅用有界 SW 文档列表验证目标已不在
+会话中，不在自动激活的其他文档上调用 CAM。清理订阅后再次核对。
+输出区分 native_save_call_returned / native_close_call_returned 与实际只读核对；
+persistence_verified 始终 false，保存数据是否恢复必须由另一次明确 reopen 证明。
+
+此工具只能在没有已打开模态框的正常状态下预先订阅。文档没有保证晚注册能够接管
+现有窗口，也没有保证 SaveActiveDocument 在已阻塞的 CloseDoc 内可安全重入；
+它不是已有模态框的 dismiss/answer API，不使用 HWND、Windows 消息或 UI 操作。
+厂商没有在已检查页面定义 SetResponse 的响应常量。HRESULT S_OK 和 COM Invoke
+结果里的零不是 CAM 的 Yes/No 回答。当前 native lifecycle 路径已实现但未 live 资格验证。
+
+
+### 显式隔离启动与空文档会话寿命
+
+`solidworks_connect({launch_new_instance:true, visible:true})` 明确请求新实例，不能
+同时提交 process_id。启动前记录原生进程 PID 集，DispatchEx 后确认应用返回的
+实际 PID 不在该集合，再设置并回读 UserControl=true；不对原有实例设置可见性或
+用户控制。成功后 MCP 绑定这个精确 PID；后续进程仍应显式携带返回的 process_id。
+验证失败不自动关闭/终止任何进程，不回退默认实例；该显式启动 action 非幂等。
+PID-bearing ROT moniker 不是必需条件：若只有其注册等待超时，可保留已证明的新实例
+COM proxy，重新核对同一 PID/UserControl 后返回，并明确记录 moniker 未验证。
+不会为此读取 generic/class alias 或再次启动。后续 explicit-PID 连接仍回读实际 PID。
+2026 SP4 实测新实例创建与 UserControl 回读通过，但只有 generic CLSID moniker，旧版
+exact-PID-label 等待失败；随后明确 PID 的重新连接、打开与持久化检查成功。
+保留自有 proxy 的新版分支有离线回归，尚未再次执行活体启动。
+
+官方 [UserControl](https://help.solidworks.com/2023/English/api/sldworksapi/SOLIDWORKS.Interop.sldworks~SOLIDWORKS.Interop.sldworks.ISldWorks~UserControl.html)
+说明 COM 程序启动的应用可随程序退出，移交 UserControl 后继续运行且可见。
+[CloseDoc](https://help.solidworks.com/2024/english/api/sldworksapi/solidworks.interop.sldworks~solidworks.interop.sldworks.isldworks~closedoc.html)
+另明确后台会话关闭最后一个文档时可以结束应用。Visible=true 不能替代 UserControl。
+因此 CAM lifecycle close 现在只读检查 UserControl 严格为 true，否则在原生关闭前
+拒绝；不会隐式修改现有会话的控制权。
+
+2026 SP4 资格试验中，CAM CloseActiveDocument 返回后一次应用进程退出，后续文档
+枚举失败；先前 UserControl 未测量，退出原因未确定，close 尚未获得活体资格。
+独立内存 COM 回归确认 ICWApp 的 CloseActiveDocument/SaveActiveDocument 使用精确
+IID 的 vtable 方法，不经过默认 IDispatch.Invoke，不调用 Terminate。
+此 ABI 结果不能替代保存文件重新打开和实例存活的实测验证。

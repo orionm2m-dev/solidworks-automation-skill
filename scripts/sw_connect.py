@@ -3,6 +3,7 @@ SolidWorks 连接工具
 提供连接到 SolidWorks 实例的各种方法
 """
 import glob
+import math
 import os
 import re
 import tempfile
@@ -303,15 +304,22 @@ def _dispatch_rot_application(rot, moniker):
     return win32com_client.Dispatch(dispatch)
 
 
-def _connect_process(process_id, version=None):
+def _connect_process(process_id, version=None, allow_aliases=True):
     """按 PID 只附着现有应用；失败时禁止回退默认实例或启动新进程。"""
     errors = []
     for rot, moniker, name, advertised_pid in _rot_application_candidates(process_id, version):
+        if advertised_pid is None and not allow_aliases:
+            continue
         try:
             # Dispatch 接收已有 ROT 对象，不传 ProgID，因此不会激活类工厂。
             sw = _dispatch_rot_application(rot, moniker)
             actual_pid = _read_process_id(sw)
         except Exception as exc:
+            if not allow_aliases:
+                raise SolidWorksConnectionError(
+                    "SW_PROCESS_UNVERIFIED", "attach",
+                    f"无法验证 PID {process_id} 的精确 ROT 代理: {exc}",
+                ) from exc
             errors.append(f"{name}: {exc}")
             continue
         if actual_pid != process_id:
@@ -375,30 +383,148 @@ def list_solidworks_instances():
     return [instances[pid] for pid in sorted(instances)]
 
 
-def connect_solidworks(version=None, wait_seconds=5, visible=True, return_metadata=False, process_id=None):
+def _snapshot_process_ids():
+    """从操作系统取得全部 PID；不能用可能遗漏实例的 ROT 作为新进程证明。"""
+    try:
+        import win32process
+
+        values = win32process.EnumProcesses()
+        if not values or any(type(value) is not int or value < 0 for value in values):
+            raise ValueError("invalid process enumeration")
+        if os.getpid() not in values:
+            raise ValueError("process enumeration does not include this process")
+        return frozenset(values)
+    except Exception as exc:
+        raise SolidWorksConnectionError(
+            "SW_PROCESS_SNAPSHOT_FAILED", "launch_preflight", str(exc)
+        ) from exc
+
+
+def _launch_new_solidworks(prog_id, version, wait_seconds):
+    """明确激活独立实例；验证新 PID 后才修改属性，任何失败均不退出应用。"""
+    new_pid = None
+    try:
+        with _LaunchGuard():
+            known_pids = _snapshot_process_ids()
+            sw = win32com_client.DispatchEx(prog_id, clsctx=pythoncom.CLSCTX_LOCAL_SERVER)
+            _wait_until_ready(sw, wait_seconds)
+            new_pid = _read_process_id(sw)
+            if new_pid in known_pids:
+                raise SolidWorksConnectionError(
+                    "SW_NEW_PROCESS_NOT_PROVEN", "launch_verify",
+                    f"COM 返回已有 PID {new_pid}；未修改任何应用属性",
+                )
+            if new_pid not in _snapshot_process_ids():
+                raise SolidWorksConnectionError(
+                    "SW_NEW_PROCESS_NOT_PROVEN", "launch_verify",
+                    f"新 PID {new_pid} 不在操作系统进程列表中",
+                )
+            if version is not None and get_sw_version(sw)["year"] != int(version):
+                raise SolidWorksConnectionError(
+                    "SW_VERSION_MISMATCH", "launch_verify", f"新 PID {new_pid} 的版本不符合请求"
+                )
+            if _read_process_id(sw) != new_pid:
+                raise SolidWorksConnectionError(
+                    "SW_PROCESS_MISMATCH", "launch_verify", f"新 PID {new_pid} 的代理身份发生变化"
+                )
+            # 官方 UserControl 属性保证 COM 客户端结束后实例仍运行，并使其可见。
+            sw.UserControl = True
+            if get_com_member(sw, "UserControl") is not True:
+                raise SolidWorksConnectionError(
+                    "SW_USER_CONTROL_UNVERIFIED", "launch_control",
+                    f"新 PID {new_pid} 未确认 UserControl=True",
+                )
+            if _read_process_id(sw) != new_pid:
+                raise SolidWorksConnectionError(
+                    "SW_PROCESS_MISMATCH", "launch_control", f"新 PID {new_pid} 的代理身份发生变化"
+                )
+            sw.Visible = True
+            deadline = time.monotonic() + min(60.0, max(0.1, float(wait_seconds)))
+            while True:
+                try:
+                    bound, moniker = _connect_process(new_pid, version, allow_aliases=False)
+                    if _read_process_id(bound) != new_pid:
+                        raise SolidWorksConnectionError(
+                            "SW_PROCESS_MISMATCH", "launch_rot", f"新 PID {new_pid} 的 ROT 回读不一致"
+                        )
+                    if get_com_member(bound, "UserControl") is not True:
+                        raise SolidWorksConnectionError(
+                            "SW_USER_CONTROL_UNVERIFIED", "launch_rot",
+                            f"新 PID {new_pid} 的 ROT 代理未确认 UserControl=True",
+                        )
+                    return bound, moniker, new_pid
+                except SolidWorksConnectionError as exc:
+                    if exc.code != "SW_PROCESS_NOT_FOUND":
+                        raise
+                    if time.monotonic() >= deadline:
+                        # 某些版本不公开 PID moniker；仅保留已验证的新建代理，禁止改取通用别名。
+                        if _read_process_id(sw) != new_pid:
+                            raise SolidWorksConnectionError(
+                                "SW_PROCESS_MISMATCH", "launch_rot",
+                                f"新 PID {new_pid} 的保留代理身份发生变化",
+                            )
+                        if get_com_member(sw, "UserControl") is not True:
+                            raise SolidWorksConnectionError(
+                                "SW_USER_CONTROL_UNVERIFIED", "launch_rot",
+                                f"新 PID {new_pid} 的保留代理未确认 UserControl=True",
+                            )
+                        return sw, None, new_pid
+                    time.sleep(0.1)
+    except Exception as exc:
+        pid_detail = f"；返回 PID {new_pid}" if new_pid is not None else "；尚未验证 PID"
+        if isinstance(exc, SolidWorksConnectionError):
+            raise SolidWorksConnectionError(
+                exc.code, exc.stage, f"{exc}{pid_detail}；未关闭或终止任何实例"
+            ) from exc
+        raise SolidWorksConnectionError(
+            "SW_ISOLATED_LAUNCH_FAILED", "launch_new", f"{exc}{pid_detail}；未关闭或终止任何实例"
+        ) from exc
+
+
+def connect_solidworks(version=None, wait_seconds=5, visible=True, return_metadata=False,
+                       process_id=None, launch_new_instance=False):
     """
     连接到 SolidWorks 实例。
 
     参数:
         version: SolidWorks 版本年份（如 2024），None 则自动检测
         wait_seconds: 默认模式启动新实例后等待秒数
-        visible: 仅控制默认模式新启动实例的窗口
+        visible: 控制默认模式新启动实例的窗口；独立启动模式必须为 True
         return_metadata: True 时另返回连接来源与进程信息
         process_id: 可选正整数 PID；只附着此现有进程，不启动或回退。
             未传参时继承 SOLIDWORKS_MCP_PROCESS_ID，均未设置则保留默认连接行为。
+        launch_new_instance: 明确创建新实例；与 process_id 互斥，忽略旧环境绑定。
+            新 PID 验证后设置 UserControl=True 并尝试精确 PID 的 ROT 回读。
+            若仅缺少精确 moniker，则返回再次验证的原始代理并明确记录未验证 ROT。
 
     返回:
         (sw, model) 元组，model 可能为 None（无打开的文档时）；
         return_metadata=True 时返回 (sw, model, metadata)。
     """
-    process_id = _selected_process_id(process_id)
+    if type(launch_new_instance) is not bool:
+        raise ValueError("launch_new_instance must be a boolean")
+    if launch_new_instance:
+        if process_id is not None:
+            raise ValueError("launch_new_instance and process_id are mutually exclusive")
+        if visible is not True:
+            raise ValueError("launch_new_instance requires visible=True")
+        if (type(wait_seconds) not in (int, float) or not math.isfinite(wait_seconds)
+                or not 0 < wait_seconds <= 60):
+            raise ValueError("isolated launch wait_seconds must be finite and in (0, 60]")
+    else:
+        process_id = _selected_process_id(process_id)
     ensure_solidworks_installed()
     prog_id = _prog_id_for_version(version)
     sw = None
     launched_here = False
     moniker = None
 
-    if process_id is not None:
+    verified_new_pid = None
+    if launch_new_instance:
+        sw, moniker, verified_new_pid = _launch_new_solidworks(prog_id, version, wait_seconds)
+        launched_here = True
+        print(f"启动并验证独立 SolidWorks 实例（PID: {verified_new_pid}）")
+    elif process_id is not None:
         sw, moniker = _connect_process(process_id, version)
         print(f"已连接到指定 SolidWorks 实例（PID: {process_id}）")
     else:
@@ -441,11 +567,16 @@ def connect_solidworks(version=None, wait_seconds=5, visible=True, return_metada
     try:
         actual_process_id = _read_process_id(sw)
     except Exception as exc:
-        if process_id is not None:
-            raise SolidWorksConnectionError("SW_PROCESS_UNVERIFIED", "connect", str(exc)) from exc
+        if process_id is not None or verified_new_pid is not None:
+            detail = f"PID {verified_new_pid or process_id}: {exc}"
+            raise SolidWorksConnectionError("SW_PROCESS_UNVERIFIED", "connect", detail) from exc
         actual_process_id = None
     if process_id is not None and actual_process_id != process_id:
         raise SolidWorksConnectionError("SW_PROCESS_MISMATCH", "connect", "连接进程号在验证后发生变化")
+    if verified_new_pid is not None and actual_process_id != verified_new_pid:
+        raise SolidWorksConnectionError(
+            "SW_PROCESS_MISMATCH", "connect", f"新 PID {verified_new_pid} 在最终验证时发生变化"
+        )
     metadata = {
         "prog_id": prog_id,
         "requested_version": int(version) if version is not None else None,
@@ -453,6 +584,13 @@ def connect_solidworks(version=None, wait_seconds=5, visible=True, return_metada
         "process_id": actual_process_id,
         "requested_process_id": process_id,
         "moniker": moniker,
+        "moniker_verified": moniker is not None,
+        "connection_source": (
+            "exact_pid_rot" if moniker is not None else "held_verified_new_process"
+        ) if verified_new_pid is not None else ("verified_pid_rot" if moniker is not None else "legacy_default"),
+        "launch_new_instance": launch_new_instance,
+        "new_process_verified": verified_new_pid is not None,
+        "user_control": True if verified_new_pid is not None else None,
     }
     return (sw, model, metadata) if return_metadata else (sw, model)
 
