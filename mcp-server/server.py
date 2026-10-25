@@ -943,6 +943,29 @@ class SolidWorksCamTurnToolInput(SolidWorksCamOperationProfileInput):
         return self
 
 
+class SolidWorksCamQualificationContextInput(SolidWorksCamOperationProfileInput):
+    """只读真实夹持器曲线和明确选择的关联特征 THREAD 目录。"""
+    expected_document_path: str = Field(min_length=1, strict=True)
+    linked_feature_indices: list[int] = Field(min_length=1, max_length=64)
+    holder_profile: Literal["operation", "down_left", "none"]
+
+    @field_validator("linked_feature_indices", mode="before")
+    @classmethod
+    def context_requires_explicit_feature_indices(cls, value):
+        if (not isinstance(value, list) or not value or len(value) > 64 or
+                any(type(index) is not int or not 0 <= index <= 63 for index in value) or
+                len(set(value)) != len(value)):
+            raise ValueError("linked_feature_indices must be unique strict integers in [0, 63]")
+        return value
+
+    @field_validator("expected_document_path")
+    @classmethod
+    def context_requires_saved_part(cls, value):
+        if not Path(value).is_absolute() or Path(value).suffix.casefold() != ".sldprt":
+            raise ValueError("expected_document_path must be an absolute saved SLDPRT")
+        return value
+
+
 class SolidWorksCamStopObservationInput(SolidWorksCamJobStatusInput):
     """明确知道停止订阅并不取消原生 CAM 计算。"""
     acknowledge_native_not_cancelled: Literal[True]
@@ -2575,6 +2598,22 @@ def solidworks_cam_configure_turn_tool(params: SolidWorksCamTurnToolInput) -> st
                                          if params.allowed_affected_operations is not None else None),
             receipt_path=params.receipt_path, qualification_only=params.qualification_only,
             message_policy=params.message_policy)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_inspect_qualification_context", title="Inspect Native CAM Holder and Thread Qualification Context",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_inspect_qualification_context(params: SolidWorksCamQualificationContextInput) -> str:
+    """只读真实夹持器轮廓和 THREAD 默认名称/ID，不创建操作或假定完整螺纹几何。"""
+    def op():
+        from scripts.sw_cam_qualification_context import inspect_qualification_context
+        sw, registration = _cam_target(params)
+        return inspect_qualification_context(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"),
+            expected_document_path=params.expected_document_path,
+            setup_index=params.setup_index, operation_index=params.operation_index,
+            expected_operation_type=params.expected_operation_type,
+            linked_feature_indices=params.linked_feature_indices, holder_profile=params.holder_profile)
     return _run_locked(op, params.response_format)
 
 

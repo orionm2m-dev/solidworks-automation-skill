@@ -542,3 +542,45 @@ SOLIDWORKS CAM 2026 SP4 的两份独立工作副本已完成五次单字段原�
 分别取得 79 和 29 条记录；这不是本 setter 自动执行的步骤。该 live 资格仅覆盖
 上述 CAM 定义、持久化与选定刀路，不证明真实采购刀具、刀柄形状/装夹适配、
 完整切削包络、全部加工结果或生产工艺。Mock/schema 与实际 CAD 观察分开记录。
+
+## 只读加工资格上下文
+
+`solidworks_cam_inspect_qualification_context` 读取明确选定操作的关联特征、
+THREAD 默认目录和原生夹持器轮廓。必需参数为精确 saved-part path / add-in、
+setup_index、operation_index、expected_operation_type、明确的零基
+`linked_feature_indices`，以及 `holder_profile`：
+`operation` 调用 GetHolderProfile(operation)，`down_left` 调用
+GetHolderProfileInDownLeftOrientation(operation)，`none` 跳过夹持器，
+只读所选特征和目录。目录和 profile 先读取，因此后续夹持器读取失败时已有证据保留。
+
+目录固定调用 ICWTurnFeature.IGetAllDefaultOperations(12)；12 是 THREAD 枚举。
+返回的 `converted_result_shape` 保存 comtypes 已转换后的 Python 类型、结构和
+原始字符串，不伪称保留 VARIANT vartype、SAFEARRAY bounds 或 rank。仅对实际
+返回的标量 BSTR 或一维纯 BSTR list/tuple 调用
+GetTdbIdForDefaultOperation(12, exact_name)，不拆分/修剪字符串，不猜测名称。
+最多累计 64 个名称，每个 1000 字符；其他形状或超限结果明确未解析，不调用
+lookup。保留实际 LONG ID（包括零/负数），因为失败 sentinel 未被文档说明；
+不把目录存在或返回某个 ID 当作 feature 可安全加工完整螺纹的证明。
+
+夹持器路径使用 ICWSegChain、ICWCurve、ICWArc、ICWPosition 的真实数值。
+GetCurveAtIndex 的入参是 INT*，必须传 c_int 指针；零基来自 vendor
+“Features and Setups” sample。最多读取 32 条 chain、合计 512 条 curve。
+直线保存起终点；圆弧保存起点、中点、终点、圆心、半径及未解释的 sense。
+其他曲线保留原生端点并明确专用参数不完整，不将 spline/circle 伪装成直线。
+实际方法均按 TLB 的 method invocation 调用，不能二次执行返回 COM 对象的默认成员。
+
+输出是 native profile 原始三维数值，没有自动偏置、轴旋转、单位换算或实体挤出。
+原生 operation/down_left 选择也不证明 world/FCS 变换；profile 不是已经验证的
+完整夹持器实体或碰撞结论。公开 CreateSTL(path) 为另一项 HRESULT-only API，
+本工具不在错误后自动尝试它，也不写任何导出文件。发生原生异常时立即停止，
+保留已读数据和失败阶段，正常结束后检查文档及操作清单前后一致。
+始终 may_continue=false，thread_process_qualified=false，holder_fit_verified=false。
+不调用 GetCWObjectFromID、不创建 THREAD 操作、不写参数、不运行 GTP、不保存。
+新增读取路径已在 SOLIDWORKS CAM 2026 SP4 的两份独立工作副本上确认：
+operation 夹持器 profile 分别返回一条/两条 chain，两例均为七条 curve，
+读取结束后文档与操作清单不变。THREAD 默认目录均实际返回 tuple 中的
+单个 BSTR “Default”，相应 lookup 原始 ID 为 28；此值是观察结果，不是工具的
+硬编码默认值。一个被读 feature 仅是槽口轮廓，另一个是包含多个直径的完整
+外形；目录返回名称/ID 不证明这些 feature 本身就是正确的螺纹区段。
+读取成功只证明原生曲线和目录路径可用，不证明夹持器实体、碰撞安全、
+M60 区段、完整螺纹几何或生产工艺。Mock/schema/指针 ABI 与实际 CAD 观察分开记录。
