@@ -34,6 +34,8 @@ REQUIRED_TOOLS = {
     "solidworks_cam_inspect_operation_profile",
     "solidworks_cam_configure_turn_tool",
     "solidworks_cam_inspect_qualification_context",
+    "solidworks_cam_qualify_thread_operation",
+    "solidworks_cam_inspect_thread_operation",
     "solidworks_cam_save_prompt",
     "solidworks_cam_run_simulation",
     "solidworks_cam_preview_simulation",

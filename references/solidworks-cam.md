@@ -584,3 +584,74 @@ operation 夹持器 profile 分别返回一条/两条 chain，两例均为七条
 外形；目录返回名称/ID 不证明这些 feature 本身就是正确的螺纹区段。
 读取成功只证明原生曲线和目录路径可用，不证明夹持器实体、碰撞安全、
 M60 区段、完整螺纹几何或生产工艺。Mock/schema/指针 ABI 与实际 CAD 观察分开记录。
+
+## THREAD 默认操作插入资格验证
+
+`solidworks_cam_qualify_thread_operation` 用于新保存的独立 CAM 工作副本。
+prepare 只读；apply 仅调用一次
+`ICWTurnFeature.InsertOperation(12, observed_default_id, verified_after_operation)`。
+返回是 IDispatch 操作对象，不是 BOOL。本工具没有螺纹参数 setter，不生成刀路，
+不保存模型，不输出 NC，不调用 GetFCS/GetIsLicensed 或逆向对象查询。
+
+共同参数为 exact saved-part path/add-in、setup_index、operation_index、
+expected_operation_type（指插入位置之前的已有操作）、linked_feature_index、
+qualification_only=true、message_policy=vendor_default。所选关联 feature 可以是完整
+外形；这不意味着它已经是正确的 M60 螺纹区段。prepare 返回该 feature 原始
+profile、正向 native ID、实际 THREAD 名称/ID 目录、完整操作清单及已保存文件 SHA-256。
+每个已有操作的 ID、类型、关联 feature ID 和生成记录都纳入状态；当前 document ID
+不能跨重开直接重用，必须重新 prepare。
+
+apply 必须提供 prepare 的 expected_state_sha256、实际返回的 default_name、
+expected_default_id，以及新绝对 JSON receipt_path。名称/ID 必须与该 feature
+实际目录精确一致；不得写死 ID=28 或默认 ID=0。客户端资格范围只允许正 LONG ID，
+这不是在声明厂商已定义零/负值为失败 sentinel。已有回执防止不确定请求重放。
+调用前落盘 intent；返回事实先落盘，再检查恰好新增一个正 ID、类型12的操作，
+位于指定已有操作之后，并只关联指定 feature。其他操作顺序、类型、关联特征、
+生成标志/记录数、selected profile、stock/setup 清单和已保存文件哈希必须保持一致；
+允许内存文档变脏，磁盘文件不能被工具隐式保存。
+
+新操作及只读恢复目前仅调用 29 个声明成员中已实际确认的 16 个：12 个
+DOUBLE 方法（pitch/actual pitch、每刀及最后一刀深度、起终长度、进入/退出量角）
+与 4 个 LONG/enum 方法（GetNumFinalPassValue、GetNumStartThreadsValue、
+GetLeadinTypeValue、GetLeadoutTypeValue）。GetMinZLimit 在一次独立副本的
+实际插入后读取中返回 CAM SERVERFAULT 0x80010105；随后只读恢复在确认
+同一正 ID、类型12、无刀路及 16 项标量后，GetMaxZTurnMethod 再返回该故障。
+两次历史回执保留，不重放插入，也不逐个尝试剩余未知成员。
+这两个实际失败项记为 observed_CAM_SERVERFAULT；其余 11 个未被实际验证的
+声明项记为 untested_disabled_after_CAM_SERVERFAULT。全部 13 项均不调用，
+不将未测试项说成已失败。参数完整性始终为 false；unavailable_getters /
+metadata_limits 保留具体原因，不用零值代替未知值。
+第二次恢复再次读完 16 个标量后，IGetTool 返回另一 HRESULT -2147220990。
+这不证明工具不存在。恢复及新操作参数读取均去掉 IGetAllFeatures、关联 profile、
+IGetTool 和刀具/夹持器整个后续分支，ancillary_metadata 明确未获资格且未读取。
+不会以未知工具状态作为后续 getter 探测的理由。读回范围严格为原生 ID、类型、
+无刀路标志与这 16 个标量；严格校验 BOOL、LONG、有限数值及 OUT 形状。
+首次原生失败停止后续读取并保留部分结果。writer 原有插入前后操作/关联 ID
+清单核对保留，但这不表示已读新 THREAD 的完整 profile 或刀具定义。
+
+SOLIDWORKS CAM 2026 SP4 的一次独立副本试验确认 InsertOperation 返回了新
+正 ID、类型12、未生成刀路的操作，恰好增加一个操作的核对通过；后续上述 getter
+故障使整个写入路径仅获部分资格验证，不能重放插入。已读默认 pitch=0.4、
+actual pitch=0 等原始值不是 M60 配置。没有自动保存、GTP 或 NC。
+
+`solidworks_cam_inspect_thread_operation` 单独恢复已有操作的只读参数。
+必需 exact saved-part path/add-in、setup_index、operation_index、
+expected_operation_type=12、正 ULONG expected_thread_native_id；没有 prepare SHA、
+插入目录或 mutation 参数。允许同一已保存路径当前存在未保存的修改，
+先核对原生操作 ID、类型和无刀路标志，再读 16 个已确认的标量；不遍历
+关联 profile、工具或夹持器，其余 13 个未获资格参数成员也不调用。结束时核对原生 ID、文档、操作清单及磁盘文件哈希均不变，
+不插入、不保存、不生成；发生首次原生异常即停止并保留已读取数据。
+成功仍返回 review_required、may_continue=false 与 parameter_metadata_complete=false。
+
+这些工具不表示 M60 已配置。完整螺纹深度、大/小径、ISO牙型、旋向、公差、
+正确螺纹区段、参数单位以及物理刀具/退出安全仍未验证。整段 OD profile 不能
+因目录包含 THREAD 而直接用于计算螺纹。Mock/schema 与实际 CAD 观察分开记录。
+
+最终的有界恢复已在同一 SOLIDWORKS CAM 2026 SP4 资格副本上实际通过：
+精确正 ID / 类型12 / 未生成刀路一致，16 个标量读回成功，文档、操作清单和
+已保存文件哈希均保持不变。返回 review_required 是元数据不完整的明确门禁，
+不是 M60 已配置或物理工艺通过。随后调用方使用独立的常规保存工具保存检查点；
+插入/读取工具本身仍不保存，此检查点尚未通过关闭重开验证。
+运行环境为 Windows / Python 3.10.11；116 个 core mock 测试和 108 个 MCP
+schema/route 测试覆盖边界与禁用调用，协议列表确认 101 个工具可见。
+这些测试数量与实际原生验证范围分开记录，不声明其他 SOLIDWORKS 版本已验证。

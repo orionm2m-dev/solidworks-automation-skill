@@ -966,6 +966,62 @@ class SolidWorksCamQualificationContextInput(SolidWorksCamOperationProfileInput)
         return value
 
 
+class SolidWorksCamThreadQualificationInput(SolidWorksCamOperationProfileInput):
+    """在独立已保存工作副本中准备或插入一项 THREAD，仅读取默认参数。"""
+    expected_document_path: str = Field(min_length=1, strict=True)
+    linked_feature_index: int = Field(ge=0, le=63, strict=True)
+    action: Literal["prepare", "apply"] = "prepare"
+    qualification_only: Literal[True]
+    message_policy: Literal["vendor_default"]
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    default_name: Optional[str] = Field(default=None, min_length=1, max_length=1000, strict=True)
+    expected_default_id: Optional[int] = Field(default=None, gt=0, le=2147483647, strict=True)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+
+    @field_validator("qualification_only", mode="before")
+    @classmethod
+    def thread_requires_boolean(cls, value):
+        if type(value) is not bool:
+            raise ValueError("qualification_only must be a JSON boolean")
+        return value
+
+    @field_validator("expected_document_path")
+    @classmethod
+    def thread_requires_saved_part(cls, value):
+        if not Path(value).is_absolute() or Path(value).suffix.casefold() != ".sldprt":
+            raise ValueError("expected_document_path must be an absolute saved SLDPRT")
+        return value
+
+    @model_validator(mode="after")
+    def thread_action_contract(self):
+        insertion = (self.expected_state_sha256, self.default_name, self.expected_default_id, self.receipt_path)
+        if self.action == "prepare":
+            if any(value is not None for value in insertion):
+                raise ValueError("prepare cannot accept insertion inputs or a receipt")
+            return self
+        if any(value is None for value in insertion):
+            raise ValueError("apply requires prepared state, exact observed default name/ID and a new receipt")
+        path = Path(self.receipt_path)
+        if (not path.is_absolute() or path.suffix.casefold() != ".json" or not path.parent.is_dir()
+                or path.exists() or path.is_symlink()):
+            raise ValueError("receipt_path must be a new absolute JSON file with an existing parent")
+        return self
+
+
+class SolidWorksCamThreadInspectionInput(SolidWorksCamOperationProfileInput):
+    """只读已有 THREAD，允许当前未保存修改，不重复插入或调用故障 Z getters。"""
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_operation_type: int = Field(ge=12, le=12, strict=True)
+    expected_thread_native_id: int = Field(gt=0, le=4294967295, strict=True)
+
+    @field_validator("expected_document_path")
+    @classmethod
+    def thread_inspection_requires_saved_part(cls, value):
+        if not Path(value).is_absolute() or Path(value).suffix.casefold() != ".sldprt":
+            raise ValueError("expected_document_path must be an absolute saved SLDPRT")
+        return value
+
+
 class SolidWorksCamStopObservationInput(SolidWorksCamJobStatusInput):
     """明确知道停止订阅并不取消原生 CAM 计算。"""
     acknowledge_native_not_cancelled: Literal[True]
@@ -2614,6 +2670,39 @@ def solidworks_cam_inspect_qualification_context(params: SolidWorksCamQualificat
             setup_index=params.setup_index, operation_index=params.operation_index,
             expected_operation_type=params.expected_operation_type,
             linked_feature_indices=params.linked_feature_indices, holder_profile=params.holder_profile)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_qualify_thread_operation", title="Qualify One Native THREAD Operation Insertion",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_qualify_thread_operation(params: SolidWorksCamThreadQualificationInput) -> str:
+    """prepare 只读；apply 仅插入一项 THREAD 并读取默认元数据，不配置 M60、不生成或保存。"""
+    def op():
+        from scripts.sw_cam_thread import qualify_thread_operation
+        sw, registration = _cam_target(params)
+        return qualify_thread_operation(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"),
+            expected_document_path=params.expected_document_path, setup_index=params.setup_index,
+            operation_index=params.operation_index, expected_operation_type=params.expected_operation_type,
+            linked_feature_index=params.linked_feature_index, action=params.action,
+            qualification_only=params.qualification_only, message_policy=params.message_policy,
+            expected_state_sha256=params.expected_state_sha256, default_name=params.default_name,
+            expected_default_id=params.expected_default_id, receipt_path=params.receipt_path)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_inspect_thread_operation", title="Inspect an Existing Native THREAD Operation",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_inspect_thread_operation(params: SolidWorksCamThreadInspectionInput) -> str:
+    """按精确文档、类型12和 native ID 只读恢复参数；不插入、不保存、不生成。"""
+    def op():
+        from scripts.sw_cam_thread import inspect_thread_operation
+        sw, registration = _cam_target(params)
+        return inspect_thread_operation(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"),
+            expected_document_path=params.expected_document_path, setup_index=params.setup_index,
+            operation_index=params.operation_index, expected_operation_type=params.expected_operation_type,
+            expected_thread_native_id=params.expected_thread_native_id)
     return _run_locked(op, params.response_format)
 
 
