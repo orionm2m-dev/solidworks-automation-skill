@@ -877,6 +877,72 @@ class SolidWorksCamOperationProfileInput(SolidWorksCamOperationInput):
     expected_operation_type: int = Field(ge=1, le=16, strict=True)
 
 
+class SolidWorksCamToolReferenceInput(BaseInput):
+    """精确零基操作引用，包括预期原生类型。"""
+    setup_index: int = Field(ge=0, le=511, strict=True)
+    operation_index: int = Field(ge=0, le=511, strict=True)
+    expected_operation_type: int = Field(ge=1, le=16, strict=True)
+
+
+class SolidWorksCamTurnToolInput(SolidWorksCamOperationProfileInput):
+    """只读准备或单字段定义车削刀片；共享操作必须全部明确允许。"""
+    expected_document_path: str = Field(min_length=1, strict=True)
+    action: Literal["prepare", "apply"] = "prepare"
+    field: Literal["NoseRadius", "Width", "Radius1", "Radius2", "Thickness", "InscribedCircle"]
+    value_native: Optional[float] = Field(default=None, strict=True, allow_inf_nan=False)
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    allowed_affected_operations: Optional[list[SolidWorksCamToolReferenceInput]] = Field(default=None, min_length=1, max_length=512)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    qualification_only: Literal[True]
+    message_policy: Literal["vendor_default"]
+
+    @field_validator("qualification_only", mode="before")
+    @classmethod
+    def turn_tool_requires_boolean(cls, value):
+        if type(value) is not bool:
+            raise ValueError("qualification_only must be a JSON boolean")
+        return value
+
+    @field_validator("value_native", mode="before")
+    @classmethod
+    def turn_tool_requires_json_number(cls, value):
+        if value is not None and type(value) not in {int, float}:
+            raise ValueError("value_native must be a finite JSON number")
+        return value
+
+    @field_validator("expected_document_path")
+    @classmethod
+    def turn_tool_requires_saved_part(cls, value):
+        if not Path(value).is_absolute() or Path(value).suffix.casefold() != ".sldprt":
+            raise ValueError("expected_document_path must be an absolute saved SLDPRT")
+        return value
+
+    @model_validator(mode="after")
+    def turn_tool_action_contract(self):
+        mutation = (self.value_native, self.expected_state_sha256,
+                    self.allowed_affected_operations, self.receipt_path)
+        if self.action == "prepare":
+            if any(value is not None for value in mutation):
+                raise ValueError("prepare cannot accept mutation inputs or receipt_path")
+            return self
+        if any(value is None for value in mutation):
+            raise ValueError("apply requires value, state SHA-256, all affected references and new receipt")
+        if self.value_native < 0 or (self.field in {"Width", "Thickness", "InscribedCircle"} and self.value_native == 0):
+            raise ValueError("Radii must be nonnegative; Width, Thickness and InscribedCircle must be positive")
+        refs = self.allowed_affected_operations
+        keys = [(item.setup_index, item.operation_index) for item in refs]
+        if len(set(keys)) != len(keys):
+            raise ValueError("Affected operation references must be unique")
+        if not any((item.setup_index, item.operation_index, item.expected_operation_type) ==
+                   (self.setup_index, self.operation_index, self.expected_operation_type) for item in refs):
+            raise ValueError("The selected exact operation must be explicitly allowed")
+        path = Path(self.receipt_path)
+        if (not path.is_absolute() or path.suffix.casefold() != ".json" or not path.parent.is_dir()
+                or path.exists() or path.is_symlink()):
+            raise ValueError("receipt_path must be a new absolute JSON file with an existing parent")
+        return self
+
+
 class SolidWorksCamStopObservationInput(SolidWorksCamJobStatusInput):
     """明确知道停止订阅并不取消原生 CAM 计算。"""
     acknowledge_native_not_cancelled: Literal[True]
@@ -2488,6 +2554,27 @@ def solidworks_cam_inspect_operation_profile(params: SolidWorksCamOperationProfi
             str(Path(registration["addin_path"]).parent / "camworks.tlb"),
             setup_index=params.setup_index, operation_index=params.operation_index,
             expected_operation_type=params.expected_operation_type)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_configure_turn_tool", title="Prepare or Define One Native Turning Insert Dimension",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_configure_turn_tool(params: SolidWorksCamTurnToolInput) -> str:
+    """prepare 只读；apply 仅定义一个刀片字段并核对全部共享引用，不生成、不保存。"""
+    def op():
+        from scripts.sw_cam_turn_tool import configure_turn_tool
+        sw, registration = _cam_target(params)
+        return configure_turn_tool(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"),
+            expected_document_path=params.expected_document_path,
+            setup_index=params.setup_index, operation_index=params.operation_index,
+            expected_operation_type=params.expected_operation_type, action=params.action,
+            field=params.field, value_native=params.value_native,
+            expected_state_sha256=params.expected_state_sha256,
+            allowed_affected_operations=([item.model_dump() for item in params.allowed_affected_operations]
+                                         if params.allowed_affected_operations is not None else None),
+            receipt_path=params.receipt_path, qualification_only=params.qualification_only,
+            message_policy=params.message_policy)
     return _run_locked(op, params.response_format)
 
 

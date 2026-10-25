@@ -471,3 +471,74 @@ CW_TURN_TOOL_ORIENT_LEFT_UP。枚举名称本身不证明刀具坐标相对模�
 类型库中的车削螺纹操作枚举为 `CW_TURN_OP_THREAD=12`。
 没有这种操作时，不得把粗车或切槽结果称为已加工螺纹。
 本阶段没有新增螺纹操作 writer。
+
+## 单字段车削刀片定义（资格验证）
+
+`solidworks_cam_configure_turn_tool` 只操作已绑定 PID 中明确指定、已保存且干净的
+SLDPRT 工作副本。它具有两个动作：`prepare` 只读；`apply` 只执行一次
+`ICWTurnTool` property put，不生成刀路、不保存、不创建工具、不写 TechDB。
+
+共同输入为 `addin_clsid`、精确 `expected_document_path`、
+`setup_index`、`operation_index`、`expected_operation_type`、`field`、
+`qualification_only=true`、`message_policy="vendor_default"`。
+限定字段为 NoseRadius、Width、Radius1、Radius2、Thickness、InscribedCircle。
+类型库声明 NoseRadius 不适用于 GROOVE/CIRCULAR/USER_DEFINED；Width 仅用于
+GROOVE/THREAD；Radius1/Radius2 仅用于 GROOVE；Thickness 用于已知插片类型。
+本工具将 InscribedCircle 写入进一步限定为 DIAMOND。宽度、厚度及内切圆须
+为正数，半径允许非负有限 JSON 数值；不自行推断单位或修改 InsertType/holder。
+
+准备结果包含 document（含 needs_save）、完整操作清单、关联旧 profile、旧
+tool/holder、station ID、全部受影响操作及 `state_sha256`。单独的
+`profile_sha256` 与 `tool_sha256` 用于审查，完整 state 摘要涵盖这些原始数据。
+共享关系由 `ICWTool.GetToolStation` →
+`ICWToolStation.OperationsUsingThisTool` 和遍历所有操作的原生 CAM document
+object ID 交叉核对。`ICWDoc3.GetCWObjectID(object)`（DISPID 33）返回
+(ULONG objectID, BOOL status)，每个值必须满足严格 status=true 且 ID>0。
+类型库明确合法 ID 大于零。选定工具经站点 GetTool 再取 ID，必须一致；
+额外诊断 `GetCWObjectFromID(5, id)`（DISPID 34，CW_OBJ_TOOL=5）使用
+已核对的 enum、ULONG 参数顺序。在一次 prepare 中，正向 tool ID 与站点 ID 相同，
+该逆向查询仍返回 false；此值明确标为 native_returned_false，不使用其 OUT 对象，
+不把逆向查询称为成功。逆向查询不是修改现有操作所持工具的必要接口；若返回
+true，则其对象、ID 及 ToolType 仍须有效且一致。OperationsUsingThisTool 的 TLB invocation kind 是 propget；
+必须直接读取属性，不能因返回的 COM 集合可调用而再次执行其默认 Item。
+usage 中的操作 ID 必须与完整文档
+遍历得到的受影响引用相同，不得缺失、重复或出现未知操作。对每个同 ID 工具
+wrapper 均独立读取适用尺寸与类型，不一致即阻止修改或判定回读失败。
+不同 wrapper 的 IUnknown 身份已在实际 prepare 中观察到不相等，因此该比较
+只保留作诊断，不再误认为内部 CAM tool identity。可变名称、TechDBID 或仅
+station ID 也不作为对象身份，不用 vendor 内部指针。
+GetStationId 的声明只要求 BSTR；一次原生 prepare 返回空字符串，文档没有非空保证。
+空字符串保留为实际值，不削弱原生 CAM ID 和完整 usage 交叉检查；非字符串会报
+CAM_TOOL_STATION_ID_TYPE_INVALID。失败报告保留读取阶段、原始 station ID 和此前的
+文档、清单、分组及 profile/tool 字段，而非丢弃未完成的快照。
+先读取通用 ICWTool.ToolType，只有类型 15 才查询 ICWTurnTool；选定工具必须是
+此类型。钻头等其他工具只保留身份、类型及分组，不读取其专用尺寸，明确标为
+non_turn_dimensions_not_read；不把车床操作清单误认为全是车削刀片。
+这些 station/usage/object-ID getter 由 CAM 2026 TLB 声明，其本机返回形状和
+跨 wrapper 一致性已在下述两个独立工作副本中确认。ID 仅用于当前 CAM document 快照；
+文档未保证保存/重开后的持久性，每次重开必须重新 prepare。失败时保留每次
+object-ID 读取的 BOOL/ID、阶段和 round-trip 证据，未知值绝不转成写入授权。
+
+apply 还必须提供准备结果的 `expected_state_sha256`、新的 `value_native`、
+完整且唯一的 `allowed_affected_operations`（每项含上述三个操作索引/类型字段），
+以及新的绝对 JSON `receipt_path`。所有且仅有共享该工具的操作必须明确允许；
+任一受影响操作已有生成刀路则阻止修改。prepare 不接受这些 mutation 输入或回执。
+无变化请求、旧状态不匹配、不适用字段、脏文档或已有回执均在写入前被拒绝。
+
+类型库的 setter 是 HRESULT-only propput DOUBLE，没有独立成功 BOOL。
+调用前写入 durable intent，正常返回后先落盘返回事实，再读取结果。没有发现
+这些接口必须使用 Modified/Update/Commit 的文档依据，因此不猜测调用。
+订阅 CAM 消息期间执行一处属性赋值，随后及 Unadvise 后独立重读全部操作引用、
+profile、tool/holder 和可写尺寸，要求只有指定字段及派生显示文本/dirty 状态变化。
+任何消息、异常或超出范围的变化都会阻止后续处理；不自动重试或回滚。
+成功仅返回 CAM 定义已回读，`may_continue=false`、`physical_tool_qualified=false`；
+真实刀具、刀柄适配、方向、余量及保存后持久化必须另外审查。每次后续修改前
+须由调用方明确保存工作副本并重新 prepare。
+
+SOLIDWORKS CAM 2026 SP4 的两份独立工作副本已完成五次单字段原生修改：
+一个 DIAMOND 刀片的 NoseRadius、InscribedCircle、Thickness，以及一个 GROOVE
+刀片的 Radius1、Radius2。每次均确认共享操作引用和完整回读，显式保存/关闭/
+重开后参数仍相同。调用方另行对每份副本的一项选定精加工操作生成刀路，
+分别取得 79 和 29 条记录；这不是本 setter 自动执行的步骤。该 live 资格仅覆盖
+上述 CAM 定义、持久化与选定刀路，不证明真实采购刀具、刀柄形状/装夹适配、
+完整切削包络、全部加工结果或生产工艺。Mock/schema 与实际 CAD 观察分开记录。
