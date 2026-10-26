@@ -181,7 +181,7 @@ def describe_convexity(edge):
     return "concave" if dot > 0 else "convex"
 
 
-def iter_model_edges(model, body_index=None):
+def iter_model_edges(model, body_index=None, include_descriptions=True):
     """
     遍历模型所有实体边线。
 
@@ -194,8 +194,14 @@ def iter_model_edges(model, body_index=None):
     """
     descriptors = []
     errors = []
+    reader = get_com_member
+    if not include_descriptions:
+        try:
+            from .sw_cam_feature_sketch import _call_method as reader
+        except ImportError:
+            from sw_cam_feature_sketch import _call_method as reader
     try:
-        bodies = list(get_com_member(model, "GetBodies2", 0, False) or [])
+        bodies = list(reader(model, "GetBodies2", 0, False) or [])
     except Exception as exc:
         return descriptors, [f"读取实体列表失败: {exc}"]
 
@@ -203,12 +209,13 @@ def iter_model_edges(model, body_index=None):
         if body_index is not None and index != body_index:
             continue
         try:
-            edges = list(get_com_member(body, "GetEdges") or [])
+            edges = list(reader(body, "GetEdges") or [])
         except Exception as exc:
             errors.append(f"实体 {index} 读取边线失败: {exc}")
             continue
         for edge_index, edge in enumerate(edges):
-            descriptor = describe_edge(edge, index=len(descriptors))
+            descriptor = (describe_edge(edge, index=len(descriptors)) if include_descriptions
+                else {"edge": edge, "index": len(descriptors), "errors": []})
             descriptor["body_index"] = index
             descriptor["edge_index"] = edge_index
             descriptors.append(descriptor)

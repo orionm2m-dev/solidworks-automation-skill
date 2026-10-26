@@ -717,6 +717,80 @@ CreateTurnFeature 参数候选 1 返回空对象，但随后独立 inspect 确�
 
 ## CAM 原生文档保存与关闭
 
+`solidworks_cam_export_mill_feature_geometry` is an explicit single-feature MILL
+qualification branch, preserving the existing TURN exporter. One request exports
+one target, original-stock or WIP kind through the existing `ICWMachine5` methods.
+The scope remains the entire machine/all setups; it is not a selected-operation
+or current simulation-frame export. Exact PID, clean saved source SHA, feature ID,
+ordered operation/generated IDs and actual record counts are captured under one
+active event session; export must leave this state unchanged. The export interface
+is queried in prepare. A new local native output directory, one-use receipt and
+single dispatch prevent automatic replay. No GTP, GOP, AFR, simulation, tool/stock
+editing or model save is included; cleanup uses only SOLIDWORKS/file checks.
+Native BOOL true plus bounded nonempty STL bytes/hash qualify file output only.
+Mesh validity, units/frame, initial stock occupancy and actual removed geometry
+must be independently established before interpreting pocket depth. Roughing-only
+WIP may include remaining allowance. Prior TURN WIP success does not qualify MILL
+WIP availability without simulation; failed/unchanged output has no automatic
+preview or generation fallback. Native MILL export remains a pilot.
+
+`solidworks_cam_qualify_mill_operation_toolpath` is a separate selected-operation
+MILL qualification pilot. It binds the exact PID, saved source SHA, selected
+OPEN_POCKET feature ID, operation native ID/type and complete captured state.
+Inspect first reports the assigned generic `ICWTool` native ID, `IsMillTool`,
+`ToolType`, `CutDiameter` and `Protrusion`; dimensions remain raw, with units,
+holder geometry and manufacturing suitability unqualified. No subtype-specific
+insert dimensions are read. Prepare/apply requires a clean saved document and
+selected generated=false with no calculated records. One typed
+`ICWMillOperation.GenerateToolpath()` is permitted. The installed HRESULT/no-OUT
+binding was independently checked through a local in-memory COM object (int0),
+not native CAM execution. Native return alone is not completion: readback must
+observe selected generated=true and positive actual record counts, with the
+other operation rows, selected definition/tool, feature/configuration and saved
+file unchanged. All CAM reads are event-subscribed. Durable capture phases and
+pending-dispatch intent survive an interrupted client; unknown/partial output
+never permits automatic GTP replay, cancellation claims, save or fallback.
+This does not qualify the motion geometry, depth, units, stock/material/tool
+process or persistence. Generic tool reading and selected MILL GTP remain
+native pilots until their separate receipts are obtained.
+
+`solidworks_cam_qualify_mill_feature_operation_plan` is a separate disposable MILL
+pilot for one exact unsuppressed OPEN_POCKET (volume type 6). Inspect/prepare/apply
+bind the saved file SHA, PID, feature ID and full captured state. One
+`ICWFeature.GenerateOpPlan(1)` may add 1–32 operations, each linked only to that
+feature; every operation ID/type/suppression flag, generated flag and bounded
+actual toolpath record counts are read back. No GTP, AFR, stock/tool edits or save
+is included. The HRESULT/no-OUT binding was independently checked with the exact
+installed interface and a local in-memory COM object (strict integer S_OK=0).
+Native MILL GOP, operation-interface QI and toolpath enumeration when the generated
+flag is false remain live qualifications: a failed getter stops once, retaining
+partial diagnostics, without inventing empty counts or replaying GOP. Zero-record
+placeholder containers are permitted; only observed zero counts support the
+no-calculated-records claim. Raw after-state is persisted before delta validation.
+
+`machine_kind="mill_single_feature_qualification"` adds a separate lifecycle scope
+for the same exact feature and an explicit ordered list of 0–32 operation native
+IDs, all solely linked to it. Save and close remain separate guarded native calls;
+all CAM reads are subscribed and post-cleanup checks use only SOLIDWORKS/file data.
+The default TURN and zero-operation `mill_qualification` scopes are unchanged.
+These software checks do not qualify whole RAM BRep invariance, physical pocket
+depth, numeric units, material/tool choice, generated motion or reopen persistence.
+GTP and WIP are subsequent separate qualifications after actual GOP operations
+are known; generic WIP export has whole-machine/all-setups scope.
+
+Explicit `machine_kind="mill_qualification"` adds a separate qualification-only
+save/close path, requiring exact `process_id` and
+`acknowledge_qualification_copy=true`. It accepts native MILL type 1 with zero
+operations and bounded setup/feature counts. All CAM captures run under one active
+message subscription; after disconnect only SOLIDWORKS document metadata and the
+saved file hash are checked. Save checks unchanged captured machine/catalogue,
+setup axes/origins, material and feature counts, plus `needs_save=false`; this is
+not complete feature-geometry or reopen/persistence proof. Close is separate and
+requires a clean document and `UserControl=true`. One-use receipt/state guards
+prevent automatic replay. The default TURN path is unchanged. The installed
+`ICWApp` HRESULT/no-OUT save/close binding was checked with an in-memory COM object
+(strict integer S_OK=0); native MILL save/close remains pending qualification.
+
 `solidworks_cam_document_lifecycle` 使用已明确绑定的 PID 和完整 saved-part 路径，
 分别提供 prepare、save、close 三个 action。prepare 只读文档、CAM inventory 和
 磁盘 SHA-256，返回整个状态的 state_sha256。save/close 各自要求这个精确状态哈希
@@ -830,3 +904,359 @@ feature 完成 prepare 和一次 apply，立即 ID/名称回读及订阅内完�
 operations，以及旧操作 ID/关联/刀路记录数保持不变；未比较刀路坐标。未运行 GOP
 或 GTP，未配置 M60 Thread Condition、螺距或深度，不代表完整螺纹加工或生产放行。
 这个持久化证明属于已实测副本；attribute apply 本身仍不保存、不声明持久化。
+
+
+### 单特征 Thread 操作计划（离线验证，原生试运行待验证）
+
+`solidworks_cam_qualify_feature_operation_plan` 提供 `inspect`、`prepare`、`apply`。
+输入精确已保存零件、现有绑定进程、特征 setup/正原生 ID/类型，以及预期特征数、操作数和操作 setup 数。
+本阶段只接受实际目录名 `Thread`；动态解析其 ID，不把 TechDB 表 ID 当作 CAM 属性 ID。
+`prepare` 要求干净零件、唯一非退化单线特征、现有策略与目录匹配、该特征没有关联操作。
+`apply` 绑定准备快照 SHA 和全新 JSON 回执，在事件订阅内只调用一次
+`ICWFeature.GenerateOpPlan(CW_GOP_RETAIN=1)`（IID `{682686E4-3685-11D6-A9AA-00062999E55F}`、DISPID 3、LONG 输入、无 OUT）。
+方法返回只记录调用已返回；验证必须发现恰好一个新的正 ID、类型 12、只关联目标特征且无刀路。
+其他特征、文件、模型、旧操作顺序/关联和刀路记录数必须保持；完整刀路坐标不在本验证范围内。
+原始质量属性保留，只有质量哈希采用 11 位有效数字及独立 1e-10 相对比较；其他字段精确比较。
+
+结果始终需要人工/上层复核，不证明 Thread Condition、完整深度、工具、单位、M60 参数或持久化。
+不自动保存、GTP、重试或回退。事件、异常或非预期增量之后停止；`inspect` 允许在脏模型和已有关联操作上读取当前状态，
+使用当前准确计数，不重放 GOP。回执不可覆盖；最后完整 CAM 快照在退订前，退订后仅检查 SW 文档与文件哈希。
+独立保存/关闭/重开及参数资格检查必须另行执行。安装版 CHM `ICWFeature/GenerateOpPlan.htm` 与 CAMWorksLib25.0 TLB 是 ABI 依据。
+官方 Turn Tutorial 要求选择匹配的 Thread Condition；仅设置 Thread 策略不能证明已满足该条件。
+
+
+单特征 GOP 的一次 SOLIDWORKS CAM 2026 SP4 原生资格验证已完成：已保存独立零件上的单线 Thread 特征，
+RETAIN GOP 新增恰好一项 type 12，旧操作 ID/顺序/关联/记录数保持；通过独立原生保存、关闭、重开和有界标量读取确认新增操作持久化。
+这只确认该生成与持久化路线，不代表默认线程条件、默认 Pitch、工具或完整深度正确。
+
+### 已存在 THREAD 的单字段 Pitch（离线验证，原生试运行待验证）
+
+`solidworks_cam_configure_thread_pitch` 复用单线特征快照，增加明确的 operation setup/index/正原生 ID。
+`inspect` 只读既有 16 项已验证标量，允许脏模型；不探测 Z 限制、工具或其他未验证属性。
+`prepare/apply` 必须给出不同的 `expected_old_pitch` 与 `new_pitch` 原生数值、精确数量、当前 `Thread` 目录策略，
+且模型干净、目标操作没有已生成刀路。`apply` 绑定状态 SHA 和新回执，只调用一次
+`ICWTurnThreadOp.SetPitchValue(DOUBLE)`（DISPID 2、HRESULT、无 OUT）。
+立即检查 GetPitchValue 后再完整回读；仅允许目标 Pitch、其派生 ActualPitch 和 SW dirty 标志变化。
+其他参数、特征、模型、文件、旧操作关联及刀路记录数必须保持；退订后不再读取 CAM。
+
+不设置 60°、方向、工具、完整深度、TechDB ID，不保存或 GTP，不自动重试。
+60° 螺纹形状属于 Thread insert 的 IncludedAngle；EntryAngle/WithdrawAngle 不能替代它。
+文档把完整螺纹深度作为 feature/ThreadCondition 的独立参数，不能因 Pitch 写入成功就断言深度自动正确。
+实际生成路径的直径、范围和材料去除仍需要后续独立验证，原生数值不自动解释为全局毫米/度。
+
+
+Pitch 的一次原生资格验证已完成（SOLIDWORKS CAM 2026 SP4，独立工作副本）：单次写入后立即读回目标值，
+其余 15 项既有标量保持；独立原生保存、关闭、重开后仍读回目标 Pitch。
+该结果不证明 ActualPitch、完整深度、方向或刀具参数的物理含义。
+
+### 精确 THREAD 的只读刀具与 CL 记录（原生试运行待验证）
+
+`solidworks_cam_inspect_thread_tool` 要求明确 `process_id`、保存零件路径、setup/index、正操作 ID 以及唯一关联 feature ID。
+仅接受原生 type12；先验证通用 tool type15 再读取既有车削刀具尺寸，可用 `holder_profile=operation` 读取原生 holder 曲线，
+或显式 `none` 跳过曲线。复用已有 profile/tool readers；缺失工具与读取异常严格区分，首个异常保留部分结果并停止。
+
+`solidworks_cam_inspect_thread_records` 要求同样的精确进程/文档/操作身份和已经生成的 THREAD 刀路。
+`max_records` 默认 10000、最大 100000，计数超界在读取记录前拒绝。
+只解码 type36 THREAD（EndX/Y/Z、Pitch、Height）、type7 GOTO（rapid flag、point）及 type8 SPINDL（七个原生 OUT）；
+其他记录类型保留顺序与类型号，明确标记 payload 未解码。记录序列有 SHA256，保留原始数值。
+Height 不解释为完整径向深度，原生点不自动解释为世界/FCS 或半径/直径；必须结合模型和材料去除验证。
+这两个工具在必需的 app/notifier 引导后，对全部 CAM getter 保持事件订阅，包含 Count/Item；退订后仅检查 SW 身份与文件。
+不保存、不重建、不生成、不修改任何 CL 记录。
+
+### 材料与切削条件（离线验证，原生试运行待验证）
+
+`solidworks_cam_configure_cutting_conditions` 提供 inspect/prepare/apply，单独设置 Material 或一个原生切削字段：
+SMM、MAXRPM、SpindleSpeed、FPR、FPM、IsSMM、IsFPR、IsAssociateWithStockMaterial。
+以所有文档操作作为保守影响范围，拒绝已有生成刀路；不把不同 IUnknown wrapper 当作无共享参数的证据。
+Material 在 zero-ops 阶段可使用空 affected list，须有 exact native name 与已核验材料映射的 hash-bound JSON；
+工具的 GetAllStockMaterialsList 仅作为工具相关诊断，不宣称它是全局 Workpiece 材料目录。
+数值写入须有针对该字段、文档和原生 unit record 的独立校准 JSON；全局 TechDB Units 表不能代替 API 单位证据。
+所有写入要求新回执、准备状态 SHA、保存文件哈希、活动事件保护及单字段回读；不保存、GTP、克隆工具或修改数据库。
+当前 Workpiece.Material 对材料组或具体 MES 名称的接受语义仍须原生资格验证。
+
+
+2026-10-26 资格检查补充：精确 THREAD 工具读取已在单独副本返回 native tool 565、车削刀具类型15、螺纹角60和鼻圆角0.1；所选 THREAD 的 GTP 返回34条 CL记录。此事实不证明完整螺纹深度或物理工装。首次 `GetRecordAtIndex(0)` 返回 native HRESULT -2147220991，未重试其他索引。读器改用文档化 `GetEnumRecords` 和既有 `ICWDispatchCollection.Count/Item` 规则，集合长度必须与 `RecordCount` 完全一致；新访问路径仍待 live 资格确认。
+
+只读 CL 白名单增加 `UNITS=24` 的 `ICWUnitRecord.GetUnitParams`（一个 BSTR OUT）与 `FEEDRATE=29` 的 `ICWFeedrateRecord.GetFeedrateParams`（DOUBLE、LONG OUT）。字符串和 `bIsMatric` LONG 原样报告，不把它们自动扩展成所有 CAM 参数单位的保证；`FEED=14` 是不同记录，不混用接口。
+
+`solidworks_cam_inspect_material_catalogue` 只读 `ICWApp4.GetWorkpieceMaterials`（DISPID65，四个 VARIANT 数组和一个计数 retval）及 `GetUseDocumentUnit`，要求当前明确绑定进程、精确干净已保存零件和一致文件哈希。目录读取两次并比较，CAM getter 均在事件订阅期间执行。它不更换数据库、不写材料，也不将目录名称视为合金等价或 Workpiece.Material setter 映射已验证；新原生路径目前仅有离线测试。
+
+
+2026-10-26 后续原生结果：`GetEnumRecords()` 同样返回 HRESULT `0x80040201`，无 CAM 事件、无崩溃；34条路径计数在独立保存/关闭/重开后保留。安装版主要示例明确使用该集合链路，尚未找到厂商对该 HRESULT 的 CL 语义解释。不要通过猜索引、重放 GTP 或调用未证实接口声称已读到记录。
+
+`solidworks_cam_qualify_thread_postprocess` 提供 inspect/prepare/apply：要求显式 PID、精确干净 SLDPRT、磁盘 SHA、正 native THREAD ID、setup/op 和记录总数。读取 `ICWMachine5.GetController2()` 的 isAPT/name/success 并绑定 prepare hash；apply 仅调用一次 `ICWTurnOperation.PostProcess(BSTR)`，不修改 controller，不 GTP、不保存、不发送给 CNC。输出必须位于新建专用目录，先写独占 intent receipt，之后确认非空文件/hash、原文件及 inventory/controller 不变；额外输出或任何不确定性保留证据并拒绝重放。始终 `productionNC=false`；内容须按实际 post 单独解释，存在 NC/APT 文件不证明螺纹深度、螺距、方向或可安全上机。此路径目前仅离线测试，尚未原生资格确认。
+
+`solidworks_cam_configure_mill_qualification` 仅在空白已保存副本选择原生 MILL 目录项，或通过 `InsertMillSetup` 插入一个零原点、±X/±Y/±Z 的空设置；检查精确新增 ID、方向、原点及无非预期 inventory 变化。`solidworks_cam_configure_mill_stock` 仅在无特征/操作的 MILL 副本将审核过的加工余料 STL 定义为 stock；要求 STL/目标/包含性证据文件的哈希，使用声明的 mm 枚举0、默认CS、非bounding-box替代，检查type4、路径、单位与零offset回读。STL属于制造毛坯，不替代产品 BRep。两工具均不 AFR/GOP/GTP、不保存，也不宣称物理工艺或模型坐标系已资格确认。
+
+MILL及cutting_conditions的首次、inspect、prepare快照已纳入同一 active CamMessageSession；除取得 app/notifier 的必要bootstrap外，CAM getter不在订阅外执行。Unadvise之后仅检查SOLIDWORKS文档与磁盘哈希。除下述受限目录 inspect 外，MILL 写入路线仍需原生资格确认；后续必须独立保存/重开和几何核验。
+
+`solidworks_cam_configure_mill_qualification` preserves bounded partial document/file/current-machine and ordered catalogue diagnostics. `MachId` is not documented as globally unique: repeated IDs are reported without deduplication. Machine prepare/apply requires a unique selected full descriptor (type, ID, name, description); its index, the ordered catalogue, operation and setup direction are bound to the prepare hash and checked again before dispatch. Inspect/setup do not require global ID uniqueness. One SOLIDWORKS CAM 2026 native inspect returned three distinct Metric/4-axis/5-axis descriptions sharing `Milling Machine Metric`, with existing `Mill - Metric` already assigned, no setups/features/operations, no mutation or CAM events, and verified event disconnect. The file SHA matched the saved source while `needs_save=true`; inspection did not save that initialized state or require reassignment. This qualifies only the observed catalogue-read route, not machine/setup writes, material, MILL depth/feed units or production suitability. Evidence: `02_mill_machine_inspect_diagnostic_result.json`.
+
+
+
+2026-10-26 安全限制更新：在 Material prepare 的 `GetUnitRecordParam` 阶段观察到 RPC 失败和自身 SOLIDWORKS 进程消失；Windows WER 为 heap corruption `c0000374`。这不证明该 getter 是唯一损坏来源，早先 CL 失败调用的影响也未排除。全部 TURN/MILL 快照已移除该 getter；报告 `unit_record_raw=null`，不猜单位、不 catch/retry，也不因材料 BSTR 写入去读单位。需要单位的数字写入明确拒绝未知单位，未来独立单位证据路线需另行资格确认。
+
+`solidworks_cam_inspect_thread_records` 当前在原生访问之前返回 blocked；`GetRecordAtIndex` / `GetEnumRecords` 均不得重试，没有请求参数可解除。离线解码测试保留，但不代表这些读取器在当前版本安全可用。独立 PostProcess 与 WIP 属于另行资格阶段，不能从该限制推出它们已经成功。
+
+
+### 独立 EXE 启动（离线验证，待原生资格）
+
+当 `DispatchEx` 返回已存在的实例时，连接器仍在任何属性写入之前拒绝。新增显式
+`solidworks_connect({launch_new_instance:true, launch_mode:"executable", startup_receipt_path:"<new absolute .json>", wait_seconds:60, visible:true})`
+使用现有安装定位器选取 `SLDWORKS.exe`，不接受任意命令或启动参数。原有 `launch_mode:"com"` 默认行为不变。
+EXE 模式在启动前独占写入 intent，随后仅启动一次主程序；不使用 shell、不继承 MCP 标准流、不创建终端窗口。
+它验证进程不在启动前 PID 集中，并重复核对创建时间、可执行映像路径和存活状态。公开
+[QueryFullProcessImageNameW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-queryfullprocessimagenamew)
+以 PROCESS_QUERY_LIMITED_INFORMATION 读取映像，不是窗口控制。
+只有 ROT 对象的实际 PID 等于该已验证新 PID 时才设置并回读 UserControl/Visible；标准应用别名可用于
+此精确 PID 核对，但不能把别名返回的其它进程作为 fallback。不会调用 Dispatch/DispatchEx 激活第二次。
+
+启动失败、身份未知、注册等待结束或日志落盘失败均保留 receipt，并报告 uncertain；不终止或关闭任何实例，
+不自动重试，已有 receipt 路径禁止覆盖。超时后先读取日志及新进程身份，再决定显式连接，不能重放启动。
+新模式已经过模拟回归；OS 元数据读取已仅在测试 Python 自身进程验证。尚未宣称 SOLIDWORKS 原生启动、
+客户端退出后的进程寿命或该模式的 ROT 注册在当前机器成功。
+
+
+`solidworks_cam_status` 与 `solidworks_cam_load_addin` 新增显式应用级空会话作用域：
+`expected_no_documents:true, process_id:<already pinned PID>, addin_clsid:<registered CLSID>`，
+不能同时传文档路径或标题。仅这两个工具接受该字段；其余 CAM 工具继续要求精确文档目标。
+连接前核对固定 PID，核对已登记插件的 SOLIDWORKS 年份，原生调用前后通过 `GetDocuments`
+和 `ActiveDoc` 验证包括隐藏文档在内的空会话，并复核 PID。枚举错误不是空会话。
+若加载后范围改变或不可读，保留原生返回结果并报告错误，不关闭文档、不重试加载、不保存。
+这允许在打开工作副本之前显式加载 CAM，避免为了加载插件而触碰已打开的副本；不承诺插件没有其它应用级副作用。
+新增分支已通过模拟测试，原生资格由单独的调用回执记录。
+
+
+### APT 选择与纯轮廓草图：离线测试阶段
+
+`solidworks_cam_configure_apt_controller` 提供 `inspect/prepare/apply`。它读取当前机床的
+`ICWMachine5.GetPostProcessorList(True)`、`GetController2()`，可按实际目录名称读取
+`GetControllerParameters(True, name)`；仅在明确确认的已保存隔离 TURN 副本中调用一次
+`SetController2(True, name, directory_with_trailing_separator)`。输入绑定进程、文档与保存文件
+SHA、候选 `.aptctl` 文件 SHA、prepare 状态和独占 receipt。所有 CAM 读取都在消息订阅内；
+任何消息、额外状态变化、错误返回或不匹配读回都会停止，不重试、不保存、不后处理或发送机床。
+
+目录参数的具体语义尚未原生验证；调用者必须明确确认这是资格实验。官方帮助说明保存的路径
+不可用时可能搜索默认目录，甚至选择第一个 post。精确 APT/名称读回排除不同名称的回退，
+却不能证明加载的是给定 SHA 文件：`GetController2` 不返回实际路径。成功读回仍返回
+`review_required`、`actual_loaded_file_verified=false`、`productionNC=false`。后处理属于
+另一个显式动作；不能把此工具的 mock 测试当作原生 APT 输出验证。
+
+`solidworks_cam_create_profile_sketch` 只在精确 PID/已保存资格副本中创建一个二维草图，
+必要时创建一个轴向偏置参考面。`spec` 包含 `plane_axis=X|Y|Z`、`plane_offset_mm`、
+互不相同的新 `sketch_name/plane_name`，以及 `circle(center_model_mm,radius_mm)` 或
+`closed_polyline(points_model_mm)`；后者限3至32个不同顶点。prepare 返回状态 SHA；
+apply 必须带相同 SHA 和新 receipt。使用公共 SOLIDWORKS API，按米读回实际模型坐标、
+闭合轮廓及刚体变换，同时核对旧实体与特征。无 CAM 调用、实体操作、自动保存或重试。
+这只确认 SW 草图使用的米/毫米转换，不证明 CAM 长度、深度或进给单位；MILL 特征写入
+仍等待独立的几何单位资格验证。当前两个新入口均仅有离线测试，不宣称原生资格完成。
+
+
+### 单个 MILL 特征的局部几何单位实验
+
+`solidworks_cam_qualify_mill_feature_units` 提供 `inspect/prepare/apply`，仅接受明确声明的
+隔离已保存副本、精确 PID/文件 SHA、一个实际 MILL setup ID、无操作和无 CAM 特征，
+以及已保存并按模型米坐标读回的非对称四直线矩形草图。prepare 固定完整状态；apply
+需要新 receipt，只调用一次 `ICWSetup.CreateMillFeature2`，类型 OPEN_POCKET=5。
+`depth_native` 限1至100整数，但原生 `dDepth` 是 DOUBLE；此限制不把输入默认解释为毫米。
+
+读回要求正 native ID、恰好一个 VolumeType=6 特征、原有 SW 特征与实体不变，
+以及 `ICWMillFeature.IGetTopSegChain/IGetBottomSegChain` 返回各一个四直线轮廓。
+`GetCurveAtIndex` 使用已核对的零基 `INT*` ABI，不尝试不同索引。两个不同边长和
+对角线分别与真实 SW 草图比较；上下平面的距离直接来自真实端点，不能用 Depth 元数据代替。
+绝对 CAM 坐标系、深度轴独立标定、全局单位、SMM/FPR/FPM 和工艺均不由此自动确认。
+
+所有 CAM 读取在消息订阅内；退出后只核对 SW 文档/文件。无 AFR/GOP/GTP、保存、
+库存修改、草图修改或 native 重试。未知创建结果只能检查现状；已有特征必须指定精确 ID
+才能读取轮廓。没有 ID 的检查只暴露观察到的 ID 并停止，不重新创建。该实验不会放宽
+现有生产 MILL/切削数值单位门禁；原生资格结果需单独审核。当前仅有离线测试及协议验证。
+
+
+APT 原生目录已观察到 `GetPostProcessorList(True)` 返回 `E_FAIL`，发生在返回 VARIANT
+之前、无消息或写入。已安装 TLB 的 BOOL 输入与该调用一致；目录依赖/失败原因尚未确定，
+不能据此猜测其他参数或重试。新增显式 `catalogue_source="installed_files_qualification"`
+模式：只读取当前 SW 年份对应的 `ProgramData/SOLIDWORKS/SOLIDWORKS CAM <year>/Posts/Turn`
+直接 `.aptctl` 文件，限制目录项/文件数与大小，记录文件 SHA。候选名称来自文件 stem，
+明确不是原生目录结果；不调用 `GetPostProcessorList` 或 `GetControllerParameters`。
+此模式必须由调用者新请求明确选择，绝不在 native 目录失败后自动切换。prepare/apply
+仅允许该目录中的精确候选文件与 SHA。单次 setter 后仍必须读回 strict true、APT=true
+和精确名称；目录参数与实际加载路径继续 unverified，不自动开放后处理或生产 NC。
+
+
+### Bounded operation variable-allowance inspection (offline tested, native qualification pending)
+
+`solidworks_cam_inspect_turn_variable_allowance` reads one exact current ROUGH (type 1) or FINISH (type 2) operation. Required selectors are `process_id`, `addin_clsid`, `expected_document_path`, `setup_index`, `operation_index`, `expected_operation_type`, `expected_operation_native_id`, `expected_linked_feature_ids`, and `expected_source_sha256`. `message_policy` accepts only `vendor_default` (the default). The process must already be explicitly connected; the saved part SHA and all linked feature IDs are checked before the new getters. Existing unsaved memory is allowed for this read-only route only, reported, and must remain unchanged.
+
+The typed calls are `ICWTurnRoughOp/ICWTurnFinishOp.GetAllowanceMethodVariable()` (raw LONG) and `ICWTurnOperation.GetAllVariableAllowances()` (four VARIANT outputs plus BOOL retval). The result preserves raw segment names, X/Z values, count and mode. Two bounded captures run under one active CAM message session; after disconnect only document/file checks run. Partial geometry and completed metadata remain available on the first failure. The tool never reads cutting tools, `GetUnitRecordParam`, CL records, or writes/generates/saves.
+
+Native method availability, allowance-name mapping to profile segments, mode meaning, unit scaling and radius-versus-diameter scaling remain unqualified until separate native evidence. Array order is not a geometry mapping; no allowance write or production machining approval follows from this read.
+
+
+The same tool supports explicit `action="identify"` when current linked IDs are unknown.
+It requires the exact PID/document/SHA, setup and operation indices, and expected operation
+type 1 or 2. `expected_operation_native_id` is optional but enforced when supplied;
+`expected_linked_feature_ids` must be omitted/null. Two equal bounded captures return
+`before.selected_operation.native_id` and `linked_feature_ids`, with identity checks under
+the same event subscription. This mode does not read full inventory, profiles, tools,
+variable mode or allowances. Empty linked IDs are reported as observed, not treated as
+allowance qualification. The default `action="read"` still requires both exact ID inputs;
+identify does not automatically invoke it. IDs are scoped to the current CAM document,
+not guaranteed reusable after reopening. Both modes remain read-only; native identify
+qualification is pending, distinct from the mocked branch/guard and MCP protocol tests.
+
+
+### Bounded positive variable-allowance qualification
+
+`solidworks_cam_qualify_turn_variable_allowance` offers `prepare/apply` in a distinct,
+byte-identical copy of a protected saved CAM checkpoint. It requires explicit PID,
+document/source SHA, exact operation type 1/2 and native ID, linked feature IDs,
+`baseline_checkpoint_path`, and `qualification_only=true` plus
+`acknowledge_unqualified_mapping_mode_units=true`. `changes` contains one or two unique
+observed names, each with expected and desired raw X/Z values in 0..1; values may only
+increase, with at least one increase per name. Names are exact BSTRs, never indices.
+`expected_mode_native` is 0 or 1; `candidate_mode_native=1` is an acknowledged experiment,
+not a documented enum mapping. The selected operation must have no generated path.
+
+Prepare binds state and recipe. Apply requires that SHA and a new absolute JSON receipt.
+It performs at most one mode setter and two per-name setters, with durable intent and
+all-name/mode readback after each. Mode setter has no BOOL retval; per-name setter must
+return native true. First error stops; partial completion remains recorded, without retry
+or rollback. All CAM reads/writes remain within the event subscription. The final capture
+checks linked profiles and inventory; after disconnect only SW document/file checks run.
+There is no automatic GOP/GTP/save/post or product geometry editing call.
+
+Native identify/read has been observed successfully on one SW CAM 2026 SP4 saved turning
+copy (one FINISH operation, seven names and raw mode 0). The new writer is offline-tested
+only. Even successful scalar qualification returns `review_required`, `may_continue=false`:
+name-to-geometry mapping, mode meaning, numeric units/radial scaling, persistence and actual
+remaining stock remain unverified. Inventory invariance does not prove every other operation
+parameter unchanged, and linked profiles/saved bytes do not prove complete RAM BRep
+invariance. A separately reviewed actual WIP/nominal-target containment result is required
+before claiming a protected local feature is preserved.
+
+
+### Existing axial TURN line: bounded crop qualification
+
+`solidworks_cam_qualify_turn_feature` keeps its existing whole-line behavior when
+`crop_z_native` is omitted. The optional crop takes `[startZ,endZ]` in the already
+observed native coordinates. Both endpoints must lie within the exact source domain,
+with positive length and the same direction as the source; no endpoint expansion or
+implicit reversal is performed. The source must be a confirmed native straight line
+parallel to its Z axis, within a fixed 1e-10 model-metre XY numerical check. This is
+not a manufacturing tolerance. Endpoint XY values are interpolated from that line;
+there is no independent endpoint/radius input.
+
+Crop additionally requires `process_id`, `expected_source_operation_native_id`,
+`expected_source_feature_native_id`, `expected_source_line_sha256` and
+`expected_source_sha256`. The line SHA is the digest of the complete original raw
+segment dictionary using UTF-8 JSON with `sort_keys=True`, `ensure_ascii=False`,
+`separators=(",",":")`, `allow_nan=False`. Preserve the exact observed dictionary;
+rounded display coordinates are not the hash input. Candidate feature type still must
+match the actual source type. Fresh prepare pins the source line, IDs, file, cropped
+geometry and native-to-model scale. Readback retains the full source and compares the
+single newly added feature against `creation_line`, not the original whole segment.
+Old CAM features, operations, saved bytes and bodies remain guarded. This does not
+configure Thread, depth, pitch, tools, GOP or GTP.
+
+Crop actions are `inspect/prepare/apply`; saving uses the separate existing native
+lifecycle tool. Cropped snapshots begin after event subscription and finish before
+Unadvise. After cleanup only PID/SW document/file checks run. The old whole-line event
+coverage is preserved, not silently broadened or newly qualified by these tests.
+Apply keeps single-use receipt/state gates and no automatic replay on unknown results.
+
+Feature receipts now persist `capture_progress` before and after each full snapshot:
+phase, start UTC, completion/error and elapsed seconds. A started preflight capture
+with mutation=false does not mean geometry was attempted. This is progress evidence,
+not an automatic heartbeat, completion guarantee or authority to retry.
+
+The CLI `--timeout-seconds` limits the entire request batch, including startup,
+connection and every capture. Cropped `apply` performs four full snapshots: initial,
+before mutation, after sketch and after feature. Choose an explicit batch budget from
+saved capture durations, allowing for native creation and cleanup; no fixed duration
+is valid for every model or session. Saving remains a separate lifecycle action.
+A client timeout does not prove the native call was cancelled or authorize replay.
+Preserve its receipt and inspect the actual exact document/state before deciding how
+to continue; an unfinished capture record is not a current live-session status.
+
+One bounded crop has since been live-qualified on SOLIDWORKS CAM 2026 SP4:
+the native call returned no object, but the exact one-feature delta and its line
+geometry were verified, with the existing feature profiles and operation inventory
+preserved. Native endpoint order was reversed and recorded; cutting direction was
+not inferred or silently corrected. Solid-body boxes were exact, and mass values
+were compared within the existing 1e-10 relative bound, not as bit-identical BRep.
+Separate CAM save/readback succeeded; the newly cropped feature has not yet been
+reopened. This qualifies this reference-profile case only, not a full thread,
+physical tool, complete toolpath coordinates or general persistence.
+
+The sketch crop follows the source endpoint order. As in the existing geometry verifier,
+native feature readback may enumerate the same line in reverse; accepting that geometry
+does not qualify thread handedness, feed direction or entry/exit. Those remain operation
+and generated-output checks, independent of the bounded line domain.
+
+`created_feature_orientation` reports requested and returned native endpoints,
+`endpoint_order` (same/reversed/ambiguous) and the numerical comparison tolerance.
+It uses the already captured new feature geometry; no extra CAM calls or automatic
+Reverse setting occurs. `thread_direction_verified` remains false.
+
+### Bounded THREAD feature attribute probe (offline-tested pilot)
+
+`solidworks_cam_inspect_thread_feature_attributes` binds an explicit process, saved SLDPRT SHA, THREAD operation native ID and its sole linked feature native ID. It reads typed `ICWFeature.GetFeatureAttributes` once, between two bounded inventory/identity captures under one active CAM event subscription. A new JSON receipt records identity and the read intent before that getter. The part may contain unchanged unsaved CAM state; this read never saves it.
+
+The result preserves exact Python marshalled scalar/list/tuple/bytes types within fixed size/depth limits. Unknown objects, including returned COM objects or pointer wrappers, are rejected without introspection, conversion, QueryInterface or fallback. Native VARIANT VARTYPE metadata is not preserved. A successful bounded read is `review_required`, `may_continue=false`: it does not establish that any field represents total thread depth, a complete ThreadCondition, units or physical machining capability.
+
+No tool, holder, raw CL, prohibited unit getter, attribute setter, GOP, GTP, post or save is invoked. After event disconnect only SOLIDWORKS document/PID and saved-file SHA are checked. Inventory equality covers operation types, generated flags and path record counts, not all toolpath coordinates or every operation parameter. On a native error/message/unknown payload, retain the receipt and stop; the tool does not replay the getter. One bounded SOLIDWORKS CAM 2026 read has since been live-qualified: the exact OD feature linked to the selected THREAD operation returned 23 floating-point values, with unchanged identity/inventory/saved file and no CAM events. This qualifies only that read route for the observed case. No documented array index map was found; the observed profile-length match and sentinel-like values do not establish total depth or ThreadCondition semantics.
+
+Required fields: `process_id`, `addin_clsid`, `expected_document_path`, `setup_index`, `operation_index`, `expected_operation_native_id`, `expected_feature_native_id`, `expected_source_sha256`, `receipt_path`. `message_policy` defaults to `vendor_default`; `response_format` defaults to JSON. The receipt must be a new absolute `.json` path in an existing directory. Operation and feature IDs are current document-scoped IDs, not IDs copied from historical qualification parts.
+
+### TURN full thread depth: confirmed API coverage limit
+
+The 2026-10-25 primary-help finding remains applicable: full thread depth is half the difference between the thread major and minor diameters and is distinct from depth per cut. A later installed CAMWorksLib 25.0 audit found no documented direct full-depth or ThreadCondition accessor on `ICWTurnFeature` / `ICWTurnThreadOp`. This is a limit of the inspected installed interfaces and help, not a claim that no vendor version or supported extension can provide it. Successful Thread strategy assignment, GOP persistence, Pitch write/readback or generic CL export does not close this limit.
+
+`ICWTurnFeature` exposes profile diameter/endpoints/segments, a writable strategy `Attribute`, strategy catalogues and operation insertion. `ICWFeature.GetFeatureAttributes` is read-only VARIANT; no corresponding `SetFeatureAttributes` is declared. `SetDefaultStrategyFromTechDB` takes a strategy attribute ID and has no documented ThreadCondition/depth assignment contract. Do not write a guessed array index, reuse an unrelated database ID, or interpret profile D1/D2 as the independent thread-condition diameters M1/M2 without an explicit mapping.
+
+`ICWTurnThreadOp.SetDepthPerCutValue` and `SetLastDepthPerCutValue` control per-pass values; neither is a total-depth setter. Pitch, canned-cycle flags and pass-count settings are also not substitutes for full-depth verification. The current generic CL output and existing profile/tool/16-scalar receipts should be reused for independent analysis; do not rerun unsafe raw CL or Z-limit getters to seek the missing contract.
+
+`ICWFeatureFactory.CreateThread` and `ICWThread.SetParameters` do declare depth, tap form/designation, metric flag and tap/thread types. The inspected native `GetThread` bindings lead from MILL hole feature interfaces, not from the existing TURN feature or operation. Their existence does not justify speculative QueryInterface or parameter writes on a TURN OD/ID feature. `ICWThreadToolpathParams` is likewise not a documented total-depth setter or a qualified binding to this TURN feature.
+
+The real tool is a separate contract: `ICWTurnOperation.SetTool(IDispatch*)` exists, and the holder declares `PrimaryDrivingPointAutomatic` (BOOL) and `PrimaryDrivingPoint` (LONG). These signatures do not establish an actual supplier insert/holder assembly or the LONG-to-tip/nose-centre reference mapping. Existing bounded insert dimension edits qualify CAM definitions only; changing a generic V insert is not proof of equivalence to a physical full-profile threading insert.
+
+Before adding a full-depth writer, require one primary contract connecting the current TURN feature to editable total depth / ThreadCondition, or a documented structured read route that exposes those quantities. Bind any later extension to exact feature/operation/file identity and verify its independent generated result. Until then, full thread depth, tool reference and production suitability remain unverified; do not silently substitute pass depth, a MILL-hole object, direct TechDB writes or a guessed parameter index.
+
+Primary declaration anchors in the installed generated typelib: `ICWTurnFeature` lines 64457–64573; `ICWFeature.GetFeatureAttributes` 11166–11171 and strategy methods 11234–11247; `ICWTurnThreadOp` 12277–12612; `ICWThread.SetParameters` 50315–50327 with MILL-hole `GetThread` bindings; `ICWTurnOperation.SetTool` 59253–59258; holder driving-point properties 68252–68275. These anchors are tied to generated-file SHA256 `359e2d39a970d2362fa1b44750963b9a64e1fa819d2d046e38174affa37eb3c4`, not to arbitrary future wrapper versions. Preserved audit artifacts: `depth_binding_primary.json`, `mcp_depth_binding_plan.json`, the 2026-10-25 `thread_feature_contract_20261025/contract.json`, and the bounded attribute read qualification receipt. No native calls were made for this knowledge update.
+
+### Selected TURN rough/finish APT export (offline-tested pilot)
+
+`solidworks_cam_qualify_turn_apt_postprocess` inspects/prepares/exports one generated, unsuppressed TURN ROUGH1 or FINISH2 operation. It requires exact process/document/source SHA, operation ID/type, linked feature IDs, total path record count and current APT controller name. Prepare binds that state and a new `.apt` output path; apply consumes a new JSON receipt and creates an exclusive output directory before exactly one native `ICWTurnOperation.PostProcess(BSTR)` call. This is a void HRESULT method, not a Boolean success return. Nonempty output/file hashes and unchanged inventory/source/controller are verified separately, including directory contents after event cleanup.
+
+It does not change controllers, generate toolpaths, read raw CL/tool getters, save the model or send CNC data. Existing THREAD postprocess behavior is unchanged. An unexpected native return, CAM message, state change, output/cleanup or receipt failure stops without retry; any files remain evidence. Successful apply is `review_required`, `productionNC=false`. Exact APT/name readback does not prove the loaded postprocessor file/path. Output still needs offline unit, frame, radius/diameter and tool-reference analysis; no machining or geometry proof is inferred. Native TURN1/2 export has not yet been live-qualified.
+
+### Explicit APT path argument qualification
+
+`solidworks_cam_configure_apt_controller` accepts `path_argument_kind`: `directory_with_trailing_separator` (existing default) or `exact_aptctl_file_path`. The latter is permitted only with `catalogue_source="installed_files_qualification"` and the exact observed installed `.aptctl` file/SHA. The caller-selected controller name is unchanged. The selected kind and actual path argument are bound into the prepare state; changing either requires a fresh prepare and new apply receipt. No automatic fallback, filename-name substitution or native setter retry occurs.
+
+Both argument meanings remain explicit qualification hypotheses; the installed TLB only declares BSTR. A strict native `false` may have partially changed the APT flag/name. If event transport remains clean, the wrapper reads the known controller and bounded inventory/operation IDs into `immediate_controller_readback` and `after_false`, retains partial diagnostics if a later getter fails, then performs normal cleanup and SW/file checks. The outcome remains `uncertain`, `readback_verified=false`, `controller_assignment_verified=false`, `apply_eligible=false`, and no postprocess is run. Native exceptions, non-Boolean returns or CAM events do not trigger diagnostic CAM reads. A matching name after `false` is not promoted to success. The existing true-return path still cannot prove the actual loaded controller file/path or downstream output.
+
+### Explicit installed APT controller name qualification
+
+`name_mode` is `stem` by default or explicitly `filename_with_extension`. Filename mode is restricted to `catalogue_source="installed_files_qualification"`; displayed candidate names are derived from the exact observed installed file name, retaining its extension. The caller still supplies the exact controller_name; the module does not silently convert or try another name. Source path/SHA checks remain mandatory. Name mode and selected name are included in prepared state, so changing either requires a fresh prepare and receipt.
+
+The one next proposed diagnostic candidate is controller_name `turn.aptctl` with `name_mode="filename_with_extension"` and the unchanged `path_argument_kind="directory_with_trailing_separator"`. This is based on observed TechDB controller names containing an extension, not an explicit vendor SetController2 name/path mapping. The alternate full-file path argument remains available but has not been tried natively and is not the next selected candidate. No automatic traversal, fallback, postprocess or native retry is performed. Strict-false diagnostics remain unchanged and cannot promote a partial APT flag/name change to success.
+
+
+### Generic CL machine-scope qualification
+
+`solidworks_cam_export_generic_cl` provides `inspect` / `prepare` / `apply` for an exact clean saved TURN copy. It calls `ICWMachine4.SaveCLFile(BSTR)` once into a new dedicated local directory. This is vendor generic CL, not enhanced APT or an external-postprocessing input. It does not assign a controller or invoke AFR/GOP/GTP/model save; an unavailable current controller is captured and must remain unchanged.
+
+Inputs bind the PID, document path/SHA, total operation count, generated-operation count and total record count. All operation IDs/types/generated flags/counts are compared before/after under one CAM event subscription; linked-feature topology and full motion coordinates are outside this snapshot. `qualification_only` and `acknowledge_machine_scope` must both be true. Apply additionally requires the prepared state SHA and a new one-use JSON receipt. Unknown/failed calls are never retried automatically.
+
+The installed ABI is `ICWMachine4` `{95D0F478-6AA0-4AE9-BADD-2FAC078B1E5B}`, DISPID14, HRESULT with one input BSTR and no retval. A real in-memory COM regression confirms the typed Python result is integer S_OK=0; Boolean/None are rejected. File existence/hash and unchanged snapshots prove only that bounded output was obtained. Format, units, frame, thread depth/direction and machining correctness remain unverified; the native qualification below is limited to one saved TURN copy. No manufacturing release follows from software tests.
+
+
+The first 2026 SP4 generic-CL qualification stopped before `SaveCLFile`: querying the separate `ICWMachine4` IID returned `E_NOINTERFACE`, while the current machine supports `ICWMachine5`. The installed typelib declares `ICWMachine5(ICWMachine4)` and inherits the same `SaveCLFile` vtable method. The exporter therefore now obtains Machine5 during inspect/prepare/capture and calls the inherited method on that pointer, with no separate Machine4 query or fallback. Receipt consumption and output-directory creation occur only after successful interface/state preflight. This correction is covered by an inherited-interface in-memory COM test; at that checkpoint actual SaveCLFile was still unqualified; the subsequent one-shot check is recorded below. The failed receipt and empty first output directory are retained, never replayed.
+
+
+#### Qualified generic CL result and bounded APT return handling
+
+A subsequent SOLIDWORKS CAM 2026 SP4 qualification successfully called inherited `SaveCLFile` through `ICWMachine5` on one clean saved TURN copy. The native result was integer S_OK=0 and the output was 4,157 bytes (SHA-256 `cfa71ecfc871e5070e71417a35433b2a2eed6ccaff61c3cfd5129b21c674ff46`). The complete captured before/after states matched: 9 features, 16 operation IDs/types/flags/counts, one generated operation with 40 records, and 15 ungenerated operations remained unchanged. Controller readback, source-file SHA and document dirty state also matched; zero CAM messages and confirmed event disconnection were recorded. This qualifies obtaining generic CL output for that case. It does not qualify its interpretation, units/frame, thread depth/direction, full machining geometry or production use.
+
+The selected TURN1/2 APT exporter now also records `native_hresult` and requires exact integer S_OK=0 for its no-retval `PostProcess` method; the former None-only check incorrectly rejected that typed success result. Mock and actual in-memory COM tests cover the correction, including rejection of Boolean/None/non-S_OK returns. No native APT PostProcess qualification or controller-assignment success is claimed. The separate THREAD exporter is unchanged by this correction.

@@ -12,6 +12,8 @@ import json
 import math
 import os
 import sys
+import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -43,8 +45,10 @@ def _load_requests(path: Path) -> list[dict[str, Any]]:
 
 
 def _atomic_write(path: Path, document: dict[str, Any]) -> None:
-    temporary = path.with_name(path.name + ".tmp")
-    created = False
+    """只重试已序列化结果的文件替换；绝不重放任何 MCP 调用。"""
+    temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
+    created = complete = False
+    delays = (0.05, 0.10, 0.20, 0.40)
     try:
         with temporary.open("x", encoding="utf-8", newline="\n") as stream:
             created = True
@@ -52,10 +56,23 @@ def _atomic_write(path: Path, document: dict[str, Any]) -> None:
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        complete = True
+        for attempt in range(len(delays) + 1):
+            try:
+                os.replace(temporary, path)
+                return
+            except OSError as error:
+                if getattr(error, "winerror", None) not in {5, 32, 33} or attempt == len(delays):
+                    # 保留完整的新结果；旧目标文件不删除，错误说明给出恢复路径。
+                    error.atomic_json_temporary = str(temporary)
+                    raise
+                time.sleep(delays[attempt])
     finally:
-        if created and temporary.exists():
-            temporary.unlink()
+        if created and not complete:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
 
 
 def _small_payload(value: Any) -> Any:
@@ -112,7 +129,11 @@ def _error_message(error: BaseException) -> str:
     children = getattr(error, "exceptions", None)
     if children:
         return "; ".join(_error_message(child) for child in children)
-    return f"{type(error).__name__}: {str(error)[:2000]}"
+    message = f"{type(error).__name__}: {str(error)[:2000]}"
+    staged = getattr(error, "atomic_json_temporary", None)
+    if staged:
+        message += f"; complete JSON retained at {staged}"
+    return message
 
 
 async def _execute_requests(

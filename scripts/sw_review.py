@@ -639,6 +639,119 @@ def save_preview(model, output_path, view_name="isometric", width=1600, height=1
     return str(output_path)
 
 
+
+def run_closeup_review(sw, model, output_dir, *, process_id, expected_document_path,
+                       basename="review", views=None, zoom_box_mm=None):
+    """按模型毫米包围盒导出定向局部预览；不重建、不保存、不自动重试。"""
+    from itertools import product
+    from scripts.sw_cam_feature_sketch import _call_method as call, _point
+    from scripts.sw_cam_thread import _file_hash
+    from scripts.sw_operation_guard import absolute_document_path, _path_identity
+
+    if type(process_id) is not int or process_id <= 0:
+        raise ValueError("Exact positive process_id required")
+    if not absolute_document_path(expected_document_path) or not Path(expected_document_path).is_file():
+        raise ValueError("Exact existing saved document required")
+    requested_views = list(views) if isinstance(views, (list, tuple)) else views
+    if requested_views is None:
+        requested_views = ["isometric", "front", "top", "right"]
+    if (type(requested_views) is not list or not 1 <= len(requested_views) <= 9
+            or any(type(v) is not str or v not in STANDARD_VIEWS for v in requested_views)
+            or len(set(requested_views)) != len(requested_views)):
+        raise ValueError("Unique standard views required")
+    box = None
+    if zoom_box_mm is not None:
+        if (not isinstance(zoom_box_mm, (list, tuple)) or len(zoom_box_mm) != 6
+                or any(type(v) not in (int, float) or not math.isfinite(v) for v in zoom_box_mm)
+                or any(zoom_box_mm[i] >= zoom_box_mm[i+3] for i in range(3))):
+            raise ValueError("Finite nondegenerate model XYZ box required")
+        box = [float(v) for v in zoom_box_mm]
+    if (type(basename) is not str or re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", basename) is None
+            or basename in (".", "..")):
+        raise ValueError("Safe output basename required")
+    if not absolute_document_path(output_dir):
+        raise ValueError("Absolute new output directory required")
+    directory = Path(output_dir)
+    if directory.exists() or directory.is_symlink() or not directory.parent.is_dir():
+        raise ValueError("Output directory must be new with an existing parent")
+
+    def guard():
+        if call(sw, "GetProcessID") != process_id:
+            raise ValueError("SOLIDWORKS process changed")
+        active = sw.ActiveDoc
+        if (active is None or call(sw, "IsSame", active, model) != 1
+                or _path_identity(call(model, "GetPathName")) != _path_identity(expected_document_path)
+                or call(model, "GetType") not in (1, 2)):
+            raise ValueError("Active saved part/assembly identity changed")
+        return {"path": str(expected_document_path), "needs_save": bool(call(model, "GetSaveFlag")),
+                "file_sha256": _file_hash(expected_document_path)}
+
+    before = guard()
+    directory.mkdir()  # 独占本次输出目录，不能覆盖先前证据。
+    report_path = directory / f"{basename}_review_report.json"
+    report = {"model": {"path": str(expected_document_path)}, "previews": [], "checks": {},
+        "view_review": {"process_id": process_id, "before": before, "views": requested_views,
+            "zoom_box_mm": box, "coordinate_system": "model_xyz_mm", "calls": [],
+            "model_saved": False, "model_rebuilt": False,
+            "qualification": "native_view_api_pilot_visual_review_required"},
+        "evaluation": {"status": "review_required", "manual_review_required": True,
+            "issues": [], "recommendations": ["Inspect the actual BMP close-ups; this is not geometry qualification."]}}
+    write_review_report(report, report_path)
+    try:
+        utility = call(sw, "GetMathUtility") if box is not None else None
+        for view_name in requested_views:
+            state = guard()
+            if state["file_sha256"] != before["file_sha256"]:
+                raise ValueError("Saved document bytes changed before preview")
+            entry = {"view": view_name, "orientation_attempted": True,
+                     "orientation_returned": False, "zoom_returned": False, "bitmap_returned": False}
+            report["view_review"]["calls"].append(entry)
+            write_review_report(report, report_path)
+            call(model, "ClearSelection2", True)
+            call(model, "ShowNamedView2", "", STANDARD_VIEWS[view_name])
+            entry["orientation_returned"] = True
+            if box is None:
+                call(model, "ViewZoomtofit2")
+            else:
+                # 官方示例要求先用 Orientation3 从模型坐标转至当前视向坐标。
+                orientation = model.ActiveView.Orientation3
+                points = [_point(utility, [v/1000.0 for v in corner], orientation)
+                          for corner in product(*[(box[i], box[i+3]) for i in range(3)])]
+                region = [min(p[i] for p in points) for i in range(3)] + [max(p[i] for p in points) for i in range(3)]
+                if any(region[i] >= region[i+3] for i in (0, 1)):
+                    raise ValueError("Degenerate projected zoom region")
+                entry["view_box_native_m"] = region
+                call(model, "ViewZoomTo2", *region)
+            entry["zoom_returned"] = True
+            call(model, "GraphicsRedraw2")
+            guard()
+            image_path = directory / f"{basename}_{view_name}.bmp"
+            if image_path.exists():
+                raise ValueError("Preview output already exists")
+            saved = call(model, "SaveBMP", str(image_path), 1600, 1000)
+            entry["bitmap_returned"] = True
+            entry["bitmap_native_result"] = saved
+            if saved is not True or not image_path.is_file() or image_path.stat().st_size == 0:
+                raise RuntimeError("SaveBMP did not produce a nonempty preview")
+            report["previews"].append(inspect_bmp_preview(image_path))
+            write_review_report(report, report_path)
+        after = guard()
+        report["view_review"]["after"] = after
+        report["view_review"]["saved_file_unchanged"] = after["file_sha256"] == before["file_sha256"]
+        if not report["view_review"]["saved_file_unchanged"]:
+            raise ValueError("Saved document bytes changed during preview")
+        report["checks"] = {"previews_created": len(report["previews"]) == len(requested_views),
+            "previews_not_blank": all(not p.get("likely_blank", True) for p in report["previews"]),
+            "saved_file_unchanged": True, "exact_document_verified": True}
+        write_review_report(report, report_path)
+        return report, str(report_path)
+    except Exception as exc:
+        report["view_review"]["failure"] = {"type": type(exc).__name__, "message": str(exc)}
+        report["evaluation"]["status"] = "error"
+        write_review_report(report, report_path)
+        raise
+
+
 def save_review_previews(model, output_dir, basename="review", views=None):
     """
     导出多视角预览图。

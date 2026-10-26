@@ -1,0 +1,120 @@
+{
+  "before": {
+    "document": {
+      "path": "C:/qualification/GENERIC_MILL_QUAL.SLDPRT",
+      "title": "GENERIC_MILL_QUAL.SLDPRT",
+      "type": 1,
+      "needs_save": false
+    },
+    "saved_file_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "current_machine": {
+      "machine_type": 1,
+      "name": "Mill - Metric",
+      "machine_id": "Milling Machine Metric",
+      "description": "Sample Milling Machine"
+    },
+    "mill_catalogue": [
+      {
+        "machine_type": 1,
+        "name": "Mill - Metric",
+        "machine_id": "Milling Machine Metric",
+        "description": "Sample Milling Machine"
+      },
+      {
+        "machine_type": 1,
+        "name": "Mill 4 axis - Metric",
+        "machine_id": "Milling Machine Metric",
+        "description": "Sample 4 Axis Milling Machine\r\n(3+1 & Simultaneous machine)"
+      },
+      {
+        "machine_type": 1,
+        "name": "Mill 5 axis - Metric",
+        "machine_id": "Milling Machine Metric",
+        "description": "Sample 5 Axis Milling Machine\r\n(3+2 & Simultaneous machine)"
+      }
+    ],
+    "feature_setups": [],
+    "operation_counts": [],
+    "material_raw": "6061-T6",
+    "extend_holes_to_stock": false,
+    "unit_record_raw": null,
+    "unit_record_status": "unavailable_native_getter_disabled_after_RPC_failure"
+  },
+  "after": {
+    "document": {
+      "path": "C:/qualification/GENERIC_MILL_QUAL.SLDPRT",
+      "title": "GENERIC_MILL_QUAL.SLDPRT",
+      "type": 1,
+      "needs_save": false
+    },
+    "saved_file_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "current_machine": {
+      "machine_type": 1,
+      "name": "Mill - Metric",
+      "machine_id": "Milling Machine Metric",
+      "description": "Sample Milling Machine"
+    },
+    "mill_catalogue": [
+      {
+        "machine_type": 1,
+        "name": "Mill - Metric",
+        "machine_id": "Milling Machine Metric",
+        "description": "Sample Milling Machine"
+      },
+      {
+        "machine_type": 1,
+        "name": "Mill 4 axis - Metric",
+        "machine_id": "Milling Machine Metric",
+        "description": "Sample 4 Axis Milling Machine\r\n(3+1 & Simultaneous machine)"
+      },
+      {
+        "machine_type": 1,
+        "name": "Mill 5 axis - Metric",
+        "machine_id": "Milling Machine Metric",
+        "description": "Sample 5 Axis Milling Machine\r\n(3+2 & Simultaneous machine)"
+      }
+    ],
+    "feature_setups": [
+      {
+        "native_id": 64,
+        "name": "Фрезерный установ1",
+        "feature_count": 0,
+        "axis_native": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "origin_native": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "origin_type_raw": 6
+      }
+    ],
+    "operation_counts": [
+      0
+    ],
+    "material_raw": "6061-T6",
+    "extend_holes_to_stock": false,
+    "unit_record_raw": null,
+    "unit_record_status": "unavailable_native_getter_disabled_after_RPC_failure"
+  },
+  "new_setup_native_id": 64,
+  "direction": [
+    0.0,
+    0.0,
+    1.0
+  ],
+  "sources": [
+    {
+      "path": "fixtures/setup_apply_receipt.json",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "path": "fixtures/setup_independent_review.json",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ],
+  "fixture_scope": "Sanitized regression snapshot: project paths, titles and SHA identifiers are synthetic; this fixture is not native CAD qualification evidence."
+}

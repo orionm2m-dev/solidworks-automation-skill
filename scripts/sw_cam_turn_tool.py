@@ -62,27 +62,46 @@ def _ref_key(value):
     return value["setup_index"], value["operation_index"], value["expected_operation_type"]
 
 
-def _snapshot(sw, clsid, typelib_path, selected, *, check=lambda: None, diagnostics=None):
+def _snapshot(sw, clsid, typelib_path, selected, *, check=lambda: None, diagnostics=None,
+              guarded_readers=False):
     diagnostics = {} if diagnostics is None else diagnostics
-    diagnostics["stage"] = "context"
-    check()
-    before, _doc, _part, machine, app = _context(sw, clsid, typelib_path)
-    diagnostics["document"] = before
-    check()
-    diagnostics["stage"] = "ICWDoc3"
-    native_doc = _typed(_doc, "ICWDoc3", typelib_path)
-    diagnostics["native_id_reads"] = []
-    diagnostics["stage"] = "inventory_before"
-    inventory = _inventory(machine, typelib_path)
-    diagnostics["inventory"] = inventory
-    check()
-
     def read(obj, name, *args):
         diagnostics["stage"] = name
         check()
         value = _member(obj, name, *args)
         check()
         return value
+
+    def context():
+        if not guarded_readers:
+            return _context(sw, clsid, typelib_path)
+        from scripts.sw_cam_turn_feature_attribute import _context as guarded_context
+        return guarded_context(sw, clsid, typelib_path, read)
+
+    def inventory_of(machine):
+        if not guarded_readers:
+            return _inventory(machine, typelib_path)
+        from scripts.sw_cam_turn_feature_attribute import _inventory as guarded_inventory
+        return guarded_inventory(machine, typelib_path, read)
+
+    def items(raw, limit=512):
+        if not guarded_readers:
+            return _collection(raw, typelib_path)
+        from scripts.sw_cam_turn_feature_attribute import _items
+        return _items(raw, typelib_path, read, limit=limit)
+
+    diagnostics["stage"] = "context"
+    check()
+    before, _doc, _part, machine, app = context()
+    diagnostics["document"] = before
+    check()
+    diagnostics["stage"] = "ICWDoc3"
+    native_doc = _typed(_doc, "ICWDoc3", typelib_path)
+    diagnostics["native_id_reads"] = []
+    diagnostics["stage"] = "inventory_before"
+    inventory = inventory_of(machine)
+    diagnostics["inventory"] = inventory
+    check()
 
     def object_id(obj, label):
         entry = {"label": label, "returned": False}
@@ -101,10 +120,10 @@ def _snapshot(sw, clsid, typelib_path, selected, *, check=lambda: None, diagnost
     operation_ids, tool_ids, groups, assignments, handles = [], [], [], [], []
     diagnostics["operation_tools"] = assignments
     diagnostics["tool_groups"] = groups
-    setups = _collection(read(machine, "IGetEnumOpSetups"), typelib_path)
+    setups = items(read(machine, "IGetEnumOpSetups"))
     for si, raw_setup in enumerate(setups):
         setup = _typed(raw_setup, "ICWBaseOpSetup", typelib_path)
-        for oi, raw in enumerate(_collection(read(setup, "IGetEnumOperations"), typelib_path)):
+        for oi, raw in enumerate(items(read(setup, "IGetEnumOperations"), 512-len(assignments))):
             if len(assignments) >= 512:
                 raise ValueError("Too many operations for tool qualification")
             operation = _typed(raw, "ICWOperation", typelib_path)
@@ -126,6 +145,11 @@ def _snapshot(sw, clsid, typelib_path, selected, *, check=lambda: None, diagnost
                 # 车床清单也可包含钻削工具，不能向非车刀请求 ICWTurnTool。
                 if generic_type == 15:
                     turn_tool = _typed(raw_tool, "ICWTurnTool", typelib_path)
+                turn_kind = None
+                if turn_tool is not None:
+                    turn_kind = _integer(read(turn_tool, "ToolType"))
+                    if turn_kind != 1:
+                        turn_tool = None
                 kind = _integer(read(turn_tool, "InsertType")) if turn_tool is not None else None
                 dimensions = ({field: _number(read(turn_tool, field)) for field in sorted(_applicable(kind))}
                               if turn_tool is not None else {})
@@ -136,9 +160,11 @@ def _snapshot(sw, clsid, typelib_path, selected, *, check=lambda: None, diagnost
                                    "dimensions_native": dimensions,
                                    "parameter_scope": ("turning_whitelist" if turn_tool is not None
                                                        else "non_turn_dimensions_not_read")})
+                    groups[group_index]["turn_tool_type_raw"] = turn_kind
                 elif (groups[group_index]["tool_type_raw"] != generic_type or
                       groups[group_index]["insert_type_raw"] != kind or
-                      groups[group_index]["dimensions_native"] != dimensions):
+                      groups[group_index]["dimensions_native"] != dimensions or
+                      groups[group_index]["turn_tool_type_raw"] != turn_kind):
                     diagnostics["inconsistent_alias"] = {"operation": ref, "cam_object_id": identity,
                         "tool_type_raw": generic_type, "insert_type_raw": kind, "dimensions_native": dimensions}
                     raise CamToolStateError("CAM_TOOL_ID_ALIASES_DIFFER",
@@ -195,7 +221,7 @@ def _snapshot(sw, clsid, typelib_path, selected, *, check=lambda: None, diagnost
     check()
     usage_raw = getattr(station, "OperationsUsingThisTool")
     check()
-    usage = _collection(usage_raw, typelib_path)
+    usage = items(usage_raw)
     usage_indices = []
     usage_ids = []
     diagnostics["station_usage_operation_ids"] = usage_ids
@@ -209,7 +235,7 @@ def _snapshot(sw, clsid, typelib_path, selected, *, check=lambda: None, diagnost
     affected_indices = [i for i, item in enumerate(assignments) if item["tool_group"] == selected_group]
     if sorted(usage_indices) != affected_indices:
         raise CamToolStateError("CAM_TOOL_SHARED_USAGE_MISMATCH", "Station usage does not match complete native CAM tool-ID scan")
-    linked = _collection(read(operation, "IGetAllFeatures"), typelib_path)
+    linked = items(read(operation, "IGetAllFeatures"), 64)
     if not 1 <= len(linked) <= 64:
         raise ValueError("Selected operation must have 1 to 64 linked features")
     budget = [0]
@@ -218,12 +244,15 @@ def _snapshot(sw, clsid, typelib_path, selected, *, check=lambda: None, diagnost
     for raw_feature in linked:
         profile = {}
         profiles.append(profile)
-        _read_profile(raw_feature, typelib_path, read, budget, profile)
+        if guarded_readers:
+            _read_profile(raw_feature, typelib_path, read, budget, profile, collection_reader=items)
+        else:
+            _read_profile(raw_feature, typelib_path, read, budget, profile)
     selected_tool = {}
     diagnostics["selected_tool"] = selected_tool
     _read_tool(read(operation, "IGetTool"), operation, typelib_path, read, selected_tool)
     diagnostics["stage"] = "inventory_after"
-    after_inventory = _inventory(machine, typelib_path)
+    after_inventory = inventory_of(machine)
     check()
     diagnostics["stage"] = "document_after"
     after = document_snapshot(sw)
@@ -239,7 +268,8 @@ def _snapshot(sw, clsid, typelib_path, selected, *, check=lambda: None, diagnost
              "operation_tools": assignments, "tool_groups": groups,
              "linked_features": profiles, "selected_tool": selected_tool}
     diagnostics["stage"] = "complete"
-    return state, {"app": app, "turn_tool": turn_tool}
+    return state, {"app": app, "turn_tool": turn_tool,
+                   "native_doc": native_doc, "operation": operation, "tool": tool}
 
 
 def _verify_change(before, after, field, value):

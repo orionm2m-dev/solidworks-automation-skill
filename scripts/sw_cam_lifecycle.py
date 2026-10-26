@@ -84,13 +84,35 @@ def _verify_save(before, after):
 
 def document_lifecycle(sw, clsid, typelib_path, *, expected_document_path, action,
                        message_policy="vendor_default", expected_state_sha256=None,
-                       receipt_path=None):
+                       receipt_path=None, machine_kind="turn", process_id=None,
+                       acknowledge_qualification_copy=False, expected_feature_native_id=None,
+                       expected_operation_native_ids=None):
     """准备状态指纹，或显式单次保存/关闭精确工作副本；不自动重试。
 
     prepare 只读且不接收回执。save/close 要求先前 SHA 和新的绝对 JSON 回执。
     close 要求 SOLIDWORKS 脏标志为假；CAM Save Restore 标志及默认响应仍未知。
     原生方法返回不证明 CAM 数据持久化；本方法从不自动再次关闭、保存或生成。
     """
+    if machine_kind == "mill_single_feature_qualification":
+        from scripts.sw_cam_mill_feature_lifecycle import mill_feature_document_lifecycle
+        return mill_feature_document_lifecycle(sw, clsid, typelib_path,
+            expected_document_path=expected_document_path, action=action,
+            process_id=process_id, acknowledge_qualification_copy=acknowledge_qualification_copy,
+            expected_feature_native_id=expected_feature_native_id,
+            expected_operation_native_ids=expected_operation_native_ids,
+            message_policy=message_policy, expected_state_sha256=expected_state_sha256,
+            receipt_path=receipt_path)
+    if expected_feature_native_id is not None or expected_operation_native_ids is not None:
+        raise ValueError("Feature/operation selectors require mill_single_feature_qualification")
+    if machine_kind == "mill_qualification":
+        from scripts.sw_cam_mill_lifecycle import mill_document_lifecycle
+        return mill_document_lifecycle(sw, clsid, typelib_path,
+            expected_document_path=expected_document_path, action=action,
+            process_id=process_id, acknowledge_qualification_copy=acknowledge_qualification_copy,
+            message_policy=message_policy, expected_state_sha256=expected_state_sha256,
+            receipt_path=receipt_path)
+    if machine_kind != "turn" or process_id is not None or acknowledge_qualification_copy is not False:
+        raise ValueError("TURN lifecycle rejects MILL qualification options")
     from scripts.sw_cam_events import CamMessageSession
 
     report = {"status": "error", "action": action, "phase": "preflight", "may_continue": False,

@@ -252,7 +252,7 @@ def test_unknown_curve_retains_endpoints_without_guessing_parameters(graph):
     (2, {"Thickness", "Width", "length", "Radius1", "Radius2"}),
     (3, {"Thickness", "Width", "length", "IncludedAngle", "NoseRadius"}),
     (1, {"Thickness", "IncludedAngle", "NoseRadius", "InscribedCircle"}),
-    (8, {"Thickness", "InscribedCircle"}), (15, {"Thickness"}), (0, {"Thickness"})])
+    (8, {"Thickness", "InscribedCircle"}), (15, {"Thickness"})])
 def test_insert_type_controls_documented_dimensions_not_generic_tool_type(graph, kind, expected):
     graph.turn_tool.InsertType.return_value = kind
     for name, method in graph.tool_fields.items():
@@ -478,3 +478,53 @@ def test_profile_nested_item_event_stops_later_items_and_segment_getters(graph, 
             collection_reader=lambda raw, limit: attribute._items(raw, TLB, guarded, limit=limit))
     collection.Item.assert_called_once_with(0)
     graph.line.GetTurnSegmentType.assert_not_called()
+
+
+@pytest.mark.parametrize("turn_type",[0,2,3,99])
+def test_non_insert_turn_tool_never_reads_insert_dimensions_or_holder(graph,turn_type):
+    graph.turn_tool.ToolType.return_value=turn_type
+    graph.turn_tool.InsertType.side_effect=AssertionError("No insert getter on drill")
+    for method in graph.tool_fields.values():method.side_effect=AssertionError("No dimensions on drill")
+    graph.turn_tool.IGetTurnToolHolder.side_effect=AssertionError("No holder chain on drill")
+    result=graph.run()
+    assert result["status"]=="review_required"
+    assert result["tool"]["reason"]=="unsupported_turn_tool_type"
+    assert result["tool"]["turn_tool_type_raw"]==turn_type
+    assert result["linked_features"][0]["segment_count"]==2
+    assert result["inventory_unchanged"] and result["active_document_unchanged"]
+    graph.turn_tool.InsertType.assert_not_called()
+    for method in graph.tool_fields.values():method.assert_not_called()
+    graph.turn_tool.IGetTurnToolHolder.assert_not_called()
+
+
+@pytest.mark.parametrize("kind",[0,9,10,99])
+def test_unknown_insert_never_reads_thickness_or_holder(graph,kind):
+    graph.turn_tool.InsertType.return_value=kind
+    for method in graph.tool_fields.values():method.side_effect=AssertionError("Unsafe unknown insert getter")
+    result=graph.run()
+    assert result["status"]=="review_required" and result["tool"]["reason"]=="unsupported_insert_type"
+    for method in graph.tool_fields.values():method.assert_not_called()
+    graph.turn_tool.IGetTurnToolHolder.assert_not_called()
+
+
+def test_non_turn_generic_tool_does_not_query_turn_interface(graph):
+    graph.tool.ToolType.return_value=14
+    result=graph.run()
+    assert result["tool"]["reason"]=="generic_tool_is_not_turning_tool"
+    assert not any(call.args[1]=="ICWTurnTool" for call in graph.typed_mock.call_args_list)
+
+
+def test_profile_only_skips_i_get_tool_and_all_tool_interfaces(graph):
+    graph.operation.IGetTool.side_effect=AssertionError("Entire tool chain must be skipped")
+    result=graph.run(include_tool=False)
+    assert result["status"]=="ok" and result["tool"]==dict(requested=False,parameters_status="not_requested")
+    assert result["linked_features"][0]["segment_count"]==2
+    graph.operation.IGetTool.assert_not_called()
+    assert not any(call.args[1] in {"ICWTool","ICWTurnTool","ICWTurnToolHolder"} for call in graph.typed_mock.call_args_list)
+
+
+@pytest.mark.parametrize("value",[0,1,"false",None])
+def test_include_tool_is_strict_bool(graph,value):
+    result=graph.run(include_tool=value)
+    assert result["status"]=="error"
+    graph.context.assert_not_called()

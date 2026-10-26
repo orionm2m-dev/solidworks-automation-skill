@@ -154,9 +154,8 @@ def test_atomic_write_does_not_consume_existing_temporary(tmp_path):
     temporary = tmp_path / "results.json.tmp"
     output.write_text("original", encoding="utf-8")
     temporary.write_text("unrelated", encoding="utf-8")
-    with pytest.raises(FileExistsError):
-        client._atomic_write(output, {"status": "success"})
-    assert output.read_text(encoding="utf-8") == "original"
+    client._atomic_write(output, {"status": "success"})
+    assert json.loads(output.read_text(encoding="utf-8")) == {"status": "success"}
     assert temporary.read_text(encoding="utf-8") == "unrelated"
 
 
@@ -201,3 +200,86 @@ def test_review_report_without_explicit_stop_flag_can_continue(tmp_path, fake_se
     assert report["status"] == "success"
     assert len(report["results"]) == 2
     assert fake_server[0].call_tool.await_count == 2
+
+
+def _windows_error(code):
+    error = PermissionError("mock Windows replacement error")
+    error.winerror = code
+    return error
+
+
+@pytest.mark.parametrize("winerror", [5, 32, 33])
+def test_atomic_replace_retries_same_complete_content_only(tmp_path, monkeypatch, winerror):
+    output = tmp_path / "result.json"; output.write_text("old")
+    replace = client.os.replace; attempts=[]; sleeps=[]
+    def transient(source, target):
+        attempts.append((Path(source), Path(source).read_bytes()))
+        if len(attempts) < 3:
+            assert output.read_text() == "old"
+            raise _windows_error(winerror)
+        replace(source, target)
+    monkeypatch.setattr(client.os, "replace", transient)
+    monkeypatch.setattr(client.time, "sleep", sleeps.append)
+    client._atomic_write(output, {"result": "complete"})
+    assert len(attempts) == 3 and len({x[0] for x in attempts}) == 1
+    assert len({x[1] for x in attempts}) == 1
+    assert sleeps == [.05, .10]
+    assert json.loads(output.read_text()) == {"result": "complete"}
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+@pytest.mark.parametrize("winerror,expected_attempts", [(5, 5), (32, 5), (33, 5), (2, 1), (112, 1), (None, 1)])
+def test_atomic_replace_exhaustion_keeps_complete_json_and_original(tmp_path, monkeypatch, winerror, expected_attempts):
+    output=tmp_path/"result.json"; output.write_text("old")
+    attempts=[]; sleeps=[]
+    def fail(source,target):
+        attempts.append(Path(source)); raise _windows_error(winerror)
+    monkeypatch.setattr(client.os,"replace",fail);monkeypatch.setattr(client.time,"sleep",sleeps.append)
+    with pytest.raises(PermissionError) as caught:client._atomic_write(output,{"durable":123})
+    assert len(attempts)==expected_attempts and len(sleeps)==expected_attempts-1
+    assert output.read_text()=="old"
+    staged=Path(caught.value.atomic_json_temporary)
+    assert json.loads(staged.read_text())=={"durable":123}
+    assert str(staged) in client._error_message(caught.value)
+
+
+def test_temporary_names_unique_and_unrelated_fixed_temporary_preserved(tmp_path):
+    output=tmp_path/"out.json"; old=tmp_path/"out.json.tmp"; old.write_text("unrelated")
+    client._atomic_write(output,{"n":1});client._atomic_write(output,{"n":2})
+    assert old.read_text()=="unrelated"
+    assert json.loads(output.read_text())=={"n":2}
+
+
+def test_serialization_failure_does_not_retry_or_replace(tmp_path,monkeypatch):
+    output=tmp_path/"out.json";output.write_text("original")
+    def forbidden(*args):raise AssertionError("No replace/sleep on serialization failure")
+    monkeypatch.setattr(client.os,"replace",forbidden);monkeypatch.setattr(client.time,"sleep",forbidden)
+    with pytest.raises(ValueError):client._atomic_write(output,{"bad":float("nan")})
+    assert output.read_text()=="original" and list(tmp_path.glob("*.tmp"))==[]
+
+
+def test_result_write_retry_never_replays_mcp_tool(tmp_path,fake_server,monkeypatch):
+    replace=client.os.replace; failures=[]
+    def transient(source,target):
+        doc=json.loads(Path(source).read_text(encoding="utf-8"))
+        if len(doc["results"])==1 and not doc.get("current_request") and len(failures)<2:
+            failures.append(Path(source));raise _windows_error(5)
+        replace(source,target)
+    monkeypatch.setattr(client.os,"replace",transient);monkeypatch.setattr(client.time,"sleep",lambda _:None)
+    code,report=run_batch(tmp_path,[{"name":"first"},{"name":"second"}])
+    assert code==0 and len(failures)==2 and failures[0]==failures[1]
+    assert [x.args[0] for x in fake_server[0].call_tool.await_args_list]==["first","second"]
+    assert [x["name"] for x in report["results"]]==["first","second"]
+
+
+def test_persistent_result_write_failure_stops_following_tool_without_replay(tmp_path,fake_server,monkeypatch):
+    replace=client.os.replace
+    def failure(source,target):
+        if json.loads(Path(source).read_text(encoding="utf-8"))["results"]:raise _windows_error(5)
+        replace(source,target)
+    monkeypatch.setattr(client.os,"replace",failure);monkeypatch.setattr(client.time,"sleep",lambda _:None)
+    output=tmp_path/"result.json"
+    with pytest.raises(PermissionError):asyncio.run(client._execute_requests([{"name":"first"},{"name":"second"}],output,10))
+    assert fake_server[0].call_tool.await_count==1
+    preserved=[json.loads(p.read_text(encoding="utf-8")) for p in tmp_path.glob("*.tmp")]
+    assert preserved and all([x["name"] for x in d["results"]]==["first"] for d in preserved)

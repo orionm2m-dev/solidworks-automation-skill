@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import math
 import os
+import tempfile
+import time
 from pathlib import Path
 
 from scripts.sw_cam import _error, _member, _turning_context, document_snapshot
@@ -250,12 +252,26 @@ def _write_receipt(path, report, *, create=False):
             output.flush()
             os.fsync(output.fileno())
     else:
-        temporary = path.with_name(path.name + ".tmp")
-        with temporary.open("x", encoding="utf-8") as output:
-            json.dump(report, output, ensure_ascii=False, indent=2, allow_nan=False)
+        payload = json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False)
+        descriptor, name = tempfile.mkstemp(
+            prefix=path.name + ".", suffix=".tmp", dir=path.parent)
+        temporary = Path(name)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            output.write(payload)
             output.flush()
             os.fsync(output.fileno())
-        os.replace(temporary, path)
+        # Retry only publication of the same durable bytes, never a native action.
+        # Failed temporary files remain evidence and cannot block a later report.
+        deadline = time.monotonic() + 1.5
+        for delay in (0.025, 0.05, 0.1, 0.2, 0.4, 0.4, 0.3, None):
+            try:
+                os.replace(temporary, path)
+                return
+            except PermissionError:
+                remaining = deadline - time.monotonic()
+                if delay is None or remaining <= 0:
+                    raise
+                time.sleep(min(delay, remaining))
 
 
 def run_qualification_step(sw, clsid, typelib_path, *, step, expected_feature_count,

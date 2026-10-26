@@ -482,7 +482,7 @@ def _launch_new_solidworks(prog_id, version, wait_seconds):
 
 
 def connect_solidworks(version=None, wait_seconds=5, visible=True, return_metadata=False,
-                       process_id=None, launch_new_instance=False):
+                       process_id=None, launch_new_instance=False, launch_mode="com", startup_receipt_path=None):
     """
     连接到 SolidWorks 实例。
 
@@ -493,6 +493,8 @@ def connect_solidworks(version=None, wait_seconds=5, visible=True, return_metada
         return_metadata: True 时另返回连接来源与进程信息
         process_id: 可选正整数 PID；只附着此现有进程，不启动或回退。
             未传参时继承 SOLIDWORKS_MCP_PROCESS_ID，均未设置则保留默认连接行为。
+        launch_mode: com 使用独立 COM 激活；executable 使用安装定位器启动主程序。
+        startup_receipt_path: executable 模式必需的新绝对 JSON 日志路径。
         launch_new_instance: 明确创建新实例；与 process_id 互斥，忽略旧环境绑定。
             新 PID 验证后设置 UserControl=True 并尝试精确 PID 的 ROT 回读。
             若仅缺少精确 moniker，则返回再次验证的原始代理并明确记录未验证 ROT。
@@ -501,6 +503,15 @@ def connect_solidworks(version=None, wait_seconds=5, visible=True, return_metada
         (sw, model) 元组，model 可能为 None（无打开的文档时）；
         return_metadata=True 时返回 (sw, model, metadata)。
     """
+    if launch_mode not in ("com", "executable"):
+        raise ValueError("launch_mode must be com or executable")
+    if launch_mode == "executable":
+        if launch_new_instance is not True:
+            raise ValueError("executable launch requires launch_new_instance=true")
+        from scripts.sw_executable_launch import validate_receipt_path
+        validate_receipt_path(startup_receipt_path)
+    elif startup_receipt_path is not None:
+        raise ValueError("startup_receipt_path is only valid for executable launch")
     if type(launch_new_instance) is not bool:
         raise ValueError("launch_new_instance must be a boolean")
     if launch_new_instance:
@@ -520,8 +531,13 @@ def connect_solidworks(version=None, wait_seconds=5, visible=True, return_metada
     moniker = None
 
     verified_new_pid = None
+    startup = None
     if launch_new_instance:
-        sw, moniker, verified_new_pid = _launch_new_solidworks(prog_id, version, wait_seconds)
+        if launch_mode == "executable":
+            from scripts.sw_executable_launch import launch_executable
+            sw, moniker, verified_new_pid, startup = launch_executable(version, wait_seconds, startup_receipt_path)
+        else:
+            sw, moniker, verified_new_pid = _launch_new_solidworks(prog_id, version, wait_seconds)
         launched_here = True
         print(f"启动并验证独立 SolidWorks 实例（PID: {verified_new_pid}）")
     elif process_id is not None:
@@ -586,9 +602,12 @@ def connect_solidworks(version=None, wait_seconds=5, visible=True, return_metada
         "moniker": moniker,
         "moniker_verified": moniker is not None,
         "connection_source": (
+            "verified_pid_rot_executable" if startup is not None else
             "exact_pid_rot" if moniker is not None else "held_verified_new_process"
         ) if verified_new_pid is not None else ("verified_pid_rot" if moniker is not None else "legacy_default"),
         "launch_new_instance": launch_new_instance,
+        "launch_mode": launch_mode if launch_new_instance else None,
+        **({"startup": startup} if startup is not None else {}),
         "new_process_verified": verified_new_pid is not None,
         "user_control": True if verified_new_pid is not None else None,
     }

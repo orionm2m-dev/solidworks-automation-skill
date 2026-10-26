@@ -383,3 +383,15 @@ def test_holder_method_returns_real_callable_com_pointer_without_default_item_in
     assert invoked == []
     assert result["holder_profile"]["curve_count"] == 2
     assert_no_writes(graph, result)
+
+
+def test_unsupported_tool_reader_stops_holder_chain_with_review_status(graph):
+    graph.tool_reader.side_effect=lambda raw,op,path,read,result:result.update(
+        present=True,parameters_status="unavailable",reason="unsupported_turn_tool_type")
+    graph.turn_tool.IGetTurnToolHolder.side_effect=AssertionError("No holder accessor after unsupported tool")
+    result=graph.run()
+    assert result["status"]=="review_required"
+    assert result["holder_profile"]["reason"]=="unsupported_tool_parameters"
+    assert result["inventory_unchanged"] and result["active_document_unchanged"]
+    graph.turn_tool.IGetTurnToolHolder.assert_not_called()
+    graph.holder.GetHolderProfile.assert_not_called()

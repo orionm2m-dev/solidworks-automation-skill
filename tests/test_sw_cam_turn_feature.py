@@ -528,3 +528,236 @@ def test_null_return_with_event_never_reads_delta_or_replays(probe):
     assert "after_feature" not in [c.kwargs["diagnostic"]["phase"] for c in probe.captures.call_args_list]
     probe.setup.CreateTurnFeature.assert_called_once()
     probe.doc.GetCWObjectID.assert_not_called()
+
+
+@pytest.fixture
+def crop_probe(probe,monkeypatch):
+    p=probe
+    guards=dict(crop_z_native=[9.,7.],process_id=731,expected_source_operation_native_id=11,
+        expected_source_feature_native_id=50,expected_source_line_sha256=cam._digest(p.before['source_line']),
+        expected_source_sha256=p.before['saved_file_sha256'])
+    p.before['selected_operation_id']=11
+    p.before['config'].update(guards)
+    p.before['creation_line']=cam._crop_line(p.before['source_line'],p.before['config'],p.before)
+    p.before['source_line_sha256']=guards['expected_source_line_sha256']
+    p.before['endpoints_model_m']=[[v*.001 for v in p.before['creation_line'][key]] for key in ('start_native','end_native')]
+    after=add_feature(p.before)
+    after['features'][-1]['profile']['segments']=[deepcopy(p.before['creation_line'])]
+    p.after.clear();p.after.update(after)
+    p.state['current']=deepcopy(p.before);p.defaults.update(guards)
+    p.sw.GetProcessID=731;p.sw.GetAddInObject=Mock(return_value=N(GetCWApp=p.app))
+    session_type=type(p.session);enter=session_type.__enter__;leave=session_type.__exit__
+    def enter_active(self):
+        self.data['active']=True;return enter(self)
+    def exit_inactive(self,*args):
+        self.data['active']=False;return leave(self,*args)
+    monkeypatch.setattr(session_type,'__enter__',enter_active);monkeypatch.setattr(session_type,'__exit__',exit_inactive)
+    original=p.captures.side_effect
+    def subscribed_snapshot(*args,**kw):
+        assert p.session.data.get('active') is True,'Crop CAM capture outside subscription'
+        return original(*args,**kw)
+    p.captures.side_effect=subscribed_snapshot
+    p.crop_guards=guards
+    return p
+
+@pytest.mark.parametrize('action',['prepare','inspect','apply'])
+def test_crop_all_snapshots_subscribed_no_post_cleanup_cam_or_save(crop_probe,action):
+    p=crop_probe
+    r=p.apply() if action=='apply' else p.prepare(action=action)
+    assert r['status'] in ('ok','review_required'),r.get('issue',r.get('cleanup_issue'))
+    assert r['post_cleanup_document_file_verified'] and r['messages']['disconnected']
+    assert not r['messages']['active'] and not r['post_cleanup_cam_read_performed']
+    phases=[c.kwargs['diagnostic']['phase'] for c in p.captures.call_args_list]
+    assert 'after_cleanup' not in phases
+    assert p.factory.call_count==1
+    assert p.app.SaveActiveDocument.call_count==0
+    if action=='apply':
+        assert r['readback_verified'] and r['mapping_verified']
+        assert r['before']['endpoints_model_m']==[[30*.001,0.,9*.001],[30*.001,0.,7*.001]]
+    else:p.setup.CreateTurnFeature.assert_not_called()
+
+@pytest.mark.parametrize('which',['pid','file','cleanup','cleanup_document'])
+def test_crop_exact_identity_and_cleanup_gate(crop_probe,which):
+    p=crop_probe
+    if which=='pid':p.sw.GetProcessID=732
+    elif which=='file':p.path.write_bytes(b'changed file')
+    elif which=='cleanup':p.state['on_exit']=lambda:p.session.data.update(disconnect_errors=['failed'])
+    else:p.state['on_exit']=lambda:p.state['current']['document'].update(needs_save=True)
+    r=p.prepare()
+    assert r['status']=='error'
+    p.setup.CreateTurnFeature.assert_not_called()
+    p.sketch_factory.assert_not_called()
+
+@pytest.mark.parametrize('field,value',[
+ ('crop_z_native',[True,7]),('crop_z_native',[9,9]),('crop_z_native',[9,float('inf')]),
+ ('crop_z_native',[9]),('process_id',True),('expected_source_operation_native_id',0),
+ ('expected_source_feature_native_id',1.0),('expected_source_sha256','z'*64),
+ ('expected_source_line_sha256',None)])
+def test_crop_input_validation_before_bootstrap(crop_probe,field,value):
+    p=crop_probe;r=p.prepare(**{field:value})
+    assert r['status']=='error';p.captures.assert_not_called();p.factory.assert_not_called()
+    p.sw.GetAddInObject.assert_not_called()
+
+def test_crop_has_no_embedded_save_action(crop_probe):
+    r=crop_probe.save()
+    assert r['status']=='error';crop_probe.app.SaveActiveDocument.assert_not_called()
+    crop_probe.factory.assert_not_called()
+
+@pytest.mark.parametrize('zpair',[[11,7],[9,5],[7,9],[10,6],[10.000000000001,7],[9,5.999999999999]])
+def test_crop_exact_domain_no_reversal_or_whole_line(crop_probe,zpair):
+    p=crop_probe;config=dict(p.before['config'],crop_z_native=zpair)
+    with pytest.raises(ValueError):cam._crop_line(p.before['source_line'],config,p.before)
+
+@pytest.mark.parametrize('field,value',[('selected_operation_id',99),('selected_feature_id',99),('saved_file_sha256','b'*64)])
+def test_crop_source_state_ids_and_file_pinned(crop_probe,field,value):
+    p=crop_probe;state=deepcopy(p.before);state[field]=value
+    with pytest.raises(ValueError):cam._crop_line(p.before['source_line'],p.before['config'],state)
+
+@pytest.mark.parametrize('change',['endpoint','arc','unavailable','nonaxial'])
+def test_crop_source_fingerprint_and_axial_line_requirement(crop_probe,change):
+    p=crop_probe;line=deepcopy(p.before['source_line']);config=deepcopy(p.before['config'])
+    if change=='endpoint':line['start_native'][2]+=.1
+    elif change=='arc':line['curve_type_raw']=1
+    elif change=='unavailable':line['curve_parameters_available']=False
+    else:line['end_native'][0]+=.001
+    if change!='endpoint':config['expected_source_line_sha256']=cam._digest(line)
+    with pytest.raises(ValueError):cam._crop_line(line,config,p.before)
+
+def test_crop_direction_and_coordinates_from_source_only(crop_probe):
+    p=crop_probe;line=deepcopy(p.before['source_line']);line['start_native'],line['end_native']=line['end_native'],line['start_native']
+    config=dict(p.before['config'],crop_z_native=[7.,9.],expected_source_line_sha256=cam._digest(line))
+    v=cam._crop_line(line,config,p.before)
+    assert v['start_native']==[30.,0.,7.] and v['end_native']==[30.,0.,9.]
+    assert v['line_native']['true_length']==2. and v['line_native']['length_along_axis']==2.
+    assert v['line_native']['start_diameter']==60.
+
+def test_crop_new_feature_whole_source_is_rejected(crop_probe):
+    p=crop_probe;after=deepcopy(p.after);after['features'][-1]['profile']['segments']=[deepcopy(p.before['source_line'])]
+    with pytest.raises(ValueError):cam._verify(p.before,after,sketch_added=True,new_id=99)
+
+def test_crop_created_geometry_change_rejected(crop_probe):
+    p=crop_probe;after=deepcopy(p.after);after['features'][-1]['profile']['segments'][0]['end_native'][0]+=.01
+    with pytest.raises(ValueError):cam._verify(p.before,after,sketch_added=True,new_id=99)
+
+def test_crop_prepared_hash_stale_stops_without_sketch(crop_probe):
+    p=crop_probe;r=p.apply(expected_state_sha256='f'*64)
+    assert r['status']=='error' and not r['mutation_attempted']
+    p.sketch_factory.assert_not_called();p.setup.CreateTurnFeature.assert_not_called()
+    assert r['messages']['disconnected']
+
+def test_whole_line_does_not_accept_partial_crop_guards(probe):
+    r=probe.prepare(process_id=731)
+    assert r['status']=='error';probe.captures.assert_not_called()
+
+
+@pytest.mark.parametrize('phase',['initial','before_mutation'])
+def test_preflight_capture_has_durable_progress_before_any_geometry(probe,phase):
+    seen=[]
+    def hook(current):
+        if current==phase:
+            receipt=json.loads(probe.receipt.read_text())
+            assert receipt['phase']==phase+'_capture'
+            assert receipt['capture_progress'][-1]['status']=='started'
+            assert receipt['capture_progress'][-1]['started_at_utc']
+            assert not receipt['mutation_attempted'] and not receipt['feature_call_attempted']
+            seen.append(current)
+            raise RuntimeError('bounded simulated capture stop')
+    probe.state['on_capture']=hook
+    r=probe.apply()
+    assert seen==[phase] and r['status']=='error' and not r['mutation_attempted']
+    p=r['capture_progress'][-1]
+    assert p['phase']==phase and p['status']=='error' and p['elapsed_seconds']>=0
+    probe.sketch_factory.assert_not_called();probe.setup.CreateTurnFeature.assert_not_called()
+
+def test_completed_capture_progress_is_retained(probe):
+    r=probe.apply()
+    assert r['readback_verified']
+    assert [p['phase'] for p in r['capture_progress']][:2]==['initial','before_mutation']
+    assert all(p['status']=='completed' and p['elapsed_seconds']>=0 for p in r['capture_progress'])
+    assert json.loads(probe.receipt.read_text())['capture_progress']==r['capture_progress']
+
+def test_prepare_capture_progress_does_not_write_receipt(probe):
+    r=probe.prepare()
+    assert len(r['capture_progress'])==1 and r['capture_progress'][0]['status']=='completed'
+    assert not probe.receipt.exists()
+
+
+@pytest.mark.parametrize('event_getter',['GetCWApp','GetDocType','IGetMachine','IGetEnumSetups','Count','Item','GetCWObjectID'])
+def test_crop_guarded_capture_stops_after_first_context_or_collection_event(monkeypatch,tmp_path,event_getter):
+    from scripts import sw_cam_turn_feature_attribute as guarded
+    state={'event':False,'calls':[]}
+    def col(values):return {'Count':len(values),'Item':lambda i:values[i]}
+    feature={'id':11}
+    operation={'id':22,'OpernType':2,'GetIsToolpathGenerated':False,'IGetAllFeatures':col([feature])}
+    setup={'IGetEnumFeatures':col([feature]),'IGetEnumOperations':col([operation])}
+    machine={'MachType':3,'IGetEnumSetups':col([setup]),'IGetEnumOpSetups':col([setup]),'IGetWorkpiece':{'GetTurnWorkpieceType':1}}
+    doc={'GetDocType':1,'IGetMachine':machine,'GetCWObjectID':lambda obj:(obj['id'],True)}
+    sw={'GetAddInObject':lambda clsid:{'GetCWApp':{'IGetActiveDoc':doc}}}
+    def member(obj,name,*args):
+        state['calls'].append(name);value=obj[name];value=value(*args) if callable(value) else value
+        if name==event_getter:state['event']=True
+        return value
+    def check():
+        if state['event']:raise ValueError('CAM event')
+    monkeypatch.setattr(cam,'_member',member);monkeypatch.setattr(cam,'_typed',lambda x,*args:x)
+    monkeypatch.setattr(guarded,'_typed',lambda x,*args:x)
+    monkeypatch.setattr(guarded,'document_snapshot',lambda sw:dict(path=str(tmp_path/'fixture.sldprt'),title='fixture.sldprt',type=1,needs_save=False))
+    with pytest.raises(ValueError,match='CAM event'):
+        cam._capture_crop(sw,'clsid',TLB,dict(setup_index=0,operation_index=0,expected_operation_type=2),0,
+            str(tmp_path/'fixture.sldprt'),check=check,diagnostic={})
+    assert state['calls'][-1]==event_getter
+    assert state['calls'].count(event_getter)==1
+
+@pytest.mark.parametrize('event_getter',['IGetEnumSetups','Count','Item'])
+def test_crop_remaining_feature_snapshot_uses_guarded_collections(crop_probe,monkeypatch,event_getter):
+    from scripts import sw_cam_turn_feature_attribute as guarded
+    p=crop_probe;state={'event':False,'calls':[]};raw_setup=object()
+    collection={'Count':1,'Item':lambda i:raw_setup};machine={'IGetEnumSetups':collection}
+    p.sw.ActiveDoc=N(GetActiveSketch2=None)
+    monkeypatch.setattr(cam,'_capture_crop',lambda *a,**kw:(deepcopy(p.before),dict(doc=p.doc,machine=machine,app=p.app)))
+    monkeypatch.setattr(sketches,'inspect_meridional_plane',lambda *a:(p.before['plane'],object()))
+    monkeypatch.setattr(guarded,'_typed',lambda x,*a:x)
+    original=cam._member
+    def member(obj,name,*args):
+        if isinstance(obj,dict):
+            state['calls'].append(name);value=obj[name];value=value(*args) if callable(value) else value
+            if name==event_getter:state['event']=True
+            return value
+        return original(obj,name,*args)
+    def check():
+        if state['event']:raise ValueError('CAM event')
+    monkeypatch.setattr(cam,'_member',member)
+    with pytest.raises(ValueError,match='CAM event'):
+        REAL_SNAPSHOT(p.sw,'clsid',TLB,p.before['config'],check=check)
+    assert state['calls'][-1]==event_getter
+
+def test_crop_returned_new_id_getter_event_stops_before_further_capture(crop_probe):
+    p=crop_probe
+    def returned_id(obj):
+        p.session.data['event_count']=1
+        return (99,True)
+    p.doc.GetCWObjectID.side_effect=returned_id
+    r=p.apply()
+    assert r['status']=='uncertain' and r['native_call_returned']
+    phases=[c.kwargs['diagnostic']['phase'] for c in p.captures.call_args_list]
+    assert 'after_feature' not in phases
+    assert p.setup.CreateTurnFeature.call_count==1
+
+
+@pytest.mark.parametrize('reverse',[False,True])
+def test_created_crop_reports_actual_native_order_without_reversal_setter(crop_probe,reverse):
+    p=crop_probe
+    if reverse:
+        def flip():
+            line=p.state['current']['features'][-1]['profile']['segments'][0]
+            line['start_native'],line['end_native']=line['end_native'],line['start_native']
+        p.state['on_create']=flip
+    r=p.apply()
+    assert r['readback_verified']
+    order=r['created_feature_orientation']
+    assert order['endpoint_order']==('reversed_by_native' if reverse else 'same_as_requested')
+    assert order['same_order_verified'] is (not reverse)
+    assert not order['thread_direction_verified'] and not order['automatic_reversal_performed']
+    assert order['requested_endpoints_native']==[[30.,0.,9.],[30.,0.,7.]]
+    assert order['returned_endpoints_native']==(order['requested_endpoints_native'][::-1] if reverse else order['requested_endpoints_native'])
+    assert p.setup.CreateTurnFeature.call_count==1

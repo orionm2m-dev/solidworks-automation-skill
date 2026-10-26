@@ -72,6 +72,27 @@ class McpProcessTargetTests(unittest.TestCase):
             with self.subTest(values=values), self.assertRaises(ValueError):
                 server.SolidWorksConnectInput(**values)
 
+    def test_executable_launch_routes_receipt_and_pins_verified_pid(self):
+        receipt = str(ROOT / "tests" / "startup-test.json")
+        metadata = {"launch_mode": "executable", "process_id": 5678}
+        with patch.object(server, "_connect_solidworks_backend", return_value=(self.app(5678), None, metadata), create=True) as backend:
+            answer = json.loads(server.solidworks_connect(server.SolidWorksConnectInput(
+                launch_new_instance=True, launch_mode="executable", startup_receipt_path=receipt, wait_seconds=60)))
+        self.assertEqual(backend.call_args.kwargs, dict(wait_seconds=60, visible=True, process_id=None,
+            launch_new_instance=True, return_metadata=True, launch_mode="executable", startup_receipt_path=receipt))
+        self.assertEqual(answer["process_id"], 5678)
+
+    def test_executable_schema_requires_explicit_new_launch_and_new_json_receipt(self):
+        receipt = str(ROOT / "tests" / "startup-test.json")
+        for values in [dict(launch_mode="executable", startup_receipt_path=receipt),
+                       dict(launch_new_instance=True, launch_mode="executable"),
+                       dict(launch_new_instance=True, launch_mode="executable", startup_receipt_path="relative.json"),
+                       dict(launch_new_instance=True, launch_mode="executable", startup_receipt_path=receipt, wait_seconds=0),
+                       dict(launch_new_instance=True, startup_receipt_path=receipt),
+                       dict(launch_new_instance=True, launch_mode="shell")]:
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                server.SolidWorksConnectInput(**values)
+
     def test_default_connection_pins_returned_pid(self):
         with patch.object(server, "_connect_solidworks_backend", return_value=(self.app(1234), None), create=True):
             server.connect_solidworks()

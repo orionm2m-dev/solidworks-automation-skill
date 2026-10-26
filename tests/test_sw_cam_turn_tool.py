@@ -236,7 +236,11 @@ def native_graph(monkeypatch):
     document_reader = Mock(side_effect=lambda *_: deepcopy(document))
     monkeypatch.setattr(cam, "_inventory", inventory_reader)
     monkeypatch.setattr(cam, "document_snapshot", document_reader)
-    monkeypatch.setattr(cam, "_typed", lambda raw, *_: raw)
+    def typed(raw, interface, *_):
+        if interface == "ICWTurnTool":
+            return SimpleNamespace(**(vars(raw) | {"ToolType": getattr(raw, "turn_subtype", 1)}))
+        return raw
+    monkeypatch.setattr(cam, "_typed", typed)
     monkeypatch.setattr(cam, "_identity", lambda raw: raw.identity)
     monkeypatch.setattr(cam, "_collection", lambda raw, *_: list(raw))
     profile_reader = Mock(side_effect=lambda *args: args[-1].update({"name": "known profile"}))
@@ -251,7 +255,7 @@ def test_native_usage_is_crosschecked_against_every_operation_tool_identity(nati
     state, native = native_graph.run()
     assert state["affected_operations"] == [ref(0), ref(1)]
     assert [item["tool_group"] for item in state["operation_tools"]] == [0, 0, 1]
-    assert native["turn_tool"] is native_graph.a
+    assert native["turn_tool"].native_id == native_graph.a.native_id
     for operation in native_graph.operations: operation.IGetTool.assert_called()
 
 
@@ -293,12 +297,12 @@ def test_heterogeneous_plan_does_not_query_drill_as_turn_tool(native_graph, monk
         queried.append((raw, interface))
         if raw is g.b and interface == "ICWTurnTool":
             raise AssertionError("A drill must never be queried as a turning insert")
-        return raw
+        return g.typed(raw, interface)
     monkeypatch.setattr(cam, "_typed", typed)
     state, _native = g.run()
     assert state["affected_operations"] == [ref(0), ref(1)]
     assert state["tool_groups"][1] == {"cam_object_id": 202, "tool_type_raw": 3, "insert_type_raw": None,
-        "dimensions_native": {}, "parameter_scope": "non_turn_dimensions_not_read"}
+        "dimensions_native": {}, "parameter_scope": "non_turn_dimensions_not_read", "turn_tool_type_raw": None}
     assert not any(raw is g.b and interface == "ICWTurnTool" for raw, interface in queried)
 
 
@@ -610,3 +614,23 @@ def test_native_propget_collection_is_not_invoked_as_default_item(native_graph, 
     state, _native = g.run()
     assert state["affected_operations"] == [ref(0), ref(1)]
     assert reads == ["propget"]
+
+
+@pytest.mark.parametrize("subtype",[0,2,3,99])
+def test_mixed_turn_drill_scan_never_reads_insert_or_thickness(native_graph,subtype):
+    g=native_graph
+    g.b.turn_subtype=subtype
+    g.b.InsertType=Mock(side_effect=AssertionError("No insert getter on unsupported subtype"))
+    g.b.Thickness=Mock(side_effect=AssertionError("No drill Thickness"))
+    state,_=g.run()
+    assert state["tool_groups"][1]["dimensions_native"]=={}
+    assert state["tool_groups"][1]["turn_tool_type_raw"]==subtype
+    g.b.InsertType.assert_not_called();g.b.Thickness.assert_not_called()
+    assert state["affected_operations"]==[ref(0),ref(1)]
+
+
+def test_selected_drill_subtype_blocks_before_station_or_profile(native_graph):
+    g=native_graph;g.a.turn_subtype=2
+    g.a.InsertType=Mock(side_effect=AssertionError("No insert getter"))
+    with pytest.raises(ValueError,match="selected tool must"):g.run()
+    g.a.InsertType.assert_not_called();g.profile_reader.assert_not_called();g.tool_reader.assert_not_called()

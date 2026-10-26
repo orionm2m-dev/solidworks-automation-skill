@@ -236,3 +236,6 @@ count = interference.GetInterferenceCount()
 - 添加组件前确认所有路径存在，失败组件要记录清单。
 - 自动化脚本中关闭不必要的图形刷新；最终恢复、重建、导出预览。
 - 文档太多或 COM 报内部错误时，先 `CloseAllDocuments(False)`；仍不稳定再重启 SolidWorks 主进程。
+
+
+受限原生零件副本、关闭装配引用替换及既有动画基线回读，见 [原生副本迁移](native-transfer.md)。当前仍需逐步活体资格，不代表生产放行。

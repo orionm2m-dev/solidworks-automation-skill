@@ -23,7 +23,7 @@ def params(context, **changes):
     values = {"addin_clsid": CLSID, "expected_document_path": context.document,
               "setup_index": 0, "operation_index": 6, "expected_operation_type": 3}
     values.update(changes)
-    return server.SolidWorksCamOperationProfileInput(**values)
+    return server.SolidWorksCamProfileReadInput(**values)
 
 
 def test_registered_readonly_schema_and_exact_route(context, core):
@@ -34,7 +34,7 @@ def test_registered_readonly_schema_and_exact_route(context, core):
     result = json.loads(server.solidworks_cam_inspect_operation_profile(params(context)))
     assert result == {"status": "ok", "may_continue": False}
     core.assert_called_once_with(context.sw, CLSID, str(context.dll.parent / "camworks.tlb"),
-                                setup_index=0, operation_index=6, expected_operation_type=3)
+                                setup_index=0, operation_index=6, expected_operation_type=3, include_tool=True)
     assert context.runners == [{"format": server.ResponseFormat.JSON, "automation": True}]
 
 
@@ -88,3 +88,14 @@ def test_markdown_and_exception_routing(context, core):
         params(context, response_format="markdown")).startswith("# ok")
     core.side_effect = RuntimeError("native failure")
     assert json.loads(server.solidworks_cam_inspect_operation_profile(params(context)))["status"] == "error"
+
+
+@pytest.mark.parametrize("value",[0,1,"false",None])
+def test_include_tool_rejects_coercion(context,core,value):
+    with pytest.raises(ValueError):params(context,include_tool=value)
+    core.assert_not_called()
+
+
+def test_profile_only_false_reaches_core(context,core):
+    server.solidworks_cam_inspect_operation_profile(params(context,include_tool=False))
+    assert core.call_args.kwargs["include_tool"] is False

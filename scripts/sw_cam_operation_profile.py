@@ -109,12 +109,24 @@ def _read_tool(raw, raw_operation, typelib_path, read, result=None):
         return result
     result["present"] = True
     base = _typed(raw, "ICWTool", typelib_path)
-    turn = _typed(raw, "ICWTurnTool", typelib_path)
     result["tool_type_raw"] = _integer(read(base, "ToolType"))
     result["info_raw"] = _text(read(base, "GetToolInfoString"))
+    result["dimensions_native"] = {}
+    if result["tool_type_raw"] != 15:
+        result.update(parameters_status="unavailable", reason="generic_tool_is_not_turning_tool")
+        return result
+    turn = _typed(raw, "ICWTurnTool", typelib_path)
     result["turn_tool_type_raw"] = _integer(read(turn, "ToolType"))
+    if result["turn_tool_type_raw"] != 1:
+        # TURN 机床也可分配钻头；不向非车刀请求刀片尺寸或夹持器。
+        result.update(parameters_status="unavailable", reason="unsupported_turn_tool_type")
+        return result
     result["insert_type_raw"] = _integer(read(turn, "InsertType"))
     insert_type = result["insert_type_raw"]
+    if insert_type not in {1, 2, 3, 4, 5, 6, 7, 8, 15, 16}:
+        result.update(parameters_status="unavailable", reason="unsupported_insert_type")
+        return result
+    result["parameters_status"] = "available"
     dimensions = {}
     result["dimensions_native"] = dimensions
     dimensions["Thickness"] = _number(read(turn, "Thickness"))
@@ -155,7 +167,7 @@ def _read_tool(raw, raw_operation, typelib_path, read, result=None):
 
 
 def inspect_operation_profile(sw, clsid, typelib_path, *, setup_index, operation_index,
-                              expected_operation_type):
+                              expected_operation_type, include_tool=True):
     """读取已绑定会话的指定操作、关联轮廓及刀具；首个失败立即停止后续读取。
 
     参数为已验证插件与类型库、零基索引和预期操作类型。返回原始数值及前后
@@ -173,6 +185,9 @@ def inspect_operation_profile(sw, clsid, typelib_path, *, setup_index, operation
         return _member(obj, name, *args)
 
     try:
+        if type(include_tool) is not bool:
+            raise ValueError("include_tool must be a strict Boolean")
+        report["include_tool"] = include_tool
         for name, value in (("setup_index", setup_index), ("operation_index", operation_index)):
             if type(value) is not int or not 0 <= value <= 511:
                 raise ValueError(f"{name} must be an integer in [0, 511]")
@@ -212,7 +227,10 @@ def inspect_operation_profile(sw, clsid, typelib_path, *, setup_index, operation
             segment.get("curve_parameters_available") for feature in report["linked_features"]
             for segment in feature["segments"])
         report["tool"] = {}
-        _read_tool(read(operation, "IGetTool"), operation, typelib_path, read, report["tool"])
+        if include_tool:
+            _read_tool(read(operation, "IGetTool"), operation, typelib_path, read, report["tool"])
+        else:
+            report["tool"].update(requested=False, parameters_status="not_requested")
         stage = "inventory_after"
         after_inventory = _inventory(machine, typelib_path)
         stage = "document_after"
@@ -224,6 +242,8 @@ def inspect_operation_profile(sw, clsid, typelib_path, *, setup_index, operation
         report["status"] = "ok" if unchanged else "review_required"
         if not unchanged:
             report["reason"] = "CAM_STATE_CHANGED_DURING_PROFILE_INSPECTION"
+        elif include_tool and report["tool"].get("parameters_status") == "unavailable":
+            report.update(status="review_required", reason="CAM_TOOL_PARAMETERS_UNAVAILABLE")
     except Exception as exc:
         report.update(status="error", reason="CAM_OPERATION_PROFILE_INSPECTION_FAILED",
                       failed_stage=stage, issue=_error(exc))

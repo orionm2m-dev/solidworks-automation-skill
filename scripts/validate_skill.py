@@ -116,6 +116,27 @@ def check_python_syntax():
     return len(targets)
 
 
+def check_capability_manifest(payload):
+    """检查能力 ID 唯一性及执行模式，拒绝误嵌套的能力条目。"""
+    if not isinstance(payload, dict) or not isinstance(payload.get("capabilities"), list):
+        raise ValueError("能力清单必须包含 capabilities 数组")
+    identifiers = set()
+    for item in payload["capabilities"]:
+        if not isinstance(item, dict):
+            raise ValueError("能力条目必须是对象")
+        identifier = item.get("id")
+        if not isinstance(identifier, str) or not identifier.strip():
+            raise ValueError("能力 ID 必须是非空字符串")
+        if identifier in identifiers:
+            raise ValueError(f"能力 ID 重复: {identifier}")
+        identifiers.add(identifier)
+        modes = item.get("allowed_modes")
+        if not isinstance(modes, list) or not all(
+            isinstance(mode, str) and mode.strip() for mode in modes
+        ):
+            raise ValueError(f"能力 {identifier} 的 allowed_modes 必须是字符串数组")
+
+
 def check_json_files():
     """检查任务契约、输出契约和设计计划 Schema 是否为有效 JSON。"""
     targets = [
@@ -131,7 +152,9 @@ def check_json_files():
     ]
     for path in targets:
         json.loads(path.read_text(encoding="utf-8"))
-    json.loads((ROOT / "capabilities.yaml").read_text(encoding="utf-8"))
+    check_capability_manifest(
+        json.loads((ROOT / "capabilities.yaml").read_text(encoding="utf-8"))
+    )
     workflows = json.loads((ROOT / "golden-workflows.yaml").read_text(encoding="utf-8"))
     if len(workflows.get("workflows", [])) != 10:
         raise AssertionError("黄金工作流必须保持 10 项基线")

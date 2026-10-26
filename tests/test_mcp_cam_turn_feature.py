@@ -109,3 +109,41 @@ def test_target_guard_precedes_all_core_calls(context,core,monkeypatch,failure):
 def test_no_extra_mutators_or_raw_geometry_override(context,core,field):
     with pytest.raises(ValueError):params(context,**{field:1})
     core.assert_not_called()
+
+
+CROP=dict(crop_z_native=[9.,7.],process_id=731,expected_source_operation_native_id=20,
+    expected_source_feature_native_id=30,expected_source_line_sha256='b'*64,expected_source_sha256='c'*64)
+
+@pytest.mark.parametrize('action',['inspect','prepare','apply'])
+def test_crop_exact_route(context,core,action):
+    p=params(context,action,**CROP)
+    assert json.loads(server.solidworks_cam_qualify_turn_feature(p))==core.return_value
+    core.assert_called_once_with(context.sw,CLSID,typelib_path=str(context.dll.parent/'camworks.tlb'),
+        **p.model_dump(exclude={'addin_clsid','expected_document_title','response_format'}))
+
+@pytest.mark.parametrize('field',list(CROP)[1:])
+def test_crop_requires_all_source_guards(context,core,field):
+    with pytest.raises(ValueError):params(context,**dict(CROP,**{field:None}))
+    core.assert_not_called();context.connect.assert_not_called()
+
+@pytest.mark.parametrize('field,value',[('process_id',True),('expected_source_feature_native_id',0),
+    ('expected_source_operation_native_id',1.0),('expected_source_sha256','Z'*64),
+    ('crop_z_native',[9,9]),('crop_z_native',[True,7]),('crop_z_native',['9',7]),
+    ('crop_z_native',[float('inf'),7]),('crop_z_native',[9]),('crop_z_native',[9,8,7])])
+def test_crop_rejects_coercion_and_invalid_inputs(context,core,field,value):
+    with pytest.raises(ValueError):params(context,**dict(CROP,**{field:value}))
+    core.assert_not_called()
+
+def test_crop_save_not_exposed(context,core):
+    with pytest.raises(ValueError):params(context,'save_candidate',**CROP)
+    core.assert_not_called()
+
+@pytest.mark.parametrize('field',list(CROP)[1:])
+def test_wholeline_cannot_accept_crop_guard_fields(context,field):
+    with pytest.raises(ValueError):params(context,**{field:CROP[field]})
+
+@pytest.mark.parametrize('pid',[None,732])
+def test_crop_pinned_process_precedes_connection(context,core,monkeypatch,pid):
+    p=params(context,**CROP);monkeypatch.setattr(server,'_selected_process_id',pid)
+    assert json.loads(server.solidworks_cam_qualify_turn_feature(p))['status']=='error'
+    core.assert_not_called();context.connect.assert_not_called()

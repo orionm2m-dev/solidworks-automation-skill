@@ -16,7 +16,7 @@ import server  # noqa: E402
 @pytest.fixture
 def windows(monkeypatch):
     rows = {
-        1: {"pid": 731, "visible": True, "title": "VYBRO - SOLIDWORKS", "class": "SolidWorks_SldWorks"},
+        1: {"pid": 731, "visible": True, "title": "Qualification - SOLIDWORKS", "class": "SolidWorks_SldWorks"},
         2: {"pid": 731, "visible": True, "title": "SOLIDWORKS Design 2026", "class": "#32770"},
         3: {"pid": 999, "visible": True, "title": "SOLIDWORKS foreign session", "class": "#32770"},
         4: {"pid": 731, "visible": False, "title": "SOLIDWORKS hidden", "class": "#32770"},

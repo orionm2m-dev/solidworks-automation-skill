@@ -921,7 +921,7 @@ def revolve_boss(model, sketch_name, angle_rad, axis_sketch_name=None):
     )
 
 
-def fillet(model, radius, edges=None):
+def fillet(model, radius, edges=None, tangent_propagation=True):
     """
     倒圆角（恒定半径）。
 
@@ -956,7 +956,11 @@ def fillet(model, radius, edges=None):
             "圆角需要先选择边线。请用 select_edges() 按几何条件选边，"
             "或用 solidworks_list_edges 查看可用边线。"
         )
-    return model.FeatureManager.FeatureFillet(195, radius, 0, 0)
+    if type(tangent_propagation) is not bool:
+        raise ValueError("tangent_propagation must be a boolean")
+    from scripts.sw_cam_feature_sketch import _call_method
+    options = 195 if tangent_propagation else 194
+    return _call_method(get_com_member(model, "FeatureManager"), "FeatureFillet", options, radius, 0, 0)
 
 
 def chamfer(model, distance, angle_deg=45):

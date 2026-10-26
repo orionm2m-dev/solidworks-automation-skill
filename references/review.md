@@ -120,3 +120,24 @@ python scripts/sw_review.py ^
 2. 先定位是草图、选择、拉伸方向、单位、基准面还是导出失败。
 3. 修改脚本后重新生成并再次导出预览图。
 4. 最终回复中说明已检查的预览图和仍有限制的地方。
+
+
+## 定向局部预览（原生 API，pilot）
+
+`solidworks_review_active` 可选 `views` 与 `zoom_box_mm`；只要提供其中一个，就必须提供
+严格正整数 `process_id`、已保存的 `expected_document_path` 和父目录已存在的全新绝对
+`output_dir`。`views` 是不重复的标准视图名列表（如 `isometric/front/right`）；
+`zoom_box_mm` 顺序为 `[xmin,ymin,zmin,xmax,ymax,zmax]`，模型坐标、毫米，每轴最小值小于最大值。
+新模式只输出 BMP 和 JSON，不执行原有全模型测量或重建。未提供新参数时默认完整审查行为不变。
+
+每个视角先调用 `ShowNamedView2`，再通过 `ActiveView.Orientation3` 与
+`MathPoint.MultiplyTransform` 转换包围盒的八个角点；由视向坐标的极值得到
+`ViewZoomTo2` 的六个米单位参数。不能在等轴测下直接传入模型包围盒的两个对角点。
+依据：[官方 Zoom to Region 示例](https://help.solidworks.com/2021/English/api/sldworksapi/Zoom_to_Region_Example_VB.htm)
+及 [ViewZoomTo2](https://help.solidworks.com/2023/english/api/sldworksapi/SolidWorks.Interop.sldworks~SolidWorks.Interop.sldworks.IModelDoc2~ViewZoomTo2.html)。
+安装类型库确认该方法是六个 DOUBLE 输入、VOID 返回；导出使用 `SaveBMP` 的 BOOL 返回。
+
+报告记录每张图的视角、实际视向包围盒、调用返回状态，以及前后 `needs_save` 和共享读取的
+文件 SHA256。只修改显示方向、缩放与选择状态；不保存、不重建、不自动重试，最终保留最后一个
+请求视角。显示变化可能改变 dirty 标志，报告会如实保留。`ViewZoomTo2` 的返回不证明区域
+可见或无遮挡，仍须查看实际 BMP；单元测试不代表本机实时资格验证，也不证明几何或 DFM。

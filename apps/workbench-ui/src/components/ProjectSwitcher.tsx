@@ -39,7 +39,7 @@ type ProjectSwitcherProps = {
   onDelete: (project: ProjectRecord) => void;
 };
 
-/** @brief ChatGPT 风格的项目选择、搜索和项目元数据管理入口。 */
+/** @brief 项目选择、搜索和项目元数据管理入口。 */
 export function ProjectSwitcher({
   activeProjectId,
   projectName,

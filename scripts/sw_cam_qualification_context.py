@@ -176,13 +176,16 @@ def inspect_qualification_context(sw, clsid, typelib_path, *, expected_document_
                 raise ValueError("Holder profile requires an actual turning tool (ToolType=15)")
             report["tool"] = {}
             _read_tool(raw_tool, operation, typelib_path, read, report["tool"])
-            turn_tool = _typed(raw_tool, "ICWTurnTool", typelib_path)
-            raw_holder = read(turn_tool, "IGetTurnToolHolder")
-            if raw_holder is None or not bool(raw_holder):
-                report["holder_profile"].update(available=False, reason="native_holder_is_null")
+            if report["tool"].get("parameters_status") == "unavailable":
+                report["holder_profile"].update(available=False, reason="unsupported_tool_parameters")
             else:
-                holder = _typed(raw_holder, "ICWTurnToolHolder", typelib_path)
-                _holder_profile(holder, operation, typelib_path, holder_profile, read, report["holder_profile"])
+                turn_tool = _typed(raw_tool, "ICWTurnTool", typelib_path)
+                raw_holder = read(turn_tool, "IGetTurnToolHolder")
+                if raw_holder is None or not bool(raw_holder):
+                    report["holder_profile"].update(available=False, reason="native_holder_is_null")
+                else:
+                    holder = _typed(raw_holder, "ICWTurnToolHolder", typelib_path)
+                    _holder_profile(holder, operation, typelib_path, holder_profile, read, report["holder_profile"])
         else:
             report["holder_profile"].update(available=False, reason="not_requested")
         stage = "inventory_after"

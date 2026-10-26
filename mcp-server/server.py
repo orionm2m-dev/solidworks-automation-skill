@@ -295,6 +295,59 @@ class BaseInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
 
+class SolidWorksKnowledgeIndexInput(BaseInput):
+    """Read the saved knowledge index without connecting to SOLIDWORKS."""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    index_path: str = Field(min_length=1, max_length=4096, strict=True)
+    action: Literal["summary", "search", "get"]
+    query: Optional[str] = Field(default=None, min_length=1, max_length=2000, strict=True)
+    topic_id: Optional[str] = Field(default=None, min_length=1, max_length=200, strict=True)
+    limit: int = Field(default=5, ge=1, le=20, strict=True)
+    detail: bool = Field(default=False, strict=True)
+    verify_sources: bool = Field(default=False, strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @field_validator("index_path")
+    @classmethod
+    def knowledge_absolute_json(cls, value):
+        if not Path(value).is_absolute() or Path(value).suffix.casefold() != ".json" or "\x00" in value:
+            raise ValueError("Exact absolute .json index_path required")
+        return value
+
+    @field_validator("query", "topic_id")
+    @classmethod
+    def knowledge_nonblank_text(cls, value):
+        if value is not None and (not value.strip() or "\x00" in value):
+            raise ValueError("query and topic_id must contain nonblank text without NUL")
+        return value
+
+    @model_validator(mode="after")
+    def knowledge_action_fields(self):
+        if self.action == "search":
+            if self.query is None or "topic_id" in self.model_fields_set:
+                raise ValueError("search requires query and forbids topic_id")
+        elif self.action == "get":
+            if self.topic_id is None or "query" in self.model_fields_set:
+                raise ValueError("get requires topic_id and forbids query")
+        elif {"query", "topic_id"} & self.model_fields_set:
+            raise ValueError("summary forbids query and topic_id")
+        return self
+
+
+class SolidWorksResumeCheckpointInput(BaseInput):
+    """纯文件续作清单读取；不连接或检查 CAD 内存。"""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    status_path: str = Field(min_length=1, max_length=4096, strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @field_validator("status_path")
+    @classmethod
+    def resume_absolute_json(cls, value):
+        if not Path(value).is_absolute() or Path(value).suffix.casefold() != ".json" or "\x00" in value:
+            raise ValueError("Exact absolute STATUS.json path required")
+        return value
+
+
 class ActiveDocumentInput(BaseInput):
     """活动文档工具的目标校验参数；兼容旧客户端并支持本地严格模式。"""
 
@@ -345,12 +398,22 @@ class SolidWorksConnectInput(BaseInput):
 
     launch_new_instance: bool = Field(default=False, strict=True,
         description="Explicitly create an isolated instance; verify its PID is new before any visibility/UserControl write. Never attaches a pre-existing process.")
+    launch_mode: Literal["com", "executable"] = Field(default="com", description="Isolated COM activation or installed SLDWORKS.exe startup; executable mode requires a new durable receipt.")
+    startup_receipt_path: Optional[str] = Field(default=None, description="New absolute JSON receipt with an existing parent; required only for executable startup.")
     visible: bool = Field(default=True, description="Whether a newly started SolidWorks instance should be visible.")
     wait_seconds: int = Field(default=5, ge=0, le=60, description="Seconds to wait after starting SolidWorks.")
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
     @model_validator(mode="after")
     def isolated_launch_contract(self):
+        if self.launch_mode == "executable":
+            if not self.launch_new_instance or not self.startup_receipt_path or self.wait_seconds <= 0:
+                raise ValueError("Executable startup requires launch_new_instance=true, a receipt and positive wait_seconds")
+            path = Path(self.startup_receipt_path)
+            if not path.is_absolute() or path.suffix.lower() != ".json":
+                raise ValueError("Startup receipt must be an absolute JSON path")
+        elif self.startup_receipt_path is not None:
+            raise ValueError("startup_receipt_path is only valid for executable launch")
         if self.launch_new_instance and self.process_id is not None:
             raise ValueError("launch_new_instance and process_id are mutually exclusive")
         if self.launch_new_instance and self.visible is not True:
@@ -629,6 +692,298 @@ class CadStudioOcpSurfaceInput(BaseInput):
         return value
 
 
+class SolidWorksFrozenFileInput(BaseInput):
+    """只读冻结文件及精确摘要；不自动修改依赖。"""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    path: str = Field(min_length=1, strict=True)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    @field_validator("path")
+    @classmethod
+    def frozen_path_is_absolute(cls, value):
+        if not Path(value).is_absolute():
+            raise ValueError("Frozen file path must be absolute")
+        return value
+
+
+class SolidWorksReferenceReplacementInput(BaseInput):
+    """一对同类型原生文件引用；路径及哈希均由调用者明确提供。"""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    old_path: str = Field(min_length=1, strict=True)
+    old_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    new_path: str = Field(min_length=1, strict=True)
+    new_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    @model_validator(mode="after")
+    def matching_native_reference_types(self):
+        old, new = Path(self.old_path), Path(self.new_path)
+        if (not old.is_absolute() or not new.is_absolute()
+                or old.suffix.casefold() not in {".sldprt", ".sldasm"}
+                or old.suffix.casefold() != new.suffix.casefold()):
+            raise ValueError("Replacement paths must be absolute native documents of the same type")
+        return self
+
+
+class SolidWorksNativeTransferInput(ActiveDocumentInput):
+    """绑定 PID、活动锚点和冻结源的独立副本操作。"""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    process_id: int = Field(gt=0, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    action: Literal["prepare", "apply"]
+    source_path: str = Field(min_length=1, strict=True)
+    source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    output_path: str = Field(min_length=1, strict=True)
+    qualification_only: Literal[True]
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    frozen_files: list[SolidWorksFrozenFileInput] = Field(default_factory=list, max_length=512, strict=True)
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON)
+
+    @field_validator("qualification_only", mode="before")
+    @classmethod
+    def transfer_requires_boolean_qualification(cls, value):
+        if type(value) is not bool:
+            raise ValueError("qualification_only must be a JSON boolean")
+        return value
+
+    @field_validator("source_path")
+    @classmethod
+    def transfer_source_must_exist(cls, value):
+        path = Path(value)
+        if not path.is_absolute() or not path.is_file():
+            raise ValueError("source_path must be an existing absolute file")
+        return value
+
+    @field_validator("output_path")
+    @classmethod
+    def transfer_output_must_be_new(cls, value):
+        path = Path(value)
+        if not path.is_absolute() or not path.parent.is_dir() or path.is_symlink():
+            raise ValueError("output_path must be absolute and nonsymlink with an existing parent")
+        return value
+
+    @model_validator(mode="after")
+    def transfer_action_contract(self):
+        continuing = getattr(self, "prior_transfer_receipt_path", None) is not None
+        if Path(self.output_path).exists() != continuing:
+            raise ValueError("Output must be new, unless an exact prior transfer receipt qualifies continuation")
+        if self.action == "prepare":
+            if self.expected_state_sha256 is not None or self.receipt_path is not None:
+                raise ValueError("prepare cannot accept state SHA or receipt_path")
+            return self
+        if self.expected_state_sha256 is None or self.receipt_path is None:
+            raise ValueError("apply requires a prepared state SHA and a new JSON receipt")
+        path = Path(self.receipt_path)
+        if (not path.is_absolute() or path.suffix.casefold() != ".json"
+                or not path.parent.is_dir() or path.exists() or path.is_symlink()):
+            raise ValueError("receipt_path must be a new absolute JSON file with an existing parent")
+        return self
+
+
+class SolidWorksPartTransferInput(SolidWorksNativeTransferInput):
+    """整件替换与明确增量添加严格分开；不推断 STEP 是增量。"""
+    mode: Literal["replace_body", "add_delta", "subtract_delta"]
+    delta_volume_policy: Literal["strict", "diagnostic"] = "strict"
+    prior_transfer_receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    prior_transfer_receipt_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    donor_step_path: str = Field(min_length=1, strict=True)
+    donor_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    roundtrip_step_path: str = Field(min_length=1, strict=True)
+    acknowledge_delta_only: bool = Field(default=False, strict=True)
+
+    @field_validator("donor_step_path")
+    @classmethod
+    def donor_must_be_existing_step(cls, value):
+        path = Path(value)
+        if not path.is_absolute() or path.suffix.casefold() not in {".step", ".stp"} or not path.is_file():
+            raise ValueError("donor_step_path must be an existing absolute STEP file")
+        return value
+
+    @field_validator("roundtrip_step_path")
+    @classmethod
+    def roundtrip_must_be_new_step(cls, value):
+        path = Path(value)
+        if (not path.is_absolute() or path.suffix.casefold() not in {".step", ".stp"}
+                or not path.parent.is_dir() or path.exists() or path.is_symlink()):
+            raise ValueError("roundtrip_step_path must be a new absolute STEP file with an existing parent")
+        return value
+
+    @model_validator(mode="after")
+    def part_transfer_contract(self):
+        if (self.prior_transfer_receipt_path is None) != (self.prior_transfer_receipt_sha256 is None):
+            raise ValueError("Continuation requires both prior receipt path and SHA")
+        if self.prior_transfer_receipt_path is not None:
+            prior = Path(self.prior_transfer_receipt_path)
+            if (self.mode == "replace_body" or not prior.is_absolute() or not prior.is_file()
+                    or prior.suffix.casefold() != ".json" or prior.is_symlink()):
+                raise ValueError("Only local delta continuation from an exact existing JSON receipt is allowed")
+        if any(Path(value).suffix.casefold() != ".sldprt" for value in (self.source_path, self.output_path)):
+            raise ValueError("Part transfer source and output must be SLDPRT files")
+        if self.acknowledge_delta_only is not (self.mode in {"add_delta", "subtract_delta"}):
+            raise ValueError("add_delta/subtract_delta require acknowledge_delta_only=true; replace_body requires false")
+        return self
+
+
+class SolidWorksReferenceCopyInput(SolidWorksNativeTransferInput):
+    """只复制关闭的装配体并替换明确引用；动画保留必须单独验证。"""
+    replacements: list[SolidWorksReferenceReplacementInput] = Field(min_length=1, max_length=8, strict=True)
+
+    @model_validator(mode="after")
+    def reference_copy_contract(self):
+        if any(Path(value).suffix.casefold() != ".sldasm" for value in (self.source_path, self.output_path)):
+            raise ValueError("Reference-copy source and output must be SLDASM files")
+        keys = [os.path.normcase(os.path.abspath(row.old_path)) for row in self.replacements]
+        if len(set(keys)) != len(keys):
+            raise ValueError("Each old reference path may appear only once")
+        return self
+
+
+class SolidWorksOpenDocumentsInput(BaseInput):
+    """只枚举明确绑定进程的已打开文档；不要求活动文档。"""
+    process_id: int = Field(gt=0, strict=True)
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON)
+
+
+class SolidWorksCleanupPartTransferInput(BaseInput):
+    """按原始迁移回执清理限定文档；不依赖活动文档，不重新执行几何或保存。"""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON)
+    process_id: int = Field(gt=0, strict=True)
+    transfer_receipt_path: str = Field(min_length=1, strict=True)
+    transfer_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_output_current_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    acknowledge_discard_unexpected_import: bool = Field(default=False, strict=True)
+    receipt_path: str = Field(min_length=1, strict=True)
+
+    @field_validator("transfer_receipt_path")
+    @classmethod
+    def cleanup_transfer_receipt_must_exist(cls, value):
+        path = Path(value)
+        if (not path.is_absolute() or path.suffix.casefold() != ".json"
+                or not path.is_file() or path.is_symlink()):
+            raise ValueError("Cleanup requires an exact existing absolute JSON transfer receipt")
+        return value
+
+    @field_validator("receipt_path")
+    @classmethod
+    def cleanup_receipt_must_be_new(cls, value):
+        path = Path(value)
+        if (not path.is_absolute() or path.suffix.casefold() != ".json"
+                or not path.parent.is_dir() or path.exists() or path.is_symlink()):
+            raise ValueError("Cleanup receipt must be a new absolute JSON file with an existing parent")
+        return value
+
+
+class SolidWorksFinalizePartTransferInput(ActiveDocumentInput):
+    """只完成已有成功几何迁移的回导与清理；禁止重放实体编辑。"""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON)
+    process_id: int = Field(gt=0, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    transfer_receipt_path: str = Field(min_length=1, strict=True)
+    transfer_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_output_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_anchor_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: str = Field(min_length=1, strict=True)
+
+    @field_validator("expected_document_path", "transfer_receipt_path")
+    @classmethod
+    def finalize_input_must_exist(cls, value, info):
+        path = Path(value)
+        extension = ".sldprt" if info.field_name == "expected_document_path" else ".json"
+        if (not path.is_absolute() or path.suffix.casefold() != extension
+                or not path.is_file() or path.is_symlink()):
+            raise ValueError("Finalization requires an exact existing absolute part and JSON receipt")
+        return value
+
+    @field_validator("receipt_path")
+    @classmethod
+    def finalize_receipt_must_be_new(cls, value):
+        path = Path(value)
+        if (not path.is_absolute() or path.suffix.casefold() != ".json"
+                or not path.parent.is_dir() or path.exists() or path.is_symlink()):
+            raise ValueError("Finalization receipt must be a new absolute JSON file with an existing parent")
+        return value
+
+
+class SolidWorksNativeAssemblyAuditInput(ActiveDocumentInput):
+    """只检查精确已保存装配，证据写入新的 JSON 回执。"""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON)
+    process_id: int = Field(gt=0, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_file_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: str = Field(min_length=1, strict=True)
+
+    @field_validator("expected_document_path")
+    @classmethod
+    def audit_requires_saved_assembly(cls, value):
+        path = Path(value)
+        if not path.is_absolute() or not path.is_file() or path.suffix.casefold() != ".sldasm":
+            raise ValueError("An exact existing absolute SLDASM is required")
+        return value
+
+    @field_validator("receipt_path")
+    @classmethod
+    def audit_receipt_must_be_new(cls, value):
+        path = Path(value)
+        if (not path.is_absolute() or path.suffix.casefold() != ".json" or not path.parent.is_dir()
+                or path.exists() or path.is_symlink()):
+            raise ValueError("A new absolute JSON receipt is required")
+        return value
+
+
+class SolidWorksNativeAssemblyInspectionInput(SolidWorksNativeAssemblyAuditInput):
+    expected_snapshot_path: Optional[str] = Field(default=None, strict=True)
+    expected_snapshot_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    path_replacements: dict[str, str] = Field(default_factory=dict, max_length=32, strict=True)
+
+    @model_validator(mode="after")
+    def inspection_baseline_contract(self):
+        if (self.expected_snapshot_path is None) != (self.expected_snapshot_sha256 is None):
+            raise ValueError("Snapshot baseline path and SHA must be supplied together")
+        if self.expected_snapshot_path is None and self.path_replacements:
+            raise ValueError("Path map requires a snapshot baseline")
+        if self.expected_snapshot_path is not None:
+            path = Path(self.expected_snapshot_path)
+            if not path.is_absolute() or not path.is_file() or path.suffix.casefold() != ".json":
+                raise ValueError("Snapshot baseline must be an existing absolute JSON file")
+        if any(not absolute_document_path(old) or not absolute_document_path(new)
+                for old, new in self.path_replacements.items()):
+            raise ValueError("Path replacement keys and values must be absolute")
+        return self
+
+
+class SolidWorksTrackedNativeComponentInput(BaseInput):
+    model_config = ConfigDict(str_strip_whitespace=False)
+    key: str = Field(min_length=1, max_length=1000, strict=True)
+    reference: str = Field(min_length=1, max_length=1000, strict=True)
+    path: str = Field(min_length=1, strict=True)
+
+    @field_validator("path")
+    @classmethod
+    def tracked_path_must_be_absolute(cls, value):
+        if not absolute_document_path(value): raise ValueError("Tracked native path must be absolute")
+        return value
+
+
+class SolidWorksNativeAnimationAuditInput(SolidWorksNativeAssemblyAuditInput):
+    study_name: str = Field(min_length=1, max_length=1000, strict=True)
+    explode_view_name: str = Field(min_length=1, max_length=1000, strict=True)
+    baseline_samples_path: str = Field(min_length=1, strict=True)
+    baseline_samples_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    tracked_components: list[SolidWorksTrackedNativeComponentInput] = Field(min_length=1, max_length=16, strict=True)
+    matrix_tolerance: float = Field(default=1e-8, gt=0, le=1e-6, strict=True, allow_inf_nan=False)
+
+    @field_validator("baseline_samples_path")
+    @classmethod
+    def animation_baseline_must_exist(cls, value):
+        path = Path(value)
+        if not path.is_absolute() or not path.is_file() or path.suffix.casefold() != ".json":
+            raise ValueError("Animation baseline must be an existing absolute JSON file")
+        return value
+
+
 class SolidWorksHealthCheckInput(BaseInput):
     """Input for checking the local SolidWorks automation environment."""
 
@@ -655,6 +1010,25 @@ class SolidWorksCamTargetInput(ActiveDocumentInput):
     addin_clsid: str = Field(pattern=r"^\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}$",
                             description="Exact CAM add-in CLSID from solidworks_cam_installation.")
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+
+class SolidWorksCamApplicationInput(SolidWorksCamTargetInput):
+    """只允许 status/load 在明确绑定的无文档进程中使用应用级作用域。"""
+    expected_no_documents: bool = Field(default=False, strict=True,
+        description="Application-only scope for CAM status/load. Requires explicit matching PID and verifies GetDocuments is empty before and after.")
+    process_id: Optional[int] = Field(default=None, gt=0, le=2**32-1, strict=True,
+        description="Required exact already-pinned process for expected_no_documents=true; never launches or switches instances.")
+
+    @model_validator(mode="after")
+    def application_scope_contract(self):
+        if self.expected_no_documents:
+            if self.process_id is None:
+                raise ValueError("No-documents CAM scope requires an explicit process_id")
+            if self.expected_document_path is not None or self.expected_document_title is not None:
+                raise ValueError("No-documents CAM scope excludes document targets")
+        elif self.process_id is not None:
+            raise ValueError("process_id here is reserved for expected_no_documents=true; otherwise pin with solidworks_connect")
+        return self
 
 
 class SolidWorksCamBarParametersInput(BaseInput):
@@ -887,6 +1261,144 @@ class SolidWorksCamOperationProfileInput(SolidWorksCamOperationInput):
     expected_operation_type: int = Field(ge=1, le=16, strict=True)
 
 
+class SolidWorksCamVariableAllowanceInput(SolidWorksCamOperationProfileInput):
+    """只读精确 ROUGH/FINISH 操作的变量余量；不读取刀具、不推断单位。"""
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_operation_type: int = Field(ge=1, le=2, strict=True)
+    action: Literal["read", "identify"] = "read"
+    expected_operation_native_id: Optional[int] = Field(default=None, gt=0, le=4294967295, strict=True)
+    expected_linked_feature_ids: Optional[list[int]] = Field(default=None, min_length=1, max_length=64)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+
+    @field_validator("expected_document_path")
+    @classmethod
+    def variable_allowance_saved_part(cls, value):
+        if not Path(value).is_absolute() or Path(value).suffix.casefold() != ".sldprt":
+            raise ValueError("Exact absolute saved SLDPRT required")
+        return value
+
+    @field_validator("expected_linked_feature_ids", mode="before")
+    @classmethod
+    def variable_allowance_exact_features(cls, value):
+        if value is None:
+            return value
+        if (not isinstance(value, list) or not 1 <= len(value) <= 64
+                or any(type(item) is not int or not 1 <= item <= 4294967295 for item in value)
+                or len(set(value)) != len(value)):
+            raise ValueError("Unique bounded positive native feature IDs are required")
+        return value
+
+
+    @model_validator(mode="after")
+    def variable_allowance_action_scope(self):
+        if self.action == "read" and (self.expected_operation_native_id is None or self.expected_linked_feature_ids is None):
+            raise ValueError("Strict allowance read requires exact operation and linked feature IDs")
+        if self.action == "identify" and self.expected_linked_feature_ids is not None:
+            raise ValueError("Identify discovers linked IDs; expected linked IDs belong to strict read only")
+        return self
+
+
+class SolidWorksCamVariableAllowanceChangeInput(BaseInput):
+    """精确原生名称和有界非负实验值；不推断单位或几何映射。"""
+    model_config = ConfigDict(str_strip_whitespace=False, extra="forbid")
+    name: str = Field(min_length=1, max_length=1000, strict=True)
+    expected_radial_x_native: float = Field(ge=0, le=1, strict=True, allow_inf_nan=False)
+    expected_axial_z_native: float = Field(ge=0, le=1, strict=True, allow_inf_nan=False)
+    radial_x_native: float = Field(ge=0, le=1, strict=True, allow_inf_nan=False)
+    axial_z_native: float = Field(ge=0, le=1, strict=True, allow_inf_nan=False)
+
+    @field_validator("name")
+    @classmethod
+    def allowance_exact_native_name(cls, value):
+        if not value.strip() or any(c in value for c in "\x00\r\n"):
+            raise ValueError("A bounded exact nonempty native name is required")
+        return value
+
+    @field_validator("expected_radial_x_native", "expected_axial_z_native", "radial_x_native", "axial_z_native", mode="before")
+    @classmethod
+    def allowance_exact_json_number(cls, value):
+        if type(value) not in (int, float) or not math.isfinite(value):
+            raise ValueError("Allowance values must be finite JSON numbers, not coerced values")
+        return value
+
+    @model_validator(mode="after")
+    def allowance_only_increase(self):
+        old = (self.expected_radial_x_native, self.expected_axial_z_native)
+        new = (self.radial_x_native, self.axial_z_native)
+        if any(n < o for n, o in zip(new, old)) or new == old:
+            raise ValueError("Each exact name must have a positive increase and no decreased component")
+        return self
+
+
+class SolidWorksCamVariableAllowanceQualificationInput(SolidWorksCamOperationProfileInput):
+    """隔离副本中的局部余量实验；模式 1 仅为明确假设，不表示已确认枚举。"""
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_operation_type: int = Field(ge=1, le=2, strict=True)
+    expected_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_linked_feature_ids: list[int] = Field(min_length=1, max_length=64)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    baseline_checkpoint_path: str = Field(min_length=1, strict=True)
+    action: Literal["prepare", "apply"]
+    changes: list[SolidWorksCamVariableAllowanceChangeInput] = Field(min_length=1, max_length=2)
+    expected_mode_native: int = Field(ge=0, le=1, strict=True)
+    candidate_mode_native: int = Field(ge=1, le=1, strict=True)
+    qualification_only: Literal[True]
+    acknowledge_unqualified_mapping_mode_units: Literal[True]
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+
+    @field_validator("qualification_only", "acknowledge_unqualified_mapping_mode_units", mode="before")
+    @classmethod
+    def allowance_explicit_boolean(cls, value):
+        if type(value) is not bool:
+            raise ValueError("Explicit JSON boolean acknowledgement is required")
+        return value
+
+    @field_validator("expected_document_path", "baseline_checkpoint_path")
+    @classmethod
+    def allowance_qualification_saved_part(cls, value):
+        if not Path(value).is_absolute() or Path(value).suffix.casefold() != ".sldprt":
+            raise ValueError("An exact absolute saved SLDPRT path is required")
+        return value
+
+    @field_validator("expected_linked_feature_ids", mode="before")
+    @classmethod
+    def allowance_qualification_exact_links(cls, value):
+        if (not isinstance(value, list) or not 1 <= len(value) <= 64
+                or any(type(i) is not int or not 1 <= i <= 4294967295 for i in value)
+                or len(set(value)) != len(value)):
+            raise ValueError("Unique bounded positive native feature IDs are required")
+        return value
+
+    @model_validator(mode="after")
+    def allowance_qualification_actions(self):
+        if str(Path(self.expected_document_path).resolve()).casefold() == str(Path(self.baseline_checkpoint_path).resolve()).casefold():
+            raise ValueError("Qualification copy must differ from the protected baseline checkpoint")
+        names = [entry.name for entry in self.changes]
+        if len(set(names)) != len(names):
+            raise ValueError("Changed exact native names must be unique")
+        if self.action == "prepare":
+            if self.expected_state_sha256 is not None or self.receipt_path is not None:
+                raise ValueError("prepare cannot accept apply state or receipt")
+        else:
+            if self.expected_state_sha256 is None or self.receipt_path is None:
+                raise ValueError("apply requires prepared SHA and a new receipt")
+            path = Path(self.receipt_path)
+            if (not path.is_absolute() or path.suffix.casefold() != ".json" or not path.parent.is_dir()
+                    or path.exists() or path.is_symlink() or path.with_name(path.name + ".tmp").exists()):
+                raise ValueError("A new absolute JSON receipt with existing parent is required")
+        return self
+
+
+class SolidWorksCamProfileReadInput(SolidWorksCamOperationProfileInput):
+    """仅轮廓读取可显式跳过整个工具调用链；默认保持原行为。"""
+    include_tool: bool = Field(default=True, strict=True)
+
+
 class SolidWorksCamToolReferenceInput(BaseInput):
     """精确零基操作引用，包括预期原生类型。"""
     setup_index: int = Field(ge=0, le=511, strict=True)
@@ -950,6 +1462,128 @@ class SolidWorksCamTurnToolInput(SolidWorksCamOperationProfileInput):
         if (not path.is_absolute() or path.suffix.casefold() != ".json" or not path.parent.is_dir()
                 or path.exists() or path.is_symlink()):
             raise ValueError("receipt_path must be a new absolute JSON file with an existing parent")
+        return self
+
+
+class SolidWorksCamTurnToolDimensionsInput(SolidWorksCamOperationProfileInput):
+    """绑定完整尺寸配方的一次多字段更新；不生成或保存。"""
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    action: Literal["prepare", "apply"] = "prepare"
+    values_native: dict[str, float] = Field(min_length=1, max_length=6)
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    allowed_affected_operations: Optional[list[SolidWorksCamToolReferenceInput]] = Field(default=None, min_length=1, max_length=512)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    qualification_only: Literal[True]
+    message_policy: Literal["vendor_default"]
+
+    @field_validator("qualification_only", mode="before")
+    @classmethod
+    def batch_qualification_boolean(cls, value):
+        if type(value) is not bool:
+            raise ValueError("qualification_only must be a JSON boolean")
+        return value
+
+    @field_validator("values_native", mode="before")
+    @classmethod
+    def batch_exact_dimensions(cls, value):
+        fields = {"NoseRadius", "Width", "Radius1", "Radius2", "Thickness", "InscribedCircle"}
+        if not isinstance(value, dict) or not 1 <= len(value) <= 6 or any(type(key) is not str or key not in fields for key in value):
+            raise ValueError("One to six whitelisted dimensions are required")
+        for field, number in value.items():
+            if type(number) not in (int, float) or not math.isfinite(number) or number < 0:
+                raise ValueError("Dimensions must be finite nonnegative JSON numbers")
+            if field in {"Width", "Thickness", "InscribedCircle"} and number == 0:
+                raise ValueError("Insert sizes must be positive")
+        return value
+
+    @field_validator("expected_document_path")
+    @classmethod
+    def batch_saved_part(cls, value):
+        if not Path(value).is_absolute() or Path(value).suffix.casefold() != ".sldprt":
+            raise ValueError("An exact absolute saved SLDPRT is required")
+        return value
+
+    @model_validator(mode="after")
+    def batch_action_contract(self):
+        guards = (self.expected_state_sha256, self.allowed_affected_operations, self.receipt_path)
+        if self.action == "prepare":
+            if any(value is not None for value in guards):
+                raise ValueError("prepare accepts recipe only, without apply guards or receipt")
+            return self
+        if any(value is None for value in guards):
+            raise ValueError("apply requires exact prepared SHA, affected references and new receipt")
+        refs = self.allowed_affected_operations
+        keys = [(ref.setup_index, ref.operation_index) for ref in refs]
+        selected = (self.setup_index, self.operation_index, self.expected_operation_type)
+        if len(set(keys)) != len(keys) or not any((ref.setup_index, ref.operation_index, ref.expected_operation_type) == selected for ref in refs):
+            raise ValueError("Unique affected references including the exact selected operation are required")
+        path = Path(self.receipt_path)
+        if not path.is_absolute() or path.suffix.casefold() != ".json" or not path.parent.is_dir() or path.exists() or path.is_symlink():
+            raise ValueError("A new absolute JSON receipt with existing parent is required")
+        return self
+
+
+class SolidWorksOwnedRecoveryEvidenceInput(BaseInput):
+    path: str = Field(min_length=1, strict=True)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    @field_validator("path")
+    @classmethod
+    def owned_evidence_absolute(cls, value):
+        if not Path(value).is_absolute():
+            raise ValueError("Evidence path must be absolute")
+        return value
+
+
+class SolidWorksOwnedRecoverySpecInput(BaseInput):
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_executable_path: str = Field(min_length=1, strict=True)
+    expected_creation_filetime: int = Field(gt=116444736000000000, lt=2**63, strict=True)
+    ownership_receipt: SolidWorksOwnedRecoveryEvidenceInput
+    process_identity_evidence: SolidWorksOwnedRecoveryEvidenceInput
+    recovery_manifest: SolidWorksOwnedRecoveryEvidenceInput
+
+    @field_validator("expected_executable_path")
+    @classmethod
+    def owned_executable_absolute(cls, value):
+        path = Path(value)
+        if not path.is_absolute() or path.name.casefold() != "sldworks.exe":
+            raise ValueError("Exact absolute SLDWORKS.exe path required")
+        return value
+
+
+class SolidWorksOwnedProcessRecoveryInput(BaseInput):
+    """只用进程 API 恢复已证明归属的故障实例；不启动或连接 CAD。"""
+    action: Literal["inspect", "prepare", "apply"]
+    spec: SolidWorksOwnedRecoverySpecInput
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    acknowledge_terminate_owned_process: bool = Field(default=False, strict=True)
+    acknowledged_discard_ids: Optional[list[str]] = Field(default=None, min_length=1, max_length=256)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    wait_milliseconds: int = Field(default=5000, ge=0, le=10000, strict=True)
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON)
+
+    @field_validator("acknowledged_discard_ids", mode="before")
+    @classmethod
+    def owned_discard_exact_strings(cls, value):
+        if value is not None and (not isinstance(value, list) or any(type(item) is not str or not re.fullmatch(r"[A-Za-z0-9_.-]{1,96}", item) for item in value) or len(set(value)) != len(value)):
+            raise ValueError("Unique exact discard IDs are required")
+        return value
+
+    @model_validator(mode="after")
+    def owned_recovery_action_contract(self):
+        guards = (self.expected_state_sha256, self.acknowledged_discard_ids, self.receipt_path)
+        if self.action != "apply":
+            if self.acknowledge_terminate_owned_process or any(value is not None for value in guards):
+                raise ValueError("Read-only recovery actions cannot accept termination inputs")
+            return self
+        if not self.acknowledge_terminate_owned_process or any(value is None for value in guards):
+            raise ValueError("apply requires prepared SHA, explicit termination and exact discard acknowledgements, and new receipt")
+        path = Path(self.receipt_path)
+        if (not path.is_absolute() or path.suffix.casefold() != ".json" or not path.parent.is_dir()
+                or path.exists() or path.is_symlink() or path.with_name(path.name + ".tmp").exists()):
+            raise ValueError("A new absolute JSON receipt with existing parent is required")
         return self
 
 
@@ -1049,6 +1683,21 @@ class SolidWorksCamTurnFeatureInput(SolidWorksCamOperationProfileInput):
     receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
     expected_new_feature_native_id: Optional[int] = Field(default=None, gt=0, le=4294967295, strict=True)
 
+    crop_z_native: Optional[list[float]] = Field(default=None, min_length=2, max_length=2)
+    process_id: Optional[int] = Field(default=None, gt=0, le=4294967295, strict=True)
+    expected_source_operation_native_id: Optional[int] = Field(default=None, gt=0, le=4294967295, strict=True)
+    expected_source_feature_native_id: Optional[int] = Field(default=None, gt=0, le=4294967295, strict=True)
+    expected_source_line_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_source_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    @field_validator("crop_z_native", mode="before")
+    @classmethod
+    def turn_feature_exact_crop_endpoints(cls, value):
+        if value is not None and (not isinstance(value,list) or len(value)!=2
+                or any(type(v) not in (int,float) or not math.isfinite(v) for v in value) or value[0]==value[1]):
+            raise ValueError("Crop requires two distinct finite exact native Z values")
+        return value
+
     @field_validator("qualification_only", "acknowledge_unverified_type_mapping", mode="before")
     @classmethod
     def turn_feature_requires_boolean(cls, value):
@@ -1065,6 +1714,13 @@ class SolidWorksCamTurnFeatureInput(SolidWorksCamOperationProfileInput):
 
     @model_validator(mode="after")
     def turn_feature_action_contract(self):
+        crop_guards = (self.process_id, self.expected_source_operation_native_id, self.expected_source_feature_native_id,
+                       self.expected_source_line_sha256, self.expected_source_sha256)
+        if self.crop_z_native is None:
+            if any(v is not None for v in crop_guards):
+                raise ValueError("Crop source guards require explicit crop_z_native")
+        elif any(v is None for v in crop_guards) or self.action == "save_candidate":
+            raise ValueError("Crop requires exact PID/source IDs/source hashes; saving is a separate lifecycle action")
         if self.action in {"inspect", "prepare"}:
             if any(value is not None for value in (self.expected_state_sha256, self.receipt_path, self.expected_new_feature_native_id)):
                 raise ValueError("inspect/prepare cannot accept mutation inputs")
@@ -1077,7 +1733,6 @@ class SolidWorksCamTurnFeatureInput(SolidWorksCamOperationProfileInput):
         if (self.action == "save_candidate") != (self.expected_new_feature_native_id is not None):
             raise ValueError("Only save_candidate requires the exact created feature native ID")
         return self
-
 
 class SolidWorksCamTurnFeatureAttributeInput(SolidWorksCamTargetInput):
     """按特征原生 ID 检查或单独设置 TechDB 策略；不推断 THREAD 条件已配置。"""
@@ -1127,6 +1782,650 @@ class SolidWorksCamTurnFeatureAttributeInput(SolidWorksCamTargetInput):
         return self
 
 
+class SolidWorksCamFeaturePlanInput(SolidWorksCamTurnFeatureAttributeInput):
+    """只为一个精确单线 Thread 特征执行 RETAIN GOP；不保存或生成刀路。"""
+    attribute_name: Literal["Thread"]
+    expected_feature_count: int = Field(ge=1, le=64, strict=True)
+    expected_operation_count: int = Field(ge=0, le=511, strict=True)
+    expected_operation_setup_count: int = Field(ge=1, le=512, strict=True)
+    read_techdb_path: Literal[False] = False
+
+    @field_validator("read_techdb_path", mode="before")
+    @classmethod
+    def feature_plan_does_not_read_techdb(cls, value):
+        if value is not False:
+            raise ValueError("Feature GOP does not read or modify TechDB")
+        return value
+
+
+class SolidWorksCamThreadPitchInput(SolidWorksCamFeaturePlanInput):
+    """已存在 THREAD 的单字段 Pitch 设置；无 Z、方向、工具或深度推断。"""
+    expected_operation_count: int = Field(ge=1, le=512, strict=True)
+    setup_index: int = Field(ge=0, le=511, strict=True)
+    operation_index: int = Field(ge=0, le=511, strict=True)
+    expected_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_old_pitch: Optional[float] = Field(default=None, ge=0, le=1000000, strict=True, allow_inf_nan=False)
+    new_pitch: Optional[float] = Field(default=None, gt=0, le=1000000, strict=True, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def thread_pitch_action_contract(self):
+        if self.action == "inspect":
+            if self.expected_old_pitch is not None or self.new_pitch is not None:
+                raise ValueError("Inspect cannot accept pitch mutation inputs")
+        elif self.expected_old_pitch is None or self.new_pitch is None or self.expected_old_pitch == self.new_pitch:
+            raise ValueError("Prepare/apply require different explicit old/new native Pitch values")
+        return self
+
+
+class SolidWorksCamMaterialCatalogueInput(SolidWorksCamTargetInput):
+    """已显式绑定进程中的干净已保存零件，只读原生材料目录。"""
+    expected_document_path: str = Field(min_length=1, strict=True)
+
+    @field_validator("expected_document_path")
+    @classmethod
+    def material_catalogue_saved_part(cls, value):
+        if not Path(value).is_absolute() or Path(value).suffix.casefold() != ".sldprt":
+            raise ValueError("Exact absolute saved SLDPRT path required")
+        return value
+
+
+class SolidWorksCamThreadReadInput(SolidWorksCamTargetInput):
+    """精确进程与操作 ID 的 THREAD 只读检查。"""
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    setup_index: int = Field(ge=0, le=511, strict=True)
+    operation_index: int = Field(ge=0, le=511, strict=True)
+    expected_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+
+    @field_validator("expected_document_path")
+    @classmethod
+    def thread_read_saved_part(cls, value):
+        if not Path(value).is_absolute() or Path(value).suffix.casefold() != ".sldprt":
+            raise ValueError("Exact absolute saved SLDPRT path required")
+        return value
+
+
+class SolidWorksCamThreadRecordsInput(SolidWorksCamThreadReadInput):
+    max_records: int = Field(default=10000, ge=1, le=100000, strict=True)
+
+
+class SolidWorksCamThreadToolInput(SolidWorksCamThreadReadInput):
+    expected_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    holder_profile: Literal["none", "operation"] = "operation"
+
+
+class SolidWorksCamGenericCLExportInput(SolidWorksCamTargetInput):
+    """Whole TURN machine generic CL qualification; no toolpath generation or controller assignment."""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_operation_count: int = Field(ge=1, le=512, strict=True)
+    expected_generated_operation_count: int = Field(ge=1, le=512, strict=True)
+    expected_total_record_count: int = Field(ge=1, le=1000000, strict=True)
+    acknowledge_machine_scope: bool = Field(strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    action: Literal["inspect", "prepare", "apply"]
+    qualification_only: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    output_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+
+    @field_validator("expected_document_path")
+    @classmethod
+    def generic_cl_saved_part(cls, value):
+        if not Path(value).is_absolute() or Path(value).suffix.casefold() != ".sldprt":
+            raise ValueError("Exact absolute saved SLDPRT path required")
+        return value
+
+    @model_validator(mode="after")
+    def generic_cl_output_contract(self):
+        if self.qualification_only is not True or self.acknowledge_machine_scope is not True:
+            raise ValueError("qualification_only=true required")
+        if self.expected_generated_operation_count > self.expected_operation_count:
+            raise ValueError("Generated operation count exceeds total")
+        if self.action == "inspect":
+            if any(v is not None for v in (self.output_path, self.expected_state_sha256, self.receipt_path)):
+                raise ValueError("Inspect cannot accept output or mutation evidence")
+            return self
+        path = Path(self.output_path) if self.output_path else None
+        if (path is None or not path.is_absolute() or path.suffix.casefold() != ".cl"
+                or len(path.name) > 80 or any(c in path.name for c in '<>:"/\\|?*\x00')
+                or not path.drive or path.drive.startswith("\\")
+                or ".." in path.parts or path.parent.exists() or path.parent.is_symlink()
+                or not path.parent.parent.is_dir()):
+            raise ValueError("New local-drive .cl file in an exclusive new directory required")
+        if Path(path.resolve()).drive.startswith("\\"):
+            raise ValueError("Output must resolve to a local drive")
+        if self.action == "prepare":
+            if self.expected_state_sha256 is not None or self.receipt_path is not None:
+                raise ValueError("Prepare cannot accept mutation evidence")
+        else:
+            if self.expected_state_sha256 is None or self.receipt_path is None:
+                raise ValueError("Apply requires prepared state and one-use receipt")
+            receipt = Path(self.receipt_path)
+            if (not receipt.is_absolute() or receipt.suffix.casefold() != ".json"
+                    or not receipt.parent.is_dir() or receipt.exists() or receipt.is_symlink()):
+                raise ValueError("New absolute JSON receipt required")
+        return self
+
+
+class SolidWorksCamTurnAptPostprocessInput(SolidWorksCamTargetInput):
+    """Exact generated TURN1/2 output-only APT qualification; no geometry inference."""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    setup_index: int = Field(ge=0, le=511, strict=True)
+    operation_index: int = Field(ge=0, le=511, strict=True)
+    expected_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_operation_type: int = Field(ge=1, le=2, strict=True)
+    expected_linked_feature_ids: list[int] = Field(min_length=1, max_length=64)
+    expected_controller_name: str = Field(min_length=1, max_length=4096, strict=True)
+    expected_record_count: int = Field(ge=1, le=100000, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    action: Literal["inspect", "prepare", "apply"]
+    qualification_only: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    output_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+
+    @field_validator("expected_document_path")
+    @classmethod
+    def turn_apt_saved_part(cls, value):
+        if not Path(value).is_absolute() or Path(value).suffix.casefold() != ".sldprt":
+            raise ValueError("Exact absolute saved SLDPRT path required")
+        return value
+
+    @field_validator("expected_linked_feature_ids", mode="before")
+    @classmethod
+    def turn_apt_linked_ids(cls, value):
+        if (type(value) is not list or not 1 <= len(value) <= 64
+                or any(type(v) is not int or not 1 <= v <= 4294967295 for v in value)
+                or len(set(value)) != len(value)):
+            raise ValueError("Unique exact linked feature IDs required")
+        return sorted(value)
+
+    @field_validator("expected_controller_name")
+    @classmethod
+    def turn_apt_controller(cls, value):
+        if value != value.strip() or "\x00" in value:
+            raise ValueError("Exact nonempty current APT controller name required")
+        return value
+
+    @model_validator(mode="after")
+    def turn_apt_output_contract(self):
+        if self.qualification_only is not True:
+            raise ValueError("qualification_only=true required")
+        if self.action == "inspect":
+            if any(v is not None for v in (self.output_path, self.expected_state_sha256, self.receipt_path)):
+                raise ValueError("Inspect cannot accept output or mutation evidence")
+            return self
+        path = Path(self.output_path) if self.output_path else None
+        if (path is None or not path.is_absolute() or path.suffix.casefold() != ".apt"
+                or len(path.name) > 80 or any(c in path.name for c in '<>:"/\\|?*\x00')
+                or ".." in path.parts or path.parent.exists() or path.parent.is_symlink()
+                or not path.parent.parent.is_dir()):
+            raise ValueError("New .apt file in an exclusive new directory required")
+        if self.action == "prepare":
+            if self.expected_state_sha256 is not None or self.receipt_path is not None:
+                raise ValueError("Prepare cannot accept mutation evidence")
+        else:
+            if self.expected_state_sha256 is None or self.receipt_path is None:
+                raise ValueError("Apply requires prepared state and one-use receipt")
+            receipt = Path(self.receipt_path)
+            if (not receipt.is_absolute() or receipt.suffix.casefold() != ".json"
+                    or not receipt.parent.is_dir() or receipt.exists() or receipt.is_symlink()):
+                raise ValueError("New absolute JSON receipt required")
+        return self
+
+
+class SolidWorksCamThreadAttributesInput(SolidWorksCamThreadReadInput):
+    """现有 THREAD 的一次有界原生属性检查；不解释未知条件和单位。"""
+    expected_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: str = Field(min_length=1, strict=True)
+
+    @field_validator("receipt_path")
+    @classmethod
+    def thread_attribute_new_receipt(cls, value):
+        path = Path(value)
+        if not path.is_absolute() or path.suffix.casefold() != ".json" or not path.parent.is_dir() or path.exists():
+            raise ValueError("New absolute JSON receipt in existing directory required")
+        return value
+
+
+class SolidWorksCamEvidenceInput(BaseInput):
+    """调用者核验过的校准/材料映射证据；不自动证明物理语义。"""
+    path: str = Field(min_length=1, strict=True)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    @field_validator("path")
+    @classmethod
+    def existing_json_evidence(cls, value):
+        path = Path(value)
+        if not path.is_absolute() or path.suffix.casefold() != ".json" or not path.is_file():
+            raise ValueError("Evidence must be an existing absolute JSON file")
+        return value
+
+
+class SolidWorksCamCuttingConditionsInput(SolidWorksCamTargetInput):
+    """原生材料或一个切削标量；所有关联操作保守纳入授权范围。"""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    action: Literal["inspect", "prepare", "apply"] = "inspect"
+    field: Literal["Material", "SMM", "MAXRPM", "SpindleSpeed", "FPR", "FPM", "IsSMM", "IsFPR", "IsAssociateWithStockMaterial"]
+    selected_operation: Optional[SolidWorksCamToolReferenceInput] = None
+    value_native: Any = None
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    allowed_affected_operations: Optional[list[SolidWorksCamToolReferenceInput]] = Field(default=None, max_length=512)
+    unit_evidence: Optional[SolidWorksCamEvidenceInput] = None
+    material_evidence: Optional[SolidWorksCamEvidenceInput] = None
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    qualification_only: Literal[True]
+    message_policy: Literal["vendor_default"]
+
+    @field_validator("qualification_only", mode="before")
+    @classmethod
+    def cutting_qualification_boolean(cls, value):
+        if type(value) is not bool:
+            raise ValueError("qualification_only must be a JSON boolean")
+        return value
+
+    @field_validator("expected_document_path")
+    @classmethod
+    def cutting_saved_part(cls, value):
+        if not Path(value).is_absolute() or Path(value).suffix.casefold() != ".sldprt":
+            raise ValueError("Exact absolute saved SLDPRT required")
+        return value
+
+    @model_validator(mode="after")
+    def cutting_action_contract(self):
+        if (self.field == "Material") != (self.selected_operation is None):
+            raise ValueError("Material is whole-document scope; other fields require a selected operation")
+        if self.action != "apply":
+            if any(value is not None for value in (self.value_native, self.expected_state_sha256,
+                    self.allowed_affected_operations, self.unit_evidence, self.material_evidence, self.receipt_path)):
+                raise ValueError("Inspect/prepare reject mutation inputs")
+            return self
+        if self.expected_state_sha256 is None or self.receipt_path is None or self.allowed_affected_operations is None:
+            raise ValueError("Apply requires state SHA, new receipt and explicit complete affected-operation list")
+        refs = [(r.setup_index, r.operation_index) for r in self.allowed_affected_operations]
+        if len(refs) != len(set(refs)) or (self.field != "Material" and not refs):
+            raise ValueError("Affected refs must be unique; scalar writes cannot have empty scope")
+        path = Path(self.receipt_path)
+        if not path.is_absolute() or path.suffix.casefold() != ".json" or not path.parent.is_dir() or path.exists() or path.is_symlink():
+            raise ValueError("Receipt must be a new absolute JSON file with existing parent")
+        numeric = self.field in {"SMM", "MAXRPM", "SpindleSpeed", "FPR", "FPM"}
+        boolean = self.field in {"IsSMM", "IsFPR", "IsAssociateWithStockMaterial"}
+        if numeric:
+            if type(self.value_native) not in (int, float) or not math.isfinite(self.value_native) or self.value_native <= 0:
+                raise ValueError("Numeric cutting fields require a positive finite JSON number")
+            if self.unit_evidence is None or self.material_evidence is not None:
+                raise ValueError("Numeric fields require only unit calibration evidence")
+        elif boolean:
+            if type(self.value_native) is not bool or self.unit_evidence is not None or self.material_evidence is not None:
+                raise ValueError("Mode fields require strict bool and no unrelated evidence")
+        else:
+            if type(self.value_native) is not str or not self.value_native.strip() or len(self.value_native) > 512 or "\x00" in self.value_native:
+                raise ValueError("Material requires a bounded exact native BSTR")
+            if self.material_evidence is None or self.unit_evidence is not None:
+                raise ValueError("Material requires only exact catalogue/mapping evidence")
+        return self
+
+
+class SolidWorksCamAptControllerInput(SolidWorksCamMaterialCatalogueInput):
+    """隔离 TURN 副本中只读 APT 目录或单次选择；不后处理或保存。"""
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    action: Literal["inspect", "prepare", "apply"]
+    catalogue_source: Literal["native", "installed_files_qualification"] = "native"
+    name_mode: Literal["stem", "filename_with_extension"] = "stem"
+    path_argument_kind: Literal["directory_with_trailing_separator", "exact_aptctl_file_path"] = "directory_with_trailing_separator"
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    controller_name: Optional[str] = Field(default=None, min_length=1, max_length=256, strict=True)
+    controller_file_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    controller_file_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    acknowledge_path_argument_qualification: bool = Field(default=False, strict=True)
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+
+    @model_validator(mode="after")
+    def apt_contract(self):
+        if self.qualification_only is not True or self.acknowledge_disposable_copy is not True:
+            raise ValueError("Explicit disposable-copy qualification required")
+        if self.controller_name and any(c in self.controller_name for c in "\x00\r\n"):
+            raise ValueError("Exact bounded controller name required")
+        if self.name_mode == "filename_with_extension" and self.catalogue_source != "installed_files_qualification":
+            raise ValueError("Filename name experiment requires the observed installed file source")
+        if self.path_argument_kind == "exact_aptctl_file_path" and self.catalogue_source != "installed_files_qualification":
+            raise ValueError("Exact file path experiment requires the observed installed file source")
+        if self.action == "inspect":
+            if any(x is not None for x in (self.controller_file_path, self.controller_file_sha256, self.expected_state_sha256, self.receipt_path)) or self.acknowledge_path_argument_qualification or self.path_argument_kind != "directory_with_trailing_separator":
+                raise ValueError("Inspect rejects assignment inputs")
+        else:
+            path = Path(self.controller_file_path) if self.controller_file_path else None
+            if (self.controller_name is None or self.controller_file_sha256 is None or self.acknowledge_path_argument_qualification is not True
+                    or path is None or not path.is_absolute() or path.suffix.casefold() != ".aptctl" or not path.is_file() or path.is_symlink()):
+                raise ValueError("Exact observed APT name/file/hash and path qualification acknowledgement required")
+            if self.action == "prepare":
+                if self.expected_state_sha256 is not None or self.receipt_path is not None:
+                    raise ValueError("Prepare rejects mutation receipt/hash")
+            else:
+                receipt = Path(self.receipt_path) if self.receipt_path else None
+                if (self.expected_state_sha256 is None or receipt is None or not receipt.is_absolute()
+                        or receipt.suffix.casefold() != ".json" or not receipt.parent.is_dir() or receipt.exists() or receipt.is_symlink()):
+                    raise ValueError("Apply requires prepared state and new absolute JSON receipt")
+        return self
+
+
+class SolidWorksCamProfileSketchInput(ActiveDocumentInput):
+    """已保存资格副本中的有限原生二维轮廓；没有 CAM/实体写入或保存。"""
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    action: Literal["inspect", "prepare", "apply"]
+    spec: Dict[str, Any] = Field(description="Exact plane_axis X/Y/Z, plane_offset_mm, unique sketch_name/plane_name, profile circle(center_model_mm,radius_mm) or closed_polyline(points_model_mm:3..32).")
+    qualification_only: bool = Field(strict=True)
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @field_validator("spec", mode="before")
+    @classmethod
+    def exact_sketch_spec(cls, value):
+        from scripts.sw_cam_profile_sketch import _input
+        return _input(value)
+
+    @model_validator(mode="after")
+    def sketch_contract(self):
+        if self.qualification_only is not True or Path(self.expected_document_path).suffix.casefold() != ".sldprt" or self.expected_document_title is not None:
+            raise ValueError("Exact absolute saved qualification part required")
+        if self.action == "apply":
+            receipt = Path(self.receipt_path) if self.receipt_path else None
+            if (self.expected_state_sha256 is None or receipt is None or not receipt.is_absolute()
+                    or receipt.suffix.casefold() != ".json" or not receipt.parent.is_dir() or receipt.exists() or receipt.is_symlink()):
+                raise ValueError("Apply requires prepared state and new JSON receipt")
+        elif self.receipt_path is not None or self.expected_state_sha256 is not None:
+            raise ValueError("Read actions reject mutation inputs")
+        return self
+
+
+class SolidWorksCamMillFeaturePlanInput(SolidWorksCamMaterialCatalogueInput):
+    """One explicit disposable MILL feature; no save, GTP or global GOP."""
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    action: Literal["inspect", "prepare", "apply"]
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+
+    @model_validator(mode="after")
+    def single_mill_feature_contract(self):
+        if self.expected_document_title is not None or self.qualification_only is not True or self.acknowledge_disposable_copy is not True:
+            raise ValueError("Exact saved disposable qualification copy required")
+        if self.action == "apply":
+            receipt = Path(self.receipt_path) if self.receipt_path is not None else None
+            if (self.expected_state_sha256 is None or receipt is None or not receipt.is_absolute()
+                    or receipt.suffix.casefold() != ".json" or not receipt.parent.is_dir()
+                    or receipt.exists() or receipt.is_symlink()):
+                raise ValueError("Apply requires prepared state and a new absolute JSON receipt")
+        elif self.expected_state_sha256 is not None or self.receipt_path is not None:
+            raise ValueError("Read actions reject mutation inputs")
+        return self
+
+
+class SolidWorksCamMillOperationToolpathInput(SolidWorksCamMillFeaturePlanInput):
+    """Exactly one MILL operation in a disposable single-feature qualification."""
+    expected_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_mill_operation_type: int = Field(ge=0, le=2147483647, strict=True)
+
+
+class SolidWorksCamMillToolDiameterInput(SolidWorksCamMillFeaturePlanInput):
+    """One diameter change on a diagnostic MILL tool with all operation references pinned."""
+    expected_operation_native_ids: list[int] = Field(min_length=1, max_length=32)
+    expected_tool_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_tool_type_raw: int = Field(ge=1, le=1, strict=True)
+    expected_cut_diameter_native: float = Field(gt=0, allow_inf_nan=False, strict=True)
+    new_cut_diameter_native: float = Field(gt=0, allow_inf_nan=False, strict=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def strict_diameter_inputs(cls, data):
+        if isinstance(data, dict):
+            ids = data.get("expected_operation_native_ids")
+            if type(ids) is not list or not 1 <= len(ids) <= 32 or any(type(v) is not int or not 0 < v <= 4294967295 for v in ids) or len(set(ids)) != len(ids):
+                raise ValueError("Exact ordered unique operation IDs required")
+            for key in ("expected_cut_diameter_native", "new_cut_diameter_native"):
+                if type(data.get(key)) not in (int, float):
+                    raise ValueError("Finite positive numeric diameter required")
+        return data
+
+    @model_validator(mode="after")
+    def changed_diameter(self):
+        if self.expected_cut_diameter_native == self.new_cut_diameter_native:
+            raise ValueError("New diameter must differ from expected current value")
+        return self
+
+
+
+class SolidWorksCamMillFeatureGeometryInput(SolidWorksCamMaterialCatalogueInput):
+    """One native target/stock/WIP export from an exact saved MILL qualification."""
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_operation_native_ids: list[int] = Field(max_length=32, strict=True)
+    expected_generated_operation_native_ids: list[int] = Field(max_length=32, strict=True)
+    export_kind: Literal["target", "stock", "wip"]
+    output_dir: str = Field(min_length=1, strict=True)
+    action: Literal["inspect", "prepare", "apply"]
+    qualification_only: bool = Field(strict=True)
+    acknowledge_document_wide_export: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+
+    @field_validator("expected_operation_native_ids", "expected_generated_operation_native_ids", mode="before")
+    @classmethod
+    def mill_export_exact_ordered_ids(cls, value):
+        if (type(value) is not list or len(value) > 32 or
+                any(type(n) is not int or not 0 < n <= 4294967295 for n in value) or
+                len(set(value)) != len(value)):
+            raise ValueError("Exact ordered unique positive operation IDs required (0 to 32)")
+        return value
+
+    @model_validator(mode="after")
+    def mill_export_explicit_scope(self):
+        if (self.expected_document_title is not None or self.qualification_only is not True
+                or self.acknowledge_document_wide_export is not True):
+            raise ValueError("Exact saved qualification part and document-wide export acknowledgement required")
+        generated = self.expected_generated_operation_native_ids
+        if [n for n in self.expected_operation_native_ids if n in generated] != generated:
+            raise ValueError("Generated IDs must be an ordered subset of exact operation IDs")
+        if self.export_kind == "wip" and not generated:
+            raise ValueError("WIP requires at least one explicitly generated operation")
+        if self.action == "apply":
+            receipt = Path(self.receipt_path) if self.receipt_path is not None else None
+            if (self.expected_state_sha256 is None or receipt is None or not receipt.is_absolute()
+                    or receipt.suffix.casefold() != ".json" or not receipt.parent.is_dir()
+                    or receipt.exists() or receipt.is_symlink()):
+                raise ValueError("Apply requires prepared state and new absolute JSON receipt")
+        elif self.expected_state_sha256 is not None or self.receipt_path is not None:
+            raise ValueError("Read actions reject mutation inputs")
+        return self
+
+    @field_validator("output_dir")
+    @classmethod
+    def geometry_export_directory_must_be_new_and_local(cls, value):
+        path = Path(value)
+
+        def reject_unc(candidate):
+            # 扩展长度的本地盘符路径不是 UNC；映射盘仍按规范路径检查。
+            if candidate.drive.startswith("\\\\") and not re.fullmatch(r"\\\\\?\\[A-Za-z]:", candidate.drive):
+                raise ValueError("output_dir must be local; canonical UNC paths are not supported")
+
+        if not path.is_absolute():
+            raise ValueError("output_dir must be an absolute local path")
+        reject_unc(path)
+        if path.exists() or path.is_symlink():
+            raise ValueError("output_dir must be new; existing geometry exports cannot be replayed")
+        if not path.parent.is_dir():
+            raise ValueError("output_dir parent must be an existing directory")
+        reject_unc(path.resolve())
+        return value
+
+class SolidWorksCamMillUnitsInput(SolidWorksCamMaterialCatalogueInput):
+    """单个真实 MILL 轮廓的局部尺寸实验；不推断全局或进给单位。"""
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    action: Literal["inspect", "prepare", "apply"]
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    sketch_spec: Dict[str, Any] = Field(description="Same saved asymmetric four-line rectangle spec used by solidworks_cam_create_profile_sketch; coordinates in model mm.")
+    depth_native: int = Field(ge=1, le=100, strict=True, description="Explicit pilot integer input, not assumed mm; native dDepth ABI is DOUBLE.")
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_feature_native_id: Optional[int] = Field(default=None, gt=0, le=4294967295, strict=True)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+
+    @field_validator("sketch_spec", mode="before")
+    @classmethod
+    def mill_unit_rectangle(cls, value):
+        from scripts.sw_cam_profile_sketch import _input
+        from scripts.sw_cam_mill_units_geometry import _rectangle
+        value = _input(value)
+        if value["profile"]["kind"] != "closed_polyline" or len(value["profile"]["points_model_mm"]) != 4:
+            raise ValueError("Unit pilot requires one asymmetric four-line rectangle")
+        points = [[v / 1000 for v in p] for p in value["profile"]["points_model_mm"]]
+        _rectangle(points, 1e-10, 1e-6, 1e-7, "request_sketch")
+        return value
+
+    @model_validator(mode="after")
+    def mill_units_contract(self):
+        if self.qualification_only is not True or self.acknowledge_disposable_copy is not True:
+            raise ValueError("Explicit disposable qualification required")
+        if self.expected_feature_native_id is not None and self.action != "inspect":
+            raise ValueError("Existing feature ID is inspect-only; never replay creation")
+        if self.action == "apply":
+            receipt = Path(self.receipt_path) if self.receipt_path else None
+            if (self.expected_state_sha256 is None or receipt is None or not receipt.is_absolute()
+                    or receipt.suffix.casefold() != ".json" or not receipt.parent.is_dir() or receipt.exists() or receipt.is_symlink()):
+                raise ValueError("Apply requires prepared state and a new absolute JSON receipt")
+        elif self.expected_state_sha256 is not None or self.receipt_path is not None:
+            raise ValueError("Read action rejects mutation inputs")
+        return self
+
+
+class SolidWorksCamThreadPostprocessInput(SolidWorksCamThreadReadInput):
+    """仅输出所选 THREAD 的资格文件；不换 post、不向机床发送。"""
+    action: Literal["inspect", "prepare", "apply"]
+    expected_record_count: int = Field(ge=1, le=100000, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    qualification_only: bool = Field(strict=True)
+    output_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+
+    @model_validator(mode="after")
+    def postprocess_contract(self):
+        if self.qualification_only is not True:
+            raise ValueError("qualification_only=true required")
+        if self.action == "inspect":
+            if any(x is not None for x in (self.output_path, self.expected_state_sha256, self.receipt_path)):
+                raise ValueError("Inspect cannot accept output or mutation inputs")
+            return self
+        path = Path(self.output_path) if self.output_path else None
+        if (path is None or not path.is_absolute() or path.suffix.casefold() not in {".nc", ".apt", ".txt"}
+                or len(path.name) > 80 or path.parent.exists() or not path.parent.parent.is_dir()):
+            raise ValueError("A new qualification file inside a new dedicated directory is required")
+        if self.action == "prepare":
+            if self.expected_state_sha256 is not None or self.receipt_path is not None:
+                raise ValueError("Prepare cannot accept mutation evidence")
+        else:
+            if self.expected_state_sha256 is None or self.receipt_path is None:
+                raise ValueError("Apply requires prepared state and unique receipt")
+            receipt = Path(self.receipt_path)
+            if not receipt.is_absolute() or receipt.suffix.casefold() != ".json" or not receipt.parent.is_dir() or receipt.exists() or receipt.is_symlink():
+                raise ValueError("Unique absolute JSON receipt required")
+        return self
+
+
+class SolidWorksCamMillDefinitionInput(SolidWorksCamMaterialCatalogueInput):
+    """空白已保存副本中的单次原生 MILL 定义；不保存或生成。"""
+    action: Literal["inspect", "prepare", "apply"]
+    qualification_only: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+
+    @model_validator(mode="after")
+    def mill_definition_contract(self):
+        if self.qualification_only is not True:
+            raise ValueError("qualification_only=true required")
+        if self.action != "apply":
+            if self.expected_state_sha256 is not None or self.receipt_path is not None:
+                raise ValueError("Read actions cannot accept mutation evidence")
+        else:
+            if self.expected_state_sha256 is None or self.receipt_path is None:
+                raise ValueError("Apply requires exact prepare state and unique receipt")
+            path = Path(self.receipt_path)
+            if not path.is_absolute() or path.suffix.casefold() != ".json" or not path.parent.is_dir() or path.exists() or path.is_symlink():
+                raise ValueError("Unique absolute JSON receipt required")
+        return self
+
+
+class SolidWorksCamMillQualificationInput(SolidWorksCamMillDefinitionInput):
+    operation: Literal["machine", "setup"]
+    machine_index: Optional[int] = Field(default=None, ge=0, le=127, strict=True)
+    direction: Optional[list[float]] = Field(default=None, min_length=3, max_length=3)
+
+    @field_validator("direction", mode="before")
+    @classmethod
+    def mill_cardinal_direction(cls, value):
+        if value is None:
+            return value
+        if (type(value) is not list or len(value) != 3 or any(type(x) not in (int, float) or x not in (-1, 0, 1) for x in value)
+                or sum(x != 0 for x in value) != 1):
+            raise ValueError("Only six exact cardinal numeric directions are accepted")
+        return value
+
+    @model_validator(mode="after")
+    def mill_machine_or_setup_contract(self):
+        if self.operation == "machine":
+            if self.direction is not None or (self.action == "inspect" and self.machine_index is not None):
+                raise ValueError("Machine inspect has no selection or direction")
+            if self.action != "inspect" and self.machine_index is None:
+                raise ValueError("Native machine catalogue index required")
+        elif self.machine_index is not None or self.direction is None:
+            raise ValueError("Setup requires only a cardinal direction; native origin is fixed at zero")
+        return self
+
+
+class SolidWorksCamMillStockInput(SolidWorksCamMillDefinitionInput):
+    stl_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    stl_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    stock_evidence: Optional[SolidWorksCamEvidenceInput] = None
+
+    @model_validator(mode="after")
+    def mill_stock_contract(self):
+        if self.action != "apply":
+            if any(x is not None for x in (self.stl_path, self.stl_sha256, self.stock_evidence)):
+                raise ValueError("Read actions cannot accept stock mutation inputs")
+        else:
+            if self.stl_path is None or self.stl_sha256 is None or self.stock_evidence is None:
+                raise ValueError("Explicit STL/hash and reviewed stock evidence required")
+            path = Path(self.stl_path)
+            if not path.is_absolute() or not path.is_file() or path.suffix.casefold() != ".stl":
+                raise ValueError("Existing absolute manufacturing-stock STL required")
+        return self
+
+
 class SolidWorksCamDocumentLifecycleInput(SolidWorksCamTargetInput):
     """已绑定 PID/精确零件的 CAM 原生保存与关闭；不处理已打开的模态窗口。"""
     expected_document_path: str = Field(min_length=1, strict=True)
@@ -1134,6 +2433,36 @@ class SolidWorksCamDocumentLifecycleInput(SolidWorksCamTargetInput):
     message_policy: Literal["vendor_default"]
     expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
     receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+
+    machine_kind: Literal["turn", "mill_qualification", "mill_single_feature_qualification"] = "turn"
+    process_id: Optional[int] = Field(default=None, gt=0, le=4294967295, strict=True)
+    acknowledge_qualification_copy: bool = Field(default=False, strict=True)
+
+    expected_feature_native_id: Optional[int] = Field(default=None, gt=0, strict=True)
+    expected_operation_native_ids: Optional[list[int]] = Field(default=None, max_length=32, strict=True)
+
+    @field_validator("expected_operation_native_ids", mode="before")
+    @classmethod
+    def strict_lifecycle_operation_ids(cls, value):
+        if value is not None and (type(value) is not list or len(value) > 32 or
+                any(type(n) is not int or n <= 0 for n in value) or len(set(value)) != len(value)):
+            raise ValueError("Operation IDs must be an exact ordered unique positive integer list (0 to 32)")
+        return value
+
+    @model_validator(mode="after")
+    def lifecycle_machine_scope(self):
+        if self.machine_kind in {"mill_qualification", "mill_single_feature_qualification"}:
+            if self.process_id is None or self.acknowledge_qualification_copy is not True:
+                raise ValueError("MILL lifecycle requires exact process_id and acknowledged qualification copy")
+        elif {"process_id", "acknowledge_qualification_copy"} & self.model_fields_set:
+            raise ValueError("TURN lifecycle rejects explicit MILL process/qualification inputs")
+        selectors = {"expected_feature_native_id", "expected_operation_native_ids"}
+        if self.machine_kind == "mill_single_feature_qualification":
+            if self.expected_feature_native_id is None or self.expected_operation_native_ids is None:
+                raise ValueError("Single-feature MILL lifecycle requires exact feature and ordered operation IDs")
+        elif selectors & self.model_fields_set:
+            raise ValueError("Feature/operation selectors require mill_single_feature_qualification")
+        return self
 
     @field_validator("expected_document_path")
     @classmethod
@@ -1237,6 +2566,80 @@ class SolidWorksFilletInput(ActiveDocumentInput):
         description="Only report which edges match; do not create the fillet. Use this to verify edge selection first.",
     )
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+    edge_signatures: Optional[list[dict]] = Field(default=None, min_length=1, max_length=64, strict=True)
+    expected_edge_count: Optional[int] = Field(default=None, ge=1, le=64, strict=True)
+    process_id: Optional[int] = Field(default=None, gt=0, strict=True)
+    expected_selection_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def exact_fillet_raw_numbers(cls, values):
+        if isinstance(values, dict) and values.get("edge_signatures") is not None:
+            radius = values.get("radius_mm")
+            if type(radius) not in (int, float) or not math.isfinite(radius):
+                raise ValueError("Exact fillet radius must be a finite JSON number")
+            if type(values.get("dry_run", False)) is not bool:
+                raise ValueError("Exact fillet dry_run must be a JSON boolean")
+        return values
+
+    @field_validator("edge_signatures", mode="before")
+    @classmethod
+    def exact_fillet_signatures_are_bounded(cls, value):
+        if value is None:
+            return value
+        if type(value) is not list or not 1 <= len(value) <= 64:
+            raise ValueError("One to sixty-four exact edge signatures required")
+        fields = {"length_mm", "endpoints_mm", "box_mm", "curve_type", "curve_parameters_native"}
+        def numbers(items, size=None):
+            if (type(items) is not list or len(items) > 64 or (size is not None and len(items) != size)
+                    or any(type(item) not in (int, float) or not math.isfinite(item) for item in items)):
+                raise ValueError("Signature requires finite JSON numeric arrays of the declared shape")
+        for item in value:
+            if type(item) is not dict or set(item) != fields:
+                raise ValueError("Edge signature requires exactly its five documented fields")
+            if type(item["length_mm"]) not in (int, float) or not math.isfinite(item["length_mm"]):
+                raise ValueError("Signature length must be a finite JSON number")
+            numbers(item["box_mm"], 6)
+            endpoints = item["endpoints_mm"]
+            if endpoints is not None:
+                if type(endpoints) is not list or len(endpoints) != 2:
+                    raise ValueError("Signature endpoints must be null or two 3-vectors")
+                for point in endpoints:
+                    numbers(point, 3)
+            if type(item["curve_type"]) is not str or item["curve_type"] not in {"line", "circle", "other"}:
+                raise ValueError("Unsupported exact signature curve type")
+            if item["curve_parameters_native"] is not None:
+                numbers(item["curve_parameters_native"])
+        return value
+
+    @model_validator(mode="after")
+    def exact_fillet_contract(self):
+        if self.edge_signatures is None:
+            if any(value is not None for value in (self.expected_edge_count, self.process_id,
+                    self.expected_selection_sha256, self.receipt_path)):
+                raise ValueError("Exact selection metadata requires edge_signatures; no legacy fallback")
+            return self
+        if (self.process_id is None or self.expected_edge_count is None or self.axis != "all"
+                or self.min_length_mm is not None or self.max_length_mm is not None
+                or self.convex_only or self.concave_only):
+            raise ValueError("Exact mode requires PID/count, axis=all and no legacy geometric filters")
+        if self.expected_document_path is None:
+            raise ValueError("Exact mode requires an existing absolute saved SLDPRT")
+        path = Path(self.expected_document_path)
+        if not path.is_absolute() or not path.is_file() or path.suffix.casefold() != ".sldprt" or path.is_symlink():
+            raise ValueError("Exact mode requires an existing absolute saved SLDPRT")
+        if self.dry_run:
+            if self.expected_selection_sha256 is not None or self.receipt_path is not None:
+                raise ValueError("Exact dry run cannot accept apply SHA or receipt")
+        else:
+            if self.expected_selection_sha256 is None or self.receipt_path is None:
+                raise ValueError("Exact apply requires prepared selection SHA and a new JSON receipt")
+            receipt = Path(self.receipt_path)
+            if (not receipt.is_absolute() or receipt.suffix.casefold() != ".json"
+                    or not receipt.parent.is_dir() or receipt.exists() or receipt.is_symlink()):
+                raise ValueError("Exact apply receipt must be a new absolute JSON file with an existing parent")
+        return self
 
 
 class SolidWorksChamferInput(ActiveDocumentInput):
@@ -1298,6 +2701,16 @@ class SolidWorksEdgeInspectionInput(ActiveDocumentInput):
     include_convexity: bool = Field(
         default=True, description="Compute convex/concave for each edge. Costs extra B-Rep reads."
     )
+    endpoint_bounds_mm: Optional[list[float]] = Field(default=None, min_length=6, max_length=6,
+        description="Fast local inspection: both trim endpoints inside [xmin,ymin,zmin,xmax,ymax,zmax], mm. Curved-edge extent is not implied.")
+    @field_validator("endpoint_bounds_mm")
+    @classmethod
+    def validate_endpoint_bounds(cls, value):
+        if value is not None and (any(not math.isfinite(v) for v in value)
+                or any(value[i] > value[i+3] for i in range(3))):
+            raise ValueError("Finite ordered endpoint bounds required")
+        return value
+
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
@@ -1628,11 +3041,40 @@ class SolidWorksPackRenameInput(ActiveDocumentInput):
 
 
 class SolidWorksReviewInput(ActiveDocumentInput):
-    """Input for exporting previews and a review report."""
+    """默认完整审查，或精确文档的标准方向局部预览。"""
 
     output_dir: str = Field(..., min_length=1, description="Directory for BMP previews and JSON report.")
     basename: str = Field(default="mcp_review", min_length=1, max_length=80, description="Output filename prefix.")
+    views: Optional[list[Literal["front", "back", "left", "right", "top", "bottom", "isometric", "trimetric", "dimetric"]]] = Field(default=None, min_length=1, max_length=9)
+    zoom_box_mm: Optional[list[float]] = Field(default=None, min_length=6, max_length=6,
+        description="Model XYZ millimetres: xmin,ymin,zmin,xmax,ymax,zmax; transformed to the current view before native zoom.")
+    process_id: Optional[int] = Field(default=None, gt=0, strict=True)
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+    @field_validator("zoom_box_mm", mode="before")
+    @classmethod
+    def finite_review_box(cls, value):
+        if value is not None and (not isinstance(value, list) or len(value) != 6
+                or any(type(v) not in (int, float) or not math.isfinite(v) for v in value)
+                or any(value[i] >= value[i+3] for i in range(3))):
+            raise ValueError("zoom_box_mm requires six finite ordered XYZ values")
+        return value
+
+    @model_validator(mode="after")
+    def targeted_view_review(self):
+        if self.views is None and self.zoom_box_mm is None:
+            if self.process_id is not None:
+                raise ValueError("process_id requires explicit views or zoom_box_mm")
+            return self
+        if self.process_id is None or not self.expected_document_path or self.expected_document_title is not None:
+            raise ValueError("View review requires explicit process_id and exact saved document path")
+        if self.views is not None and len(set(self.views)) != len(self.views):
+            raise ValueError("views must be unique")
+        if not absolute_document_path(self.output_dir):
+            raise ValueError("View review requires absolute output_dir")
+        if re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", self.basename) is None or self.basename in (".", ".."):
+            raise ValueError("View review requires a safe basename")
+        return self
 
 
 class SolidWorksGenerateDrawingInput(BaseInput):
@@ -2408,6 +3850,8 @@ def solidworks_connect(params: SolidWorksConnectInput = SolidWorksConnectInput()
         options = dict(wait_seconds=params.wait_seconds, visible=params.visible, process_id=params.process_id)
         if params.launch_new_instance:
             options.update(launch_new_instance=True, return_metadata=True)
+            if params.launch_mode == "executable":
+                options.update(launch_mode="executable", startup_receipt_path=params.startup_receipt_path)
         connected = connect_solidworks(**options)
         sw, model = connected[:2]
         return {
@@ -2495,17 +3939,71 @@ def _cam_target(params):
     return sw, registration
 
 
+def _cam_assert_no_documents(sw, process_id):
+    """不把枚举错误当作空会话；禁止修改或关闭任何已打开文档。"""
+    from scripts.sw_cam_feature_sketch import _call_method
+    actual = _call_method(sw, "GetProcessID")
+    if type(actual) is not int or actual != process_id or _selected_process_id != process_id:
+        raise ValueError("CAM application scope process identity changed")
+    documents = _call_method(sw, "GetDocuments")
+    if documents is not None and (not isinstance(documents, (tuple, list)) or len(documents) != 0):
+        raise ValueError("CAM application scope requires zero open documents, including hidden documents")
+    if get_com_member(sw, "ActiveDoc") is not None:
+        raise ValueError("CAM application scope requires no active document")
+    if _call_method(sw, "GetProcessID") != process_id:
+        raise ValueError("CAM application scope process identity changed during enumeration")
+
+
+def _cam_application_target(params):
+    """仅 status/load 的显式空会话分支；其它 CAM 目标检查保持不变。"""
+    if not getattr(params, "expected_no_documents", False):
+        return _cam_target(params)
+    from scripts.sw_cam_installation import discover_cam_installations
+    from scripts.sw_cam import select_registration
+    if _selected_process_id is None or _selected_process_id != params.process_id:
+        raise ValueError("Connect to the exact explicit SOLIDWORKS process before no-documents CAM access")
+    inventory = discover_cam_installations()
+    if inventory["errors"]:
+        raise ValueError("CAM registration discovery has errors; inspect installation report first")
+    registration = select_registration(inventory, params.addin_clsid)
+    sw, _ = connect_solidworks(wait_seconds=1, process_id=params.process_id)
+    year = int(str(get_com_member(sw, "RevisionNumber")).split(".")[0]) + 1992
+    registered_year = re.search(r"SOLIDWORKS (20\d{2})", registration["registry_key"], re.IGNORECASE)
+    if registered_year and int(registered_year[1]) != year:
+        raise ValueError("CAM registration belongs to another SOLIDWORKS major version")
+    _cam_assert_no_documents(sw, params.process_id)
+    return sw, registration
+
+
+def _cam_application_readback(params, sw, report):
+    """保留原生返回结果，并明确记录空会话后置条件；不自动修复状态。"""
+    if not getattr(params, "expected_no_documents", False):
+        return report
+    report.update(application_scope=True, expected_no_documents=True,
+                  open_documents_before=[], empty_document_scope_verified=False,
+                  process_id=params.process_id, may_continue=False)
+    try:
+        _cam_assert_no_documents(sw, params.process_id)
+        report.update(open_documents_after=[], empty_document_scope_verified=True,
+                      may_continue=report.get("status") == "ok")
+    except Exception as error:
+        from scripts.sw_cam import _error
+        report.update(status="error", reason="CAM_APPLICATION_SCOPE_CHANGED_OR_UNREADABLE",
+                      scope_guard_issue=_error(error))
+    return report
+
+
 @mcp.tool(
     name="solidworks_cam_status",
     title="Inspect Loaded SOLIDWORKS CAM API",
     annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
 )
-def solidworks_cam_status(params: SolidWorksCamTargetInput) -> str:
+def solidworks_cam_status(params: SolidWorksCamApplicationInput) -> str:
     """Read loaded CAM version and demo mode; no auto-load, document creation, machining or entitlement inference."""
     def op():
         from scripts.sw_cam import inspect_cam
-        sw, registration = _cam_target(params)
-        return inspect_cam(sw, registration["clsid"])
+        sw, registration = _cam_application_target(params)
+        return _cam_application_readback(params, sw, inspect_cam(sw, registration["clsid"]))
     return _run_locked(op, params.response_format)
 
 
@@ -2514,12 +4012,12 @@ def solidworks_cam_status(params: SolidWorksCamTargetInput) -> str:
     title="Load Registered SOLIDWORKS CAM Add-in",
     annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
 )
-def solidworks_cam_load_addin(params: SolidWorksCamTargetInput) -> str:
+def solidworks_cam_load_addin(params: SolidWorksCamApplicationInput) -> str:
     """Load the registry-verified CAM DLL into the pinned process and inspect API; no startup, licensing or model edits."""
     def op():
         from scripts.sw_cam import load_cam_addin
-        sw, registration = _cam_target(params)
-        return load_cam_addin(sw, registration["clsid"], registration["addin_path"])
+        sw, registration = _cam_application_target(params)
+        return _cam_application_readback(params, sw, load_cam_addin(sw, registration["clsid"], registration["addin_path"]))
     return _run_locked(op, params.response_format)
 
 
@@ -2763,7 +4261,7 @@ def solidworks_cam_inspect_operation(params: SolidWorksCamOperationInput) -> str
 
 @mcp.tool(name="solidworks_cam_inspect_operation_profile", title="Inspect Native CAM Linked Profile and Tool",
           annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
-def solidworks_cam_inspect_operation_profile(params: SolidWorksCamOperationProfileInput) -> str:
+def solidworks_cam_inspect_operation_profile(params: SolidWorksCamProfileReadInput) -> str:
     """只读所选操作的关联特征、原始轮廓和适用刀具尺寸；不生成、不验证单位或可达性。"""
     def op():
         from scripts.sw_cam_operation_profile import inspect_operation_profile
@@ -2771,7 +4269,37 @@ def solidworks_cam_inspect_operation_profile(params: SolidWorksCamOperationProfi
         return inspect_operation_profile(sw, registration["clsid"],
             str(Path(registration["addin_path"]).parent / "camworks.tlb"),
             setup_index=params.setup_index, operation_index=params.operation_index,
-            expected_operation_type=params.expected_operation_type)
+            expected_operation_type=params.expected_operation_type, include_tool=params.include_tool)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_qualify_turn_variable_allowance", title="Qualify Bounded Native Turning Variable Allowance",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_qualify_turn_variable_allowance(params: SolidWorksCamVariableAllowanceQualificationInput) -> str:
+    """prepare 只读；apply 在隔离副本中有限写入原始余量/模式，不生成、保存或推断几何映射。"""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_turn_variable_allowance_write import qualify_turn_variable_allowance
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return qualify_turn_variable_allowance(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_inspect_turn_variable_allowance", title="Inspect Exact Native Turning Variable Allowances",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_inspect_turn_variable_allowance(params: SolidWorksCamVariableAllowanceInput) -> str:
+    """identify 只读操作/关联 ID；read 严格绑定 ID 后读取原始余量，不写入或推断单位。"""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_turn_variable_allowance import inspect_turn_variable_allowance
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return inspect_turn_variable_allowance(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
     return _run_locked(op, params.response_format)
 
 
@@ -2794,6 +4322,56 @@ def solidworks_cam_configure_turn_tool(params: SolidWorksCamTurnToolInput) -> st
             receipt_path=params.receipt_path, qualification_only=params.qualification_only,
             message_policy=params.message_policy)
     return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_configure_turn_tool_dimensions", title="Prepare or Define Bounded Native Insert Dimensions",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_configure_turn_tool_dimensions(params: SolidWorksCamTurnToolDimensionsInput) -> str:
+    """一次准备多个白名单尺寸；逐项凭据、精确共享引用和一次完整回读，不生成或保存。"""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_turn_tool_batch import configure_turn_tool_dimensions
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return configure_turn_tool_dimensions(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_query_knowledge_index", title="Query Saved SOLIDWORKS Knowledge Index",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_query_knowledge_index(params: SolidWorksKnowledgeIndexInput) -> str:
+    """Search saved evidence and limitations from local files; no CAD connection or status promotion."""
+    try:
+        from scripts.sw_knowledge_index import query_knowledge_index
+        values = params.model_dump(exclude={"response_format"}, exclude_none=True)
+        return _result(query_knowledge_index(**values), params.response_format)
+    except Exception as exc:
+        return _tool_error(exc, params.response_format)
+
+
+@mcp.tool(name="solidworks_read_resume_checkpoint", title="Read and Verify Saved Continuation Checkpoint",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_read_resume_checkpoint(params: SolidWorksResumeCheckpointInput) -> str:
+    """只读 STATUS、文件 SHA 和精确 JSON 字段；无 COM 初始化、目标连接或 CAD 锁。"""
+    try:
+        from sw_resume_checkpoint import read_resume_checkpoint
+        return _result(read_resume_checkpoint(params.status_path), params.response_format)
+    except Exception as exc:
+        return _tool_error(exc, params.response_format)
+
+
+@mcp.tool(name="solidworks_recover_owned_process", title="Recover One Evidenced Owned SOLIDWORKS Process",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_recover_owned_process(params: SolidWorksOwnedProcessRecoveryInput) -> str:
+    """仅进程 API：核对归属、精确创建时间和保存点后一次终止；不连接、保存或重新启动 CAD。"""
+    try:
+        _runtime_identity.assert_current()
+        from scripts.sw_owned_process_recovery import recover_owned_process
+        return _result(recover_owned_process(**params.model_dump(exclude={"response_format"})), params.response_format)
+    except Exception as exc:
+        return _tool_error(exc, params.response_format)
 
 
 @mcp.tool(name="solidworks_cam_inspect_qualification_context", title="Inspect Native CAM Holder and Thread Qualification Context",
@@ -2850,13 +4428,14 @@ def solidworks_cam_inspect_thread_operation(params: SolidWorksCamThreadInspectio
 def solidworks_cam_qualify_turn_feature(params: SolidWorksCamTurnFeatureInput) -> str:
     """inspect 允许已有草图/脏状态但不授权写入；prepare/apply 验证直线特征，save_candidate 独立保存。"""
     def op():
+        if params.crop_z_native is not None and _selected_process_id != params.process_id:
+            raise ValueError("Crop process_id must match the explicitly connected SOLIDWORKS instance")
         from scripts.sw_cam_turn_feature import qualify_turn_feature
         sw, registration = _cam_target(params)
         values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
         return qualify_turn_feature(sw, registration["clsid"],
             typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
     return _run_locked(op, params.response_format)
-
 
 @mcp.tool(name="solidworks_cam_configure_turn_feature_attribute", title="Inspect or Qualify One Turning Feature Strategy",
           annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
@@ -2871,13 +4450,374 @@ def solidworks_cam_configure_turn_feature_attribute(params: SolidWorksCamTurnFea
     return _run_locked(op, params.response_format)
 
 
+@mcp.tool(name="solidworks_cam_qualify_mill_tool_diameter", title="Qualify MILL Tool Diameter Change",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_qualify_mill_tool_diameter(params: SolidWorksCamMillToolDiameterInput) -> str:
+    """Inspect or change one diagnostic MILL tool diameter; no generation or save."""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("MILL tool process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_mill_tool_diameter import qualify_mill_tool_diameter
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return qualify_mill_tool_diameter(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+
+@mcp.tool(name="solidworks_cam_export_mill_feature_geometry", title="Export Exact MILL Qualification Geometry",
+          annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_export_mill_feature_geometry(params: SolidWorksCamMillFeatureGeometryInput) -> str:
+    """Export one native target/stock/WIP kind; no generation, save or automatic retry."""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("MILL export process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_mill_geometry import export_mill_feature_geometry
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return export_mill_feature_geometry(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+@mcp.tool(name="solidworks_cam_qualify_mill_operation_toolpath", title="Qualify One MILL Operation Toolpath",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_qualify_mill_operation_toolpath(params: SolidWorksCamMillOperationToolpathInput) -> str:
+    """Inspect or generate one selected MILL toolpath; no save or automatic retry."""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("MILL toolpath process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_mill_toolpath import qualify_mill_operation_toolpath
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return qualify_mill_operation_toolpath(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_qualify_mill_feature_operation_plan", title="Qualify One MILL Feature Operation Plan",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_qualify_mill_feature_operation_plan(params: SolidWorksCamMillFeaturePlanInput) -> str:
+    """Inspect or perform one RETAIN GOP on one exact disposable MILL feature."""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("MILL GOP process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_mill_feature_process import qualify_mill_feature_operation_plan
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return qualify_mill_feature_operation_plan(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_qualify_feature_operation_plan", title="Qualify One Turning Feature Operation Plan",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_qualify_feature_operation_plan(params: SolidWorksCamFeaturePlanInput) -> str:
+    """prepare/apply 只调用一次精确特征的 RETAIN GOP；inspect 可只读检查不确定结果。"""
+    def op():
+        from scripts.sw_cam_feature_plan import qualify_feature_operation_plan
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format", "read_techdb_path"})
+        return qualify_feature_operation_plan(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_configure_thread_pitch", title="Inspect or Qualify One Thread Pitch",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_configure_thread_pitch(params: SolidWorksCamThreadPitchInput) -> str:
+    """只写入一个已存在 THREAD 操作的 Pitch，并读回 16 个已确认标量；不保存或 GTP。"""
+    def op():
+        from scripts.sw_cam_thread_parameters import configure_thread_pitch
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format", "read_techdb_path"})
+        return configure_thread_pitch(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_configure_apt_controller", title="Qualify APT Controller Selection on a Disposable Copy",
+          annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_configure_apt_controller(params: SolidWorksCamAptControllerInput) -> str:
+    """读取实际 APT 目录或选择一个观察到的条目；不后处理，不声称已验证实际载入文件。"""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_apt_controller import configure_apt_controller
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return configure_apt_controller(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_create_profile_sketch", title="Create a Bounded Native CAM Profile Sketch",
+          annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_create_profile_sketch(params: SolidWorksCamProfileSketchInput) -> str:
+    """只创建平面/二维轮廓并读回模型坐标；不调用 CAM、拉伸或保存。"""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_profile_sketch import create_cam_profile_sketch
+        sw, _model = _active_part_required(params)
+        return create_cam_profile_sketch(sw, expected_process_id=params.process_id,
+            expected_document_path=params.expected_document_path, action=params.action, spec=params.spec,
+            expected_state_sha256=params.expected_state_sha256, receipt_path=params.receipt_path,
+            qualification_only=params.qualification_only)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_qualify_mill_feature_units", title="Qualify One Native Mill Feature Dimensionally",
+          annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_qualify_mill_feature_units(params: SolidWorksCamMillUnitsInput) -> str:
+    """创建一次 OPEN_POCKET 并读取真实上下四直线轮廓；不生成、保存或推广数值单位。"""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_mill_units_qualification import qualify_mill_feature_units
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return qualify_mill_feature_units(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_qualify_thread_postprocess", title="Qualify Selected Thread Postprocessor Output",
+          annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_qualify_thread_postprocess(params: SolidWorksCamThreadPostprocessInput) -> str:
+    """单选 THREAD 检查文件，冻结当前 post；productionNC=false，不保存/GTP/发送。"""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_thread_postprocess import qualify_thread_postprocess
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return qualify_thread_postprocess(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_configure_mill_qualification", title="Qualify Empty Native Mill Machine or Setup",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_configure_mill_qualification(params: SolidWorksCamMillQualificationInput) -> str:
+    """只在空白副本选择原生 MILL 机床或创建一个零原点方向设置；不生成或保存。"""
+    def op():
+        from scripts.sw_cam_mill_qualification import configure_mill_qualification
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return configure_mill_qualification(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_configure_mill_stock", title="Qualify Reviewed Native Mill Manufacturing Stock",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_configure_mill_stock(params: SolidWorksCamMillStockInput) -> str:
+    """空白 MILL 副本中绑定经独立审核的加工余料 STL；不是用网格替代产品模型。"""
+    def op():
+        from scripts.sw_cam_mill_stock import configure_mill_stock
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return configure_mill_stock(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_inspect_material_catalogue", title="Inspect Native CAM Workpiece Material Catalogue",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_inspect_material_catalogue(params: SolidWorksCamMaterialCatalogueInput) -> str:
+    """读取真实工件材料目录及原始文档单位开关；不赋值、不推断合金等价性。"""
+    def op():
+        from scripts.sw_cam_material_catalogue import inspect_material_catalogue
+        sw, registration = _cam_target(params)
+        return inspect_material_catalogue(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"),
+            expected_document_path=params.expected_document_path)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_inspect_thread_records", title="Inspect Native Thread CL Records",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_inspect_thread_records(params: SolidWorksCamThreadRecordsInput) -> str:
+    """只读有界 THREAD/GOTO/SPINDL/UNITS/FEEDRATE 序列；不把 Height 当作完整深度。"""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_thread_records import inspect_thread_records
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return inspect_thread_records(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_inspect_thread_tool", title="Inspect Exact Native Thread Tool and Holder",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_inspect_thread_tool(params: SolidWorksCamThreadToolInput) -> str:
+    """精确 THREAD/feature ID 与事件订阅保护的既有轮廓、刀具及夹持器读取。"""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_thread_tool import inspect_thread_tool
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return inspect_thread_tool(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_export_generic_cl", title="Qualify Native Machine-Scope Generic CL Export",
+          annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_export_generic_cl(params: SolidWorksCamGenericCLExportInput) -> str:
+    """机器范围 generic CL 导出；不指定控制器，不生成轨迹，不保存模型。"""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_generic_cl import export_generic_cl
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return export_generic_cl(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_qualify_turn_apt_postprocess", title="Qualify Selected TURN Rough or Finish APT Output",
+          annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_qualify_turn_apt_postprocess(params: SolidWorksCamTurnAptPostprocessInput) -> str:
+    """Export one generated TURN1/2 operation through current APT; no GTP/save/controller change."""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_turn_apt_postprocess import qualify_turn_apt_postprocess
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return qualify_turn_apt_postprocess(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_inspect_thread_feature_attributes", title="Inspect Bounded Native THREAD Feature Attributes",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_inspect_thread_feature_attributes(params: SolidWorksCamThreadAttributesInput) -> str:
+    """精确 THREAD、关联特征与源文件哈希；一次 GetFeatureAttributes，不展开未知对象。"""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_thread_attributes import inspect_thread_feature_attributes
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return inspect_thread_feature_attributes(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_configure_cutting_conditions", title="Inspect or Qualify Native CAM Material and Cutting Conditions",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_configure_cutting_conditions(params: SolidWorksCamCuttingConditionsInput) -> str:
+    """单字段原生材料/切削条件写入；单位与材料语义须有独立证据，不保存或 GTP。"""
+    def op():
+        from scripts.sw_cam_cutting_conditions import configure_cutting_conditions
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return configure_cutting_conditions(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_qualify_part_transfer", title="Qualify Native Part Body Transfer to a New Copy",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_qualify_part_transfer(params: SolidWorksPartTransferInput) -> str:
+    """在新副本中替换完整实体或添加已明确确认的增量；不操作 CAM。"""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the existing selected SOLIDWORKS process")
+        sw, _model = _active_model_required(params)
+        from scripts.sw_native_transfer import qualify_part_transfer
+        values = params.model_dump(exclude={"expected_document_title", "response_format"})
+        return qualify_part_transfer(sw, **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_inspect_open_documents", title="Inspect Open Documents in the Bound SOLIDWORKS Process",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_inspect_open_documents(params: SolidWorksOpenDocumentsInput) -> str:
+    """只读列出明确进程中打开的文档；不激活、保存、关闭或恢复任何文档。"""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the existing selected SOLIDWORKS process")
+        sw, _model = connect_solidworks(wait_seconds=1)
+        from scripts.sw_native_transfer import inspect_open_documents
+        return inspect_open_documents(sw, process_id=params.process_id)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cleanup_part_transfer", title="Clean Up Exact Documents From a Native Part Transfer Receipt",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cleanup_part_transfer(params: SolidWorksCleanupPartTransferInput) -> str:
+    """仅按回执清理本次迁移文档并恢复原锚点；不要求活动文档，不重放实体编辑或保存。"""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the existing selected SOLIDWORKS process")
+        sw, _model = connect_solidworks(wait_seconds=1)
+        from scripts.sw_native_transfer import cleanup_part_transfer
+        return cleanup_part_transfer(sw, **params.model_dump(exclude={"response_format"}))
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_finalize_part_transfer", title="Finalize an Existing Native Part Transfer Without Geometry Replay",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_finalize_part_transfer(params: SolidWorksFinalizePartTransferInput) -> str:
+    """验证已有迁移回执及副本，完成尚未尝试的 STEP 回导与限定文档清理；不重放几何操作。"""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the existing selected SOLIDWORKS process")
+        sw, _model = _active_model_required(params)
+        from scripts.sw_native_transfer import finalize_part_transfer
+        values = params.model_dump(exclude={"expected_document_title", "response_format"})
+        return finalize_part_transfer(sw, **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_qualify_reference_copy", title="Qualify Closed Assembly Copy Reference Replacement",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_qualify_reference_copy(params: SolidWorksReferenceCopyInput) -> str:
+    """替换关闭装配体副本中的明确引用；返回成功不表示实例或动画身份已经验证。"""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the existing selected SOLIDWORKS process")
+        sw, _model = _active_model_required(params)
+        from scripts.sw_native_transfer import qualify_reference_copy
+        values = params.model_dump(exclude={"expected_document_title", "response_format"})
+        return qualify_reference_copy(sw, **values)
+    return _run_locked(op, params.response_format)
+
+
 @mcp.tool(name="solidworks_cam_document_lifecycle", title="Prepare, Save or Close One Native CAM Document",
           annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
 def solidworks_cam_document_lifecycle(params: SolidWorksCamDocumentLifecycleInput) -> str:
     """先订阅 CAM 消息，再单独保存或关闭精确文档；默认响应不代表确认保存。"""
     def op():
+        if params.machine_kind in {"mill_qualification", "mill_single_feature_qualification"} and _selected_process_id != params.process_id:
+            raise ValueError("MILL lifecycle process_id must match the explicitly connected SOLIDWORKS instance")
         from scripts.sw_cam_lifecycle import document_lifecycle
         sw, registration = _cam_target(params)
+        if params.machine_kind == "mill_single_feature_qualification":
+            return document_lifecycle(sw, registration["clsid"],
+                typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"),
+                expected_document_path=params.expected_document_path, action=params.action,
+                message_policy=params.message_policy, expected_state_sha256=params.expected_state_sha256,
+                receipt_path=params.receipt_path, machine_kind=params.machine_kind,
+                process_id=params.process_id, acknowledge_qualification_copy=params.acknowledge_qualification_copy,
+                expected_feature_native_id=params.expected_feature_native_id,
+                expected_operation_native_ids=params.expected_operation_native_ids)
+        if params.machine_kind == "mill_qualification":
+            return document_lifecycle(sw, registration["clsid"],
+                typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"),
+                expected_document_path=params.expected_document_path, action=params.action,
+                message_policy=params.message_policy, expected_state_sha256=params.expected_state_sha256,
+                receipt_path=params.receipt_path, machine_kind=params.machine_kind,
+                process_id=params.process_id,
+                acknowledge_qualification_copy=params.acknowledge_qualification_copy)
         return document_lifecycle(sw, registration["clsid"],
             typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"),
             expected_document_path=params.expected_document_path, action=params.action,
@@ -3315,6 +5255,12 @@ def solidworks_list_edges(params: SolidWorksEdgeInspectionInput = SolidWorksEdge
 
     def op():
         sw, model = _active_part_required(params)
+        if params.endpoint_bounds_mm is not None:
+            if (params.axis != "all" or params.circular is not None or params.diameter_mm is not None
+                    or params.min_length_mm is not None or params.max_length_mm is not None):
+                raise ValueError("Endpoint bounds inspection cannot mix legacy filters")
+            from scripts.sw_guarded_fillet import inspect_local_edges
+            return inspect_local_edges(model,params.endpoint_bounds_mm,params.limit)
         descriptors, errors = iter_model_edges(model)
         if not descriptors:
             return {
@@ -3341,6 +5287,7 @@ def solidworks_list_edges(params: SolidWorksEdgeInspectionInput = SolidWorksEdge
                 if descriptor.get("convexity") is None:
                     descriptor["convexity"] = describe_convexity(descriptor.get("edge"))
 
+        from scripts.sw_guarded_fillet import inspect_edge
         edges = [
             {
                 "index": item["index"],
@@ -3351,6 +5298,7 @@ def solidworks_list_edges(params: SolidWorksEdgeInspectionInput = SolidWorksEdge
                 "is_circle": item.get("is_circle"),
                 "diameter_mm": item.get("diameter_mm"),
                 "convexity": item.get("convexity"),
+                **inspect_edge(item["edge"]),
             }
             for item in selected[: params.limit]
         ]
@@ -3492,6 +5440,16 @@ def solidworks_fillet(params: SolidWorksFilletInput) -> str:
     """
 
     def op():
+        if params.edge_signatures is not None:
+            if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+                raise ValueError("process_id must match the existing selected SOLIDWORKS process")
+            sw, _model = _active_part_required(params)
+            from scripts.sw_guarded_fillet import configure_fillet
+            return configure_fillet(sw, process_id=params.process_id,
+                expected_document_path=params.expected_document_path, radius_mm=params.radius_mm,
+                edge_signatures=params.edge_signatures, expected_edge_count=params.expected_edge_count,
+                dry_run=params.dry_run, expected_selection_sha256=params.expected_selection_sha256,
+                receipt_path=params.receipt_path)
         edge_spec = _edge_spec_from(params)
         return _run_feature_with_edges(
             params, edge_spec,
@@ -4522,15 +6480,27 @@ def solidworks_review_active(params: SolidWorksReviewInput) -> str:
     """Export preview BMPs and a JSON review report for the active SolidWorks document."""
 
     def op():
+        targeted = params.views is not None or params.zoom_box_mm is not None
+        if targeted and (type(_selected_process_id) is not int or _selected_process_id != params.process_id):
+            raise ValueError("process_id must match the existing selected SOLIDWORKS process")
         _sw, model = _active_model_required(params)
-        report, report_path = run_review(model, params.output_dir, basename=params.basename)
-        return {
+        if targeted:
+            from scripts.sw_review import run_closeup_review
+            report, report_path = run_closeup_review(_sw, model, params.output_dir,
+                process_id=params.process_id, expected_document_path=params.expected_document_path,
+                basename=params.basename, views=params.views, zoom_box_mm=params.zoom_box_mm)
+        else:
+            report, report_path = run_review(model, params.output_dir, basename=params.basename)
+        result = {
             "status": "ok",
             "report_path": report_path,
             "evaluation": report.get("evaluation"),
             "checks": report.get("checks"),
             "document": _model_summary(model),
         }
+        if targeted:
+            result["view_review"] = report.get("view_review")
+        return result
 
     return _run_locked(op, params.response_format)
 
@@ -4967,6 +6937,36 @@ def main() -> None:
         sys.stdout = _MCP_STDOUT
     mcp.run(transport="stdio")
 
+
+
+
+def _native_audit_target(params):
+    if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+        raise ValueError("Connect to the exact explicit PID before native assembly audit")
+    sw, _model = _active_model_required(params)
+    return sw
+
+
+@mcp.tool(name="solidworks_inspect_native_assembly", title="Inspect Native Assembly Instances and Explode Axes",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_inspect_native_assembly(params: SolidWorksNativeAssemblyInspectionInput) -> str:
+    """回读既有实例、原生分解步骤和轴所属实体；不打开、保存或修复装配。"""
+    def op():
+        from scripts.sw_native_assembly_audit import inspect_native_assembly
+        sw = _native_audit_target(params)
+        return inspect_native_assembly(sw, **params.model_dump(exclude={"response_format", "expected_document_title"}))
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_audit_native_animation", title="Compare Existing Native Animation with Frozen Samples",
+          annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_audit_native_animation(params: SolidWorksNativeAnimationAuditInput) -> str:
+    """只显式调整既有动画的展示与时间并比较矩阵；不计算、播放、重建或保存模型。"""
+    def op():
+        from scripts.sw_native_assembly_audit import audit_native_animation
+        sw = _native_audit_target(params)
+        return audit_native_animation(sw, **params.model_dump(exclude={"response_format", "expected_document_title"}))
+    return _run_locked(op, params.response_format)
 
 if __name__ == "__main__":
     main()
