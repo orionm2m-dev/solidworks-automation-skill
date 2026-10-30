@@ -8,10 +8,12 @@ from pathlib import Path
 import re
 import time
 
+from scripts.sw_cam_mill_feature_context import (load_selected_mill_context,
+    capture_selected_mill_context, selected_context_identity)
 from scripts.sw_cam import _member, _error, document_snapshot
 from scripts.sw_cam_generation import _typed, _write_receipt
 from scripts.sw_cam_mill_qualification import _bootstrap, _snapshot as _mill_snapshot
-from scripts.sw_cam_mill_units_qualification import _feature
+from scripts.sw_cam_mill_units_qualification import _feature, _circle_feature, _nonnull
 from scripts.sw_cam_turn_feature_attribute import _items
 from scripts.sw_cam_thread import _file_hash, _object_id
 from scripts.sw_cam_turn_tool import _digest
@@ -27,10 +29,16 @@ def _integer(value, *, positive=False):
 
 
 def capture_mill_feature_state(sw, clsid, typelib_path, expected_path, *,
-        expected_feature_native_id, check, diagnostic=None):
+        expected_feature_native_id, check, diagnostic=None, feature_kind="open_pocket"):
     """Caller owns the active event session. Never calls tool/unsafe CL getters."""
     diagnostic = {} if diagnostic is None else diagnostic
     _integer(expected_feature_native_id, positive=True)
+    if type(feature_kind) is not str or feature_kind not in ('open_pocket','circular_pocket'):
+        raise ValueError('Exact supported feature kind required')
+    def typed(raw, name):
+        check();_nonnull(raw,name+' raw')
+        value=_typed(raw,name,typelib_path)
+        _nonnull(value,name);check();return value
     def read(obj, name, *args):
         diagnostic['stage'] = name
         check(); value = _member(obj, name, *args); check(); return value
@@ -42,14 +50,17 @@ def capture_mill_feature_state(sw, clsid, typelib_path, expected_path, *,
     if (len(state['feature_setups']) != 1 or state['feature_setups'][0]['feature_count'] != 1 or
             len(state['operation_counts']) > 1 or sum(state['operation_counts']) > MAX_OPERATIONS):
         raise ValueError('Exactly one MILL feature/setup and at most32 operations required')
-    setup = _typed(native['setups'][0], 'ICWBaseSetup', typelib_path)
+    setup = typed(native['setups'][0], 'ICWBaseSetup') if feature_kind=='circular_pocket' else _typed(native['setups'][0], 'ICWBaseSetup', typelib_path)
     features = _items(read(setup, 'IGetEnumFeatures'), typelib_path, read, limit=1)
     if len(features) != 1:
         raise ValueError('Selected setup feature count changed')
-    feature = _typed(features[0], 'ICWFeature', typelib_path)
+    feature = typed(features[0], 'ICWFeature') if feature_kind=='circular_pocket' else _typed(features[0], 'ICWFeature', typelib_path)
     if _object_id(native['doc'], feature, read) != expected_feature_native_id:
         raise ValueError('Exact selected feature identity changed before detailed reads')
-    state['selected_feature'] = _feature(feature, native['doc'], typelib_path, read)
+    if feature_kind == 'circular_pocket':
+        state['selected_feature'] = _circle_feature(feature, native['doc'], typelib_path, read, typed)
+        state['feature_kind'] = feature_kind
+    else:state['selected_feature'] = _feature(feature, native['doc'], typelib_path, read)
     if state['selected_feature']['native_id'] != expected_feature_native_id:
         raise ValueError('Selected feature identity changed during readback')
     op_setups = _items(read(native['machine'], 'IGetEnumOpSetups'), typelib_path, read, limit=1)
@@ -121,8 +132,10 @@ def _verify_gop_delta(before, after, feature_id):
 def qualify_mill_feature_operation_plan(sw, clsid, typelib_path, *, process_id,
         expected_document_path, expected_source_sha256, expected_feature_native_id,
         action, qualification_only, acknowledge_disposable_copy, message_policy='vendor_default',
-        expected_state_sha256=None, receipt_path=None):
+        expected_state_sha256=None, receipt_path=None,
+        feature_kind='open_pocket', circle_creation_receipt_path=None, circle_creation_receipt_sha256=None):
     from scripts.sw_cam_events import CamMessageSession
+    selected_context=None
     report = dict(status='error', phase='preflight', action=action, process_id=process_id,
         may_continue=False, mutation_attempted=False, native_dispatch_pending=False,
         native_call_attempted=False, native_call_returned=False, native_hresult=None,
@@ -137,6 +150,8 @@ def qualify_mill_feature_operation_plan(sw, clsid, typelib_path, *, process_id,
     def persist():
         if created: _write_receipt(receipt, report)
     def identity():
+        if selected_context is not None:
+            strict_selected_document=selected_context_identity(sw,selected_context)['document']
         pid = _member(sw, 'GetProcessID')
         if type(pid) is not int or pid != process_id:
             raise ValueError('Exact SOLIDWORKS process changed')
@@ -146,6 +161,8 @@ def qualify_mill_feature_operation_plan(sw, clsid, typelib_path, *, process_id,
         check_document_target(doc.get('path'), doc.get('title'), expected_path=expected_document_path, required=True)
         if _file_hash(expected_document_path) != expected_source_sha256:
             raise ValueError('Saved source file hash changed')
+        if selected_context is not None and doc!=strict_selected_document:
+            raise ValueError('Selected context document changed during identity check')
         return doc
     def check(*, active=True):
         summary = session.summary(); report['messages'] = summary
@@ -159,14 +176,20 @@ def qualify_mill_feature_operation_plan(sw, clsid, typelib_path, *, process_id,
         report['phase_timings'].append(timing); persist()
         start = time.monotonic(); check(); begin = identity(); check()
         diagnostic = dict(phase=phase); report['snapshot_diagnostics'].append(diagnostic)
-        state, native = capture_mill_feature_state(sw, clsid, typelib_path, expected_document_path,
-            expected_feature_native_id=expected_feature_native_id, check=check, diagnostic=diagnostic)
+        state, native = capture_selected_mill_context(sw, clsid, typelib_path, expected_document_path,
+            expected_feature_native_id=expected_feature_native_id, check=check, diagnostic=diagnostic,
+            context=selected_context,legacy_capture=capture_mill_feature_state)
         check()
         if state['document'] != begin or identity() != begin or state['saved_file_sha256'] != expected_source_sha256:
             raise ValueError('Document/source changed during phase')
         check(); timing.update(completed=True, elapsed_seconds=time.monotonic()-start)
         persist(); return state, native
     try:
+        selected_context=load_selected_mill_context(process_id=process_id,
+            expected_document_path=expected_document_path,expected_feature_native_id=expected_feature_native_id,
+            expected_source_sha256=expected_source_sha256,feature_kind=feature_kind,
+            circle_creation_receipt_path=circle_creation_receipt_path,
+            circle_creation_receipt_sha256=circle_creation_receipt_sha256)
         _integer(process_id, positive=True); _integer(expected_feature_native_id, positive=True)
         if (type(expected_document_path) is not str or not absolute_document_path(expected_document_path) or
                 Path(expected_document_path).suffix.casefold() != '.sldprt'):

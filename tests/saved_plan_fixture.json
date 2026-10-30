@@ -1,0 +1,845 @@
+{
+  "document": {
+    "path": "C:/test/cam_fixture.SLDPRT",
+    "title": "cam_fixture.SLDPRT",
+    "type": 1,
+    "needs_save": false
+  },
+  "saved_file_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "current_machine": {
+    "machine_type": 1,
+    "name": "Fixture metric mill",
+    "machine_id": "fixture-mill",
+    "description": "Synthetic machine metadata"
+  },
+  "mill_catalogue": [
+    {
+      "machine_type": 1,
+      "name": "Fixture metric mill",
+      "machine_id": "fixture-mill",
+      "description": "Synthetic machine metadata"
+    }
+  ],
+  "feature_setups": [
+    {
+      "native_id": 69,
+      "name": "Fixture setup 1",
+      "feature_count": 12,
+      "axis_native": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "origin_native": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "origin_type_raw": 6
+    },
+    {
+      "native_id": 71,
+      "name": "Fixture setup 2",
+      "feature_count": 5,
+      "axis_native": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "origin_native": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "origin_type_raw": 6
+    },
+    {
+      "native_id": 73,
+      "name": "Fixture setup 3",
+      "feature_count": 1,
+      "axis_native": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "origin_native": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "origin_type_raw": 6
+    }
+  ],
+  "operation_counts": [
+    2,
+    0,
+    0
+  ],
+  "material_raw": "fixture-material",
+  "extend_holes_to_stock": false,
+  "unit_record_raw": null,
+  "unit_record_status": "not_requested",
+  "recognition_options": {
+    "GetEMFFeatTypeOptions": [
+      {
+        "enum_value": 0,
+        "enabled": true
+      },
+      {
+        "enum_value": 1,
+        "enabled": false
+      },
+      {
+        "enum_value": 2,
+        "enabled": true
+      },
+      {
+        "enum_value": 3,
+        "enabled": false
+      },
+      {
+        "enum_value": 4,
+        "enabled": true
+      },
+      {
+        "enum_value": 5,
+        "enabled": false
+      }
+    ],
+    "GetEMFPartPeriTypeOptions": [
+      {
+        "enum_value": 0,
+        "enabled": true
+      },
+      {
+        "enum_value": 1,
+        "enabled": false
+      }
+    ],
+    "GetEMFTypeOptions": [
+      {
+        "enum_value": 0,
+        "enabled": false
+      },
+      {
+        "enum_value": 1,
+        "enabled": false
+      },
+      {
+        "enum_value": 2,
+        "enabled": false
+      },
+      {
+        "enum_value": 3,
+        "enabled": false
+      }
+    ],
+    "EMFHoleMaxDiameter": 0.01,
+    "EMFHoleMinimumIncludedAngle": 3.141592653589793
+  },
+  "recognition_method": {
+    "value": 1,
+    "name": "MFGVIEW",
+    "status": "synthetic_fixture"
+  },
+  "stock": {
+    "type_raw": 4,
+    "bounds_native": [
+      -0.025,
+      -0.025,
+      -0.025,
+      0.025,
+      0.025,
+      0.025
+    ],
+    "stl_path": "C:/test/fixture_stock.stl",
+    "length_units_raw": 0,
+    "coordinate_system": "",
+    "offset_read_status": "unavailable_native_false",
+    "offsets_native": null,
+    "uniform_flags": null,
+    "stl_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "features": [
+    {
+      "setup_index": 0,
+      "feature_index": 0,
+      "setup_native_id": 69,
+      "geometry": {
+        "native_id": 75,
+        "volume_type": 2,
+        "subtype_raw": 0,
+        "shape_raw": 2,
+        "suppressed": false,
+        "name": "Fixture feature 75",
+        "axis_native": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "depth_native": 1.0,
+        "bounds_native": [
+          4.0,
+          4.0,
+          1.0
+        ],
+        "start_native": [
+          0.0,
+          0.0,
+          10.0
+        ]
+      }
+    },
+    {
+      "setup_index": 0,
+      "feature_index": 1,
+      "setup_native_id": 69,
+      "geometry": {
+        "native_id": 76,
+        "volume_type": 2,
+        "subtype_raw": 0,
+        "shape_raw": 2,
+        "suppressed": false,
+        "name": "Fixture feature 76",
+        "axis_native": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "depth_native": 1.0,
+        "bounds_native": [
+          4.0,
+          4.0,
+          1.0
+        ],
+        "start_native": [
+          5.0,
+          0.0,
+          10.0
+        ]
+      }
+    },
+    {
+      "setup_index": 0,
+      "feature_index": 2,
+      "setup_native_id": 69,
+      "geometry": {
+        "native_id": 77,
+        "volume_type": 2,
+        "subtype_raw": 0,
+        "shape_raw": 2,
+        "suppressed": false,
+        "name": "Fixture feature 77",
+        "axis_native": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "depth_native": 1.0,
+        "bounds_native": [
+          4.0,
+          4.0,
+          1.0
+        ],
+        "start_native": [
+          10.0,
+          0.0,
+          10.0
+        ]
+      }
+    },
+    {
+      "setup_index": 0,
+      "feature_index": 3,
+      "setup_native_id": 69,
+      "geometry": {
+        "native_id": 78,
+        "volume_type": 2,
+        "subtype_raw": 0,
+        "shape_raw": 2,
+        "suppressed": false,
+        "name": "Fixture feature 78",
+        "axis_native": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "depth_native": 1.0,
+        "bounds_native": [
+          4.0,
+          4.0,
+          1.0
+        ],
+        "start_native": [
+          15.0,
+          0.0,
+          10.0
+        ]
+      }
+    },
+    {
+      "setup_index": 0,
+      "feature_index": 4,
+      "setup_native_id": 69,
+      "geometry": {
+        "native_id": 79,
+        "volume_type": 2,
+        "subtype_raw": 0,
+        "shape_raw": 2,
+        "suppressed": false,
+        "name": "Fixture feature 79",
+        "axis_native": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "depth_native": 1.0,
+        "bounds_native": [
+          4.0,
+          4.0,
+          1.0
+        ],
+        "start_native": [
+          0.0,
+          5.0,
+          10.0
+        ]
+      }
+    },
+    {
+      "setup_index": 0,
+      "feature_index": 5,
+      "setup_native_id": 69,
+      "geometry": {
+        "native_id": 80,
+        "volume_type": 2,
+        "subtype_raw": 0,
+        "shape_raw": 2,
+        "suppressed": false,
+        "name": "Fixture feature 80",
+        "axis_native": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "depth_native": 1.0,
+        "bounds_native": [
+          4.0,
+          4.0,
+          1.0
+        ],
+        "start_native": [
+          5.0,
+          5.0,
+          10.0
+        ]
+      }
+    },
+    {
+      "setup_index": 0,
+      "feature_index": 6,
+      "setup_native_id": 69,
+      "geometry": {
+        "native_id": 81,
+        "volume_type": 2,
+        "subtype_raw": 0,
+        "shape_raw": 2,
+        "suppressed": false,
+        "name": "Fixture feature 81",
+        "axis_native": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "depth_native": 1.0,
+        "bounds_native": [
+          4.0,
+          4.0,
+          1.0
+        ],
+        "start_native": [
+          10.0,
+          5.0,
+          10.0
+        ]
+      }
+    },
+    {
+      "setup_index": 0,
+      "feature_index": 7,
+      "setup_native_id": 69,
+      "geometry": {
+        "native_id": 82,
+        "volume_type": 2,
+        "subtype_raw": 0,
+        "shape_raw": 2,
+        "suppressed": false,
+        "name": "Fixture feature 82",
+        "axis_native": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "depth_native": 1.0,
+        "bounds_native": [
+          4.0,
+          4.0,
+          1.0
+        ],
+        "start_native": [
+          15.0,
+          5.0,
+          10.0
+        ]
+      }
+    },
+    {
+      "setup_index": 0,
+      "feature_index": 8,
+      "setup_native_id": 69,
+      "geometry": {
+        "native_id": 83,
+        "volume_type": 2,
+        "subtype_raw": 0,
+        "shape_raw": 2,
+        "suppressed": false,
+        "name": "Fixture feature 83",
+        "axis_native": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "depth_native": 1.0,
+        "bounds_native": [
+          4.0,
+          4.0,
+          1.0
+        ],
+        "start_native": [
+          0.0,
+          10.0,
+          10.0
+        ]
+      }
+    },
+    {
+      "setup_index": 0,
+      "feature_index": 9,
+      "setup_native_id": 69,
+      "geometry": {
+        "native_id": 64,
+        "volume_type": 11,
+        "subtype_raw": 1,
+        "shape_raw": 2,
+        "suppressed": false,
+        "name": "Fixture feature 64",
+        "axis_native": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "depth_native": 1.0,
+        "bounds_native": [
+          4.0,
+          4.0,
+          1.0
+        ],
+        "start_native": [
+          5.0,
+          10.0,
+          10.0
+        ]
+      }
+    },
+    {
+      "setup_index": 0,
+      "feature_index": 10,
+      "setup_native_id": 69,
+      "geometry": {
+        "native_id": 84,
+        "volume_type": 2,
+        "subtype_raw": 0,
+        "shape_raw": 2,
+        "suppressed": false,
+        "name": "Fixture feature 84",
+        "axis_native": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "depth_native": 1.0,
+        "bounds_native": [
+          4.0,
+          4.0,
+          1.0
+        ],
+        "start_native": [
+          10.0,
+          10.0,
+          10.0
+        ]
+      }
+    },
+    {
+      "setup_index": 0,
+      "feature_index": 11,
+      "setup_native_id": 69,
+      "geometry": {
+        "native_id": 74,
+        "volume_type": 2,
+        "subtype_raw": 0,
+        "shape_raw": 2,
+        "suppressed": false,
+        "name": "Fixture feature 74",
+        "axis_native": [
+          0.0,
+          0.0,
+          -1.0
+        ],
+        "depth_native": 1.0,
+        "bounds_native": [
+          4.0,
+          4.0,
+          1.0
+        ],
+        "start_native": [
+          15.0,
+          10.0,
+          10.0
+        ]
+      }
+    },
+    {
+      "setup_index": 1,
+      "feature_index": 0,
+      "setup_native_id": 71,
+      "geometry": {
+        "native_id": 89,
+        "volume_type": 2,
+        "subtype_raw": 0,
+        "shape_raw": 2,
+        "suppressed": false,
+        "name": "Fixture feature 89",
+        "axis_native": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "depth_native": 1.0,
+        "bounds_native": [
+          4.0,
+          4.0,
+          1.0
+        ],
+        "start_native": [
+          0.0,
+          0.0,
+          10.0
+        ]
+      }
+    },
+    {
+      "setup_index": 1,
+      "feature_index": 1,
+      "setup_native_id": 71,
+      "geometry": {
+        "native_id": 90,
+        "volume_type": 2,
+        "subtype_raw": 0,
+        "shape_raw": 2,
+        "suppressed": false,
+        "name": "Fixture feature 90",
+        "axis_native": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "depth_native": 1.0,
+        "bounds_native": [
+          4.0,
+          4.0,
+          1.0
+        ],
+        "start_native": [
+          5.0,
+          0.0,
+          10.0
+        ]
+      }
+    },
+    {
+      "setup_index": 1,
+      "feature_index": 2,
+      "setup_native_id": 71,
+      "geometry": {
+        "native_id": 91,
+        "volume_type": 2,
+        "subtype_raw": 0,
+        "shape_raw": 2,
+        "suppressed": false,
+        "name": "Fixture feature 91",
+        "axis_native": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "depth_native": 1.0,
+        "bounds_native": [
+          4.0,
+          4.0,
+          1.0
+        ],
+        "start_native": [
+          10.0,
+          0.0,
+          10.0
+        ]
+      }
+    },
+    {
+      "setup_index": 1,
+      "feature_index": 3,
+      "setup_native_id": 71,
+      "geometry": {
+        "native_id": 92,
+        "volume_type": 2,
+        "subtype_raw": 0,
+        "shape_raw": 2,
+        "suppressed": false,
+        "name": "Fixture feature 92",
+        "axis_native": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "depth_native": 1.0,
+        "bounds_native": [
+          4.0,
+          4.0,
+          1.0
+        ],
+        "start_native": [
+          15.0,
+          0.0,
+          10.0
+        ]
+      }
+    },
+    {
+      "setup_index": 1,
+      "feature_index": 4,
+      "setup_native_id": 71,
+      "geometry": {
+        "native_id": 70,
+        "volume_type": 11,
+        "subtype_raw": 0,
+        "shape_raw": 2,
+        "suppressed": false,
+        "name": "Fixture feature 70",
+        "axis_native": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "depth_native": 1.0,
+        "bounds_native": [
+          4.0,
+          4.0,
+          1.0
+        ],
+        "start_native": [
+          0.0,
+          5.0,
+          10.0
+        ]
+      }
+    },
+    {
+      "setup_index": 2,
+      "feature_index": 0,
+      "setup_native_id": 73,
+      "geometry": {
+        "native_id": 72,
+        "volume_type": 11,
+        "subtype_raw": 0,
+        "shape_raw": 2,
+        "suppressed": false,
+        "name": "Fixture feature 72",
+        "axis_native": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "depth_native": 1.0,
+        "bounds_native": [
+          4.0,
+          4.0,
+          1.0
+        ],
+        "start_native": [
+          0.0,
+          0.0,
+          10.0
+        ]
+      }
+    }
+  ],
+  "selected_profile_headers": {
+    "native_id": 79,
+    "read_complete": true,
+    "representation": "ICWProfileFeature metadata",
+    "profile_headers_read_complete": true,
+    "profile_geometry_complete": false,
+    "contour_status": "not_requested",
+    "indexed_methods_called": false,
+    "native_behavior_qualified": false,
+    "units_verified": false,
+    "owner_setup_native_id": 69,
+    "suppressed": false,
+    "volume_type": 2,
+    "shape": 2,
+    "island_count": 1,
+    "sketch_count": 2,
+    "sketch_names_return_python_type": "tuple",
+    "sketch_names": {
+      "native_vartype": null,
+      "native_vartype_status": "not_exposed_by_marshaller",
+      "observed_name_count": 2,
+      "matches_sketch_count": true,
+      "count_relation_verified": false,
+      "observed_representation": "python_tuple",
+      "value": [
+        "Fixture outer",
+        "Fixture island"
+      ]
+    },
+    "end_conditions": {
+      "GetEndCondition1": {
+        "depth_native": 1.0,
+        "type_raw": 2,
+        "name": "",
+        "name_observed_representation": "python_str",
+        "is_reversed": true,
+        "units_verified": false
+      },
+      "GetEndCondition2": {
+        "depth_native": 0.0,
+        "type_raw": 2,
+        "name": "",
+        "name_observed_representation": "python_str",
+        "is_reversed": false,
+        "units_verified": false
+      }
+    }
+  },
+  "operation_setups": [
+    {
+      "index": 0,
+      "native_id": 93,
+      "operation_count": 2
+    },
+    {
+      "index": 1,
+      "native_id": 94,
+      "operation_count": 0
+    },
+    {
+      "index": 2,
+      "native_id": 95,
+      "operation_count": 0
+    }
+  ],
+  "operation_setup_count": 3,
+  "operations": [
+    {
+      "setup_index": 0,
+      "setup_native_id": 93,
+      "operation_index": 0,
+      "native_id": 143,
+      "mill_operation_type": 0,
+      "base_operation_type": 0,
+      "suppressed": false,
+      "toolpath_generated": false,
+      "linked_feature_ids": [
+        79
+      ],
+      "toolpath_record_counts": [],
+      "assigned_tool": {
+        "native_id": 145,
+        "is_mill_tool": true,
+        "native_read_complete": true,
+        "units_verified": false,
+        "holder_geometry_verified": false,
+        "tool_type_raw": 1,
+        "cut_diameter_native": 6.0,
+        "protrusion_native": 18.0
+      }
+    },
+    {
+      "setup_index": 0,
+      "setup_native_id": 93,
+      "operation_index": 1,
+      "native_id": 144,
+      "mill_operation_type": 1,
+      "base_operation_type": 0,
+      "suppressed": false,
+      "toolpath_generated": false,
+      "linked_feature_ids": [
+        79
+      ],
+      "toolpath_record_counts": [],
+      "assigned_tool": {
+        "native_id": 145,
+        "is_mill_tool": true,
+        "native_read_complete": true,
+        "units_verified": false,
+        "holder_geometry_verified": false,
+        "tool_type_raw": 1,
+        "cut_diameter_native": 6.0,
+        "protrusion_native": 18.0
+      }
+    }
+  ],
+  "operation_count": 2,
+  "operation_inventory_scope": "bounded_raw_id_links_flags_counts_and_generic_tool",
+  "sw_reference": {
+    "feature_tree": [
+      {
+        "name": "Fixture plane",
+        "type": "RefPlane"
+      },
+      {
+        "name": "Fixture solid",
+        "type": "BaseBody"
+      }
+    ],
+    "solids": [
+      {
+        "box_m": [
+          -0.01,
+          -0.02,
+          -0.03,
+          0.01,
+          0.02,
+          0.03
+        ],
+        "mass_raw": [
+          0.001,
+          0.002,
+          0.003,
+          4e-06,
+          0.005,
+          6e-06,
+          7e-09,
+          8e-09,
+          9e-09,
+          1e-10,
+          -2e-10,
+          3e-10
+        ]
+      }
+    ]
+  },
+  "visible_solid_body_count": 1,
+  "all_solid_body_count": 1
+}

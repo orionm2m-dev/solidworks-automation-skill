@@ -740,8 +740,8 @@ OPEN_POCKET feature ID, operation native ID/type and complete captured state.
 Inspect first reports the assigned generic `ICWTool` native ID, `IsMillTool`,
 `ToolType`, `CutDiameter` and `Protrusion`; dimensions remain raw, with units,
 holder geometry and manufacturing suitability unqualified. No subtype-specific
-insert dimensions are read. Prepare/apply requires a clean saved document and
-selected generated=false with no calculated records. One typed
+insert dimensions are read. Default initial-mode prepare/apply requires a clean
+saved document and selected generated=false with no calculated records. One typed
 `ICWMillOperation.GenerateToolpath()` is permitted. The installed HRESULT/no-OUT
 binding was independently checked through a local in-memory COM object (int0),
 not native CAM execution. Native return alone is not completion: readback must
@@ -753,6 +753,27 @@ never permits automatic GTP replay, cancellation claims, save or fallback.
 This does not qualify the motion geometry, depth, units, stock/material/tool
 process or persistence. Generic tool reading and selected MILL GTP remain
 native pilots until their separate receipts are obtained.
+
+
+The explicit generation_mode=regenerate pilot is limited to one ROUGH MILL
+operation on a saved disposable copy. It requires exact prior nonempty native
+record counts and an expected raw ToolDiameterPercent in 0..150; the native
+getter receives the exact selected feature and is read during every capture.
+Initial mode and its prepared-state digest remain unchanged. Regenerate prepare
+writes a new immutable receipt; apply pins its SHA, request and captured state,
+then creates an exclusive consumed marker before the sole GTP dispatch. A second
+preflight capture must match. No records are deleted, no sibling is generated,
+and no save or automatic retry is performed. The mode, record counts and expected
+percentage are included in the regeneration digest.
+
+The captured regeneration scope includes feature/configuration, bounded operation
+inventory, assigned generic tool and ToolDiameterPercent; it does not capture
+all rough-cut settings. The existing rough-boundary reader must compare the other
+settings separately if a one-factor geometry comparison is required. Strict
+integer S_OK plus selected generated/count readback does not establish path
+freshness: even an unchanged positive record count can pass this bounded check.
+New CL/WIP output and physical geometry review are required. Direct regeneration
+is a native pilot until its own receipt and geometry evidence are obtained.
 
 `solidworks_cam_qualify_mill_feature_operation_plan` is a separate disposable MILL
 pilot for one exact unsuppressed OPEN_POCKET (volume type 6). Inspect/prepare/apply
@@ -851,6 +872,29 @@ native save、native close、重新打开及只读检查。目标确实关闭，
 关闭后仍存活；重开后单线特征的 Thread 策略恢复，CAM 消息为零。该案例验证带
 UserControl 门禁的保存/关闭/重开流程，不证明旧实例退出原因，不验证所有模型、
 Save/Restore 选项组合或有消息时的默认保存响应，也不扩大模态窗口处理能力。
+
+
+
+### Selected-feature MILL close/reopen case
+
+A later mill_single_feature_qualification case returned integer S_OK=0 from
+the guarded CAM CloseActiveDocument and verified the target was closed.
+The close receipt remained review_required, with persistence_verified=false;
+a separate explicit-path reopen and read-only CAM inspection supplied the
+persistence evidence. The selected feature retained axis [0,0,-1] and native
+depth 3; the selected tool retained native diameter 2; the rough operation
+retained generated=true and 68 records, while the finish sibling remained
+ungenerated. The saved-file SHA was unchanged. A second guarded CAM close
+after the reopen also verified target closure. Both closes concern the same
+qualification copy; they are not two independent model cases.
+
+For a normal, unblocked copy matching that qualified branch, prefer this guarded
+CAM lifecycle over generic CloseDoc. The earlier generic close timeout remains
+an unresolved individual outcome, not a proven cause or universally fixed
+defect. Do not invoke the lifecycle reentrantly while a close call is pending.
+This single case does not qualify other branches/models or prove physical depth,
+units, complete paths, fixture clearance or production acceptance. Native close,
+later reopen and selected-state persistence remain distinct evidence claims.
 
 
 ## 单线车削特征的目录策略（受限活体验证）
@@ -1051,6 +1095,22 @@ apply 必须带相同 SHA 和新 receipt。使用公共 SOLIDWORKS API，按米�
 这只确认 SW 草图使用的米/毫米转换，不证明 CAM 长度、深度或进给单位；MILL 特征写入
 仍等待独立的几何单位资格验证。当前两个新入口均仅有离线测试，不宣称原生资格完成。
 
+
+solidworks_cam_create_profile_sketch(action="verify_existing") reads an already
+created, exactly named circle and offset plane without selection, editing or saving.
+It requires the current source SHA, an immutable creation receipt path/SHA, and a new
+verification receipt. Dirty documents are allowed only while their identity, dirty
+flag and saved source remain unchanged. The creator's clean baseline must match the
+current source; only its two named plane/sketch additions are accepted. Existing
+feature rows, reference planes and solid fingerprints are checked before/after.
+The prior creation receipt is preserved even when its status was uncertain.
+
+ISketchArc.IsCircle is a native integer contract: only strict integer 1 means a
+complete circle; 0, Boolean values and other types are rejected. Verification
+records the raw return type/value, including on failure. It reports
+native_readback_verified; it does not establish full BRep equivalence, CAM
+depth/units, save/reopen persistence or production readiness. This additive path
+requires independent native verification; successful mock tests alone are not that proof.
 
 ### 单个 MILL 特征的局部几何单位实验
 
@@ -1260,3 +1320,416 @@ The first 2026 SP4 generic-CL qualification stopped before `SaveCLFile`: queryin
 A subsequent SOLIDWORKS CAM 2026 SP4 qualification successfully called inherited `SaveCLFile` through `ICWMachine5` on one clean saved TURN copy. The native result was integer S_OK=0 and the output was 4,157 bytes (SHA-256 `cfa71ecfc871e5070e71417a35433b2a2eed6ccaff61c3cfd5129b21c674ff46`). The complete captured before/after states matched: 9 features, 16 operation IDs/types/flags/counts, one generated operation with 40 records, and 15 ungenerated operations remained unchanged. Controller readback, source-file SHA and document dirty state also matched; zero CAM messages and confirmed event disconnection were recorded. This qualifies obtaining generic CL output for that case. It does not qualify its interpretation, units/frame, thread depth/direction, full machining geometry or production use.
 
 The selected TURN1/2 APT exporter now also records `native_hresult` and requires exact integer S_OK=0 for its no-retval `PostProcess` method; the former None-only check incorrectly rejected that typed success result. Mock and actual in-memory COM tests cover the correction, including rejection of Boolean/None/non-S_OK returns. No native APT PostProcess qualification or controller-assignment success is claimed. The separate THREAD exporter is unchanged by this correction.
+
+
+## Bounded MILL operation levels reader
+
+`solidworks_cam_inspect_mill_operation_levels` is a pilot read-only diagnostic
+for one already generated operation on a saved disposable, single-feature MILL
+part. It requires the connected process, exact source SHA-256, feature and
+operation IDs/type, exact generated record counts, all expected ungenerated
+operation IDs, and a new receipt path. The selected operation plus those IDs
+must equal the complete captured operation inventory.
+
+The existing event, source, document and process guards remain active. One
+existing bounded snapshot is taken before and after. New typed calls read
+`ICWMillOperation.GetMachiningDepth`, the override Boolean,
+`ICWToolpathParam.GetToolpathParameters` (exactly four Booleans, one LONG,
+two finite doubles), and `ICWMillOperation3.GetSetupParameters`. The latter
+must return three non-null interfaces. Only origin and axis coordinates are
+read; the transform matrix is not decoded. The axis is normalized only in the
+report. The feature is explicitly queried for standard `IDispatch` before
+passing it to the two feature-dependent getters.
+
+A durable intent/result is recorded before and after every new interface query
+and getter. A failure or CAM event stops the sequence without fallback or
+replay. `native_reads` lists those new calls only; existing capture and
+SOLIDWORKS identity checks are excluded from that list. The tool never generates,
+edits, saves, previews, simulates or exports, and never reads CL records or
+assigned-tool geometry. It does not use the disabled unit/CL access routes.
+
+Results are raw native values. Successful reading does not qualify units,
+coordinate frame, physical machining depth, complete toolpath or production.
+Software tests use mocked native calls; native operation remains unqualified
+until a separately recorded live proof.
+
+A first bounded native read returned machining depth, level flags and the setup origin, then stopped with E_NOINTERFACE when the setup direction was queried as ICWVector. The returned native object identified itself as ICWUnitVector. The reader now uses that exact interface (IID51E2211D-ED7A-4EE4-942F-2850614BA0F3), whose installed type library defines three OUT doubles for GetCoordinates. No fallback interface search is performed; the first receipt remains an incomplete read, without a final state comparison.
+
+A corrected SOLIDWORKS CAM2026 SP4 disposable MILL qualification completed all13 bounded new interface/getter calls. It read raw machining depth3 with overridefalse, the seven level parameters, operation origin approximately[0,0,-12.6], and unit direction[0,0,1]. Complete before/after snapshots matched, one generated operation retained68records and the other remained ungenerated, the source SHA and clean document state matched, and zero CAM events with confirmed disconnection were recorded. This qualifies raw readback for that case only. The operation-origin difference from the feature-setup origin does not establish a coordinate transform or explain the separately observed WIP geometry; units, physical cut depth, complete machining and production remain unqualified.
+
+
+## Bounded MILL generic CL export
+
+
+Status: native file output qualified on one saved disposable MILL case in SOLIDWORKS CAM 2026 SP4. The integration remains a pilot; physical units, coordinate frame, depth and machining correctness are not qualified.
+
+The MCP tool is solidworks_cam_export_mill_generic_cl; implementation is scripts/sw_cam_mill_generic_cl.py.
+
+The API is machine-scope. SaveCLFile is inherited by ICWMachine5 from ICWMachine4; the installed TLB declares HRESULT SaveCLFile([in] BSTR fileName) with no retval. Success requires exact integer S_OK. No new interface whitelist entry is required. Never query Machine4 as a fallback.
+
+The tool admits one feature, one generated operation with exact record counts, and the exact explicit set of unsuppressed ungenerated sibling operations. It reuses the qualified MILL capture and event transport. Prepare binds the selected process, saved source SHA, feature/operation state, controller and proposed output. Apply checks that digest and a second capture before one export. An exclusive receipt records pending intent before dispatch; partial or unknown completion never permits replay.
+
+The output is a new local-drive .cl file in a new directory. Unexpected sidecars, empty/oversized files, changed source/controller/inventory, events or cleanup failure invalidate the result. Exported bytes and the receipt remain available for review. CAM getters run only while the event subscription is active.
+
+This is neither operation-scope API output nor production NC. No generation, simulation, tool/stock/controller edit, source save, raw CL record access or CNC send occurs. Output still requires offline format, units, coordinate frame, physical depth and geometry review.
+
+A subsequent native MILL qualification completed one inherited SaveCLFile call with exact integer S_OK=0. The output contained 2,669 bytes (SHA-256 12b70b3124f91c9a48a78307445b565096164ca4757698bab300392ea4ec17c0). The complete bounded before/after snapshots matched: one feature, one generated operation retaining 68 native records, and one ungenerated sibling retaining no paths. The source-file SHA, clean document state and controller were unchanged; zero CAM messages and confirmed event disconnection were recorded. The receipt returned review_required with output_verified=true and readback_verified=true. This qualifies only that bounded export route, not all MILL machines or operations.
+
+The output remains subject to separate interpretation. A UNITS/MM record, TLAXIS vector or ROTABL command does not establish the model-frame cutting interval or prove physical depth. No toolpath generation, simulation, controller assignment, source save or raw CL-record getter was used for the export. Geometry, units, coordinate_frame, physical_depth and production qualification flags remain false.
+
+The existing TURN exporter and installed native MILL capture tests remain required regression checks. Offline fixtures use fake native objects; their results are separate from the recorded native file-output qualification.
+
+### Bounded MILL rough-boundary reader
+
+The pilot solidworks_cam_inspect_mill_rough_boundary reads six settings from one
+exact, already generated ROUGH MILL operation (expected_mill_operation_type=0)
+on a disposable saved part. It requires an explicit connected PID, exact source
+SHA, feature/operation IDs, generated record counts, complete ungenerated sibling
+IDs and a new receipt. It reuses the MILL capture and event guards and stops on
+the first native error, event, identity or state change.
+
+The typed ICWRghMillOp reads are GetToolDiameterPercent(feature), SideAllow,
+GetStepOver, PocketMethod, GetContainType and GetContainAllowance.
+The feature is queried as IDispatch; the stepover result contains a Boolean
+percent flag and a numeric value. Enumerations remain raw LONG values.
+Durable intent/result entries surround all new calls. Only two bounded state
+captures run; there is no edit, generation, model save, export or CL-record access.
+
+The installed user help describes an air-segment offset for Open Pocket, Slot,
+Corner Slot and Face features as a percentage of tool diameter up to 150%.
+The direct API getter is documented only as tool-diameter percent. The report
+therefore preserves that raw name and does not certify its air-edge mapping,
+a sweep formula, physical units, containment geometry or manufacturing fitness.
+The separately declared odAirSegOffsetPercent parameter-container output has
+no established accessor in this reader; no speculative query or fallback is used.
+This reader is offline tested; native qualification remains pending.
+
+
+## Bounded MILL rough-boundary percentage setting
+
+The pilot solidworks_cam_configure_mill_rough_boundary prepares or applies one
+raw tool-diameter percentage change on an exact disposable ROUGH MILL operation.
+It inherits the reader's exact process, source hash, feature/operation identity,
+complete record-count and ungenerated-operation inventory guards. Expected and
+new percentages must be finite numeric values in the documented 0 to 150 range
+and must differ. No other rough parameter is exposed for writing.
+
+Prepare reads the current bounded state and writes a new receipt. Apply requires
+the exact prepared-state digest plus the prepared receipt path and hash; the
+backend checks fresh state and consumes the attempt once. It makes at most one
+typed setter call, reads back the value and checks the remaining bounded state.
+An unknown or partial result must not be replayed automatically.
+
+No toolpath generation, operation deletion, save, export, controller selection or
+UI action is part of this tool. An unchanged generated flag or record count after
+a settings edit does not make the old path current. Generation and inspection of
+the resulting physical path must occur separately before accepting the new
+setting. Native setting behavior and engineering fitness remain separate
+qualification requirements.
+
+
+## Explicit closed circular pocket qualification and pinned lifecycle
+
+The pilot qualifier accepts feature_kind=circular_pocket only with an exact saved
+full-circle reference sketch. It uses documented creation type0 and POCKET volume2;
+this is not a hole feature. The native depth argument remains DOUBLE and accepts
+a positive finite number up to100 in this explicit mode. The default open_pocket
+rectangle retains its integer1..100 policy and four-LINE geometry contract.
+
+Readback distinguishes full CIRCLE type2 through ICWCircle from ARC type1 through
+ICWArc. Actual centers, radii, normals and bounded chains must describe a complete
+circle. Raw direction/sense integers are retained without assuming their meaning.
+SubType is not read; no shape or through/blind claim is derived from that property.
+A coincident top/bottom contour is reported as contour-only evidence with measured
+separation0, not invented physical depth. A single circular radius gives only one
+local scale constraint; absolute frame, in-plane orientation, axial units and
+physical cutting depth still require separate qualification.
+
+The existing document lifecycle has an explicit circular_pocket branch only in
+mill_single_feature_qualification scope. It requires the current source SHA and
+immutable successful creation receipt path/SHA. It rereads the exact circle,
+sketch, SW tree/body evidence, setup/machine/material context and unit flags.
+Prepare is read-only; one requested native save or clean close uses the existing
+receipt and event guards. A successful save/readback is not reopened persistence.
+
+The circular creator/lifecycle extension and each downstream consumer require
+separate native qualification. Explicit selected-feature context is described
+below; no automatic rectangle-to-circle fallback is used. Incoming stock, tool
+entry, cutter/holder access, machine/post and manufacturing acceptance remain
+separate work. The shared capture still requires one setup, one selected feature
+and at most32 operations.
+
+
+## Shared selected-feature provenance for bounded MILL consumers
+
+The existing GOP, GTP (initial/regenerate), tool-diameter, operation-level,
+rough-boundary read/set, generic CL and target/stock/WIP exporters accept the
+same explicit circular_pocket context. The single-feature lifecycle uses the
+same loader and capture wrapper. The new context is offline tested; each
+consumer's native circular behavior remains separately unqualified.
+
+The default open_pocket path keeps its original capture inputs and prepared
+state. Circular mode requires a current saved source SHA and an immutable,
+successful circular-feature creation receipt path/SHA. The loader checks exact
+receipt bytes. Every circle capture checks the exact PID, raw part/dirty types,
+document/current file and receipt identity, then verifies actual feature
+geometry, the original circle sketch/tree/solids, setup/machine/material and
+unit flags against the creator evidence. Default mode never guesses shape from
+a returned volume code.
+
+Creator-time operation counts are not frozen forever: GOP/GTP intentionally
+change current operation state. Each consumer captures the complete current
+bounded inventory and retains its existing eligibility, sibling/tool scope,
+prepared digest and allowed-delta rules. Common-tool edits retain their existing
+scope across every explicitly listed operation. Saving may establish a new
+current file SHA only after the explicitly requested lifecycle save; a creator
+receipt is evidence of origin, not a replacement for the current checkpoint.
+
+The context adds no native mutation, generation, save, retry, simulation or
+controller assignment. The caller still owns one event subscription, durable
+intent and cleanup. Multi-setup/multi-feature production inventories remain
+unsupported in this phase. A prepared GTP request does not establish incoming
+stock, an accessible entry, cutter/shank/holder clearance, physical depth,
+machine/post correctness or manufacturing readiness. These engineering gates
+must be established independently before a production toolpath is accepted.
+
+
+## Bounded MILL feature inventory before operations (pilot)
+
+`solidworks_cam_inspect_mill_feature_inventory` is read-only and programmatically
+verified (77 staged tests); native behavior remains unqualified. It requires an
+exact saved, clean disposable MILL part, PID/source SHA and zero operations.
+Bounds are eight setups, 64 total features, 64 islands per feature, 32 chains per
+getter, 256 curves per chain and 8192 curves overall. Exact native IDs, typed
+LINE/ARC/CIRCLE primitives, island start/depth/contours, material, stock and
+12 Boolean plus two scalar EMF defaults are captured twice. Generic island
+collections receive one declared typed QI; unsupported types or changing counts
+stop. Null contours remain `observed_not_available`, not a complete empty loop.
+
+Captures reuse the permanent selected-feature source-file guard with full
+identity/SHA checks at boundaries and PID/path/stat checks between getters.
+The ordinary read handles are not a write lock and close before returning.
+The reader does not qualify complete topology, physical depth, coordinate units,
+stock containment, machining accessibility or production. Recognition mode is
+read through the installed typed `ICWDoc3.FeatureCreationStyle` property:
+strict enum0 is AFR, enum1 is MFGVIEW. The former claim that no getter existed
+was incorrect. Missing, noninteger or unsupported values now stop the capture;
+there is no setter or guessed-mode fallback. The installed type library supplies
+the Doc3 binding; primary enum help supplies the names. The API HTML has only an
+ICWApp property page, so it is not cited as a Doc3 method page. This small reader
+correction has33 focused programmatic checks; native getter behavior is still
+unqualified. It changes captured state and prepared digests: finish the current
+mutation cycle before installation, then make fresh prepares for later actions. No AFR, operation
+generation, stock/material edit, save or TechDB setter is dispatched.
+
+
+## Empty-copy MILL AFR smoke test (pilot)
+
+`solidworks_cam_qualify_mill_feature_recognition` is programmatically verified
+(120 staged tests); MILL native behavior remains unqualified. Product help
+`mill/automatic_feature_recognition.htm` documents EMF/AFR for visible MILL solids
+and Mill Part Setup results. `ICWDoc3.ExtractMachinableFeatures` declares zero
+inputs and a LONG feature-count retval. The exact command equivalence and
+new-versus-total count semantics remain native-test questions; a zero-feature
+baseline makes the latter distinction immaterial. `ICWSetup.RecognizeFeatures`
+is excluded. Existing primary source hashes are preserved in
+`mill_afr_capability_order_20261027.json`.
+
+Prepare pins a clean, saved, separate empty MILL part, visible bodies, source,
+geometry, exact 304L native material, assigned stock and observed EMF defaults.
+Apply consumes that immutable prepare receipt once and dispatches exactly one
+Doc3 extraction. Only bounded new features/setups are accepted; operations must
+remain zero and material/stock/options/geometry/source bytes must remain stable.
+Any event, unknown result, unsupported curve, unexpected delta or transport error
+stops without replay. No GOP/GTP/save or TechDB setter is used. An already-known
+active TechDB source can be byte-checked before/after; absence of internal
+TechDB writes is not claimed.
+
+For BASE recognition qualification, documented raw 304L diameter65 x60 stock
+is permissible while actual incoming TURN WIP remains unknown. Stock must be
+assigned and its coordinate frame verified before features. Existing BASE TURN-exported STL was separately observed in WORLD coordinates
+(Z=-32..28 mm); do not apply the FCS translation twice. Containment of the
+actual polygonal mesh and current target-SHA evidence are still required. This API smoke test does
+not complete the real S0-to-S2 predecessor chain or establish physical depth,
+complete geometry, holder entry or a production recipe. Existing circular
+qualification evidence and operations must be preserved in their own copy.
+
+
+## Empty-copy MILL material assignment (pilot)
+
+`solidworks_cam_configure_mill_material` has 128 staged programmatic tests;
+MILL native assignment remains unqualified. This separate tool preserves the
+TURN-only cutting-condition writer. It reuses `ICWWorkpiece.Material`, the
+existing native BSTR/catalogue-mapping validators and the bounded guarded MILL
+inventory. Only a clean saved empty, all-visible disposable MILL copy is
+eligible; operations must be zero. Prepare pins exact PID/path/current source,
+old/new material names, target-bound mapping bytes, stock, observed options and
+geometry. Apply consumes the immutable prepare receipt once and performs one
+material setter. Readback accepts only the exact requested material and a
+Boolean dirty-flag change, with the existing numerical mass tolerance.
+
+Any message, drift, unknown setter outcome or unexpected delta stops without
+replay. No stock/options edit, AFR/GOP/GTP, save or TechDB setter is performed.
+The existing exact catalogue name `304L` (ID10, Stainless Steel group8) can be
+reused through a mapping for the current document; the old BASE_R22 mapping
+path is not authorization for another copy. A native grade name is not delivery
+or +AT certification and does not qualify cutting parameters. After material
+readback, use the existing separate save lifecycle; bind the resulting current
+part SHA to stock-import evidence before assigning stock or creating features.
+
+
+## Empty MILL existing-stock export (pilot)
+
+`solidworks_cam_export_empty_mill_stock` prepares or performs one typed
+`ICWMachine5.CreateSTLOfStock(new_path, '', 0)` on a clean saved disposable MILL
+copy with zero features and operations, all captured solids visible, exact native
+material `304L`, and pinned STL path/SHA, type4, units0, default coordinate system
+and raw bounds. It reuses the full boundary identity and lightweight per-getter
+capture guard, event session, exclusive output helpers and durable consumed-prepare
+protocol. It does not change stock, material, options, generate or save the model.
+
+Only this exporter accepts `GetSTLOffset` as a ten-item sequence ending in strict
+Boolean `False`: every preceding out parameter is discarded, all offsets/flags
+remain unavailable, and bounded raw diagnostics stay outside the state digest.
+Other shapes and retval types stop. The existing stock setter/parser and public
+inventory/AFR policy remain strict; mesh PASS does not turn this status into zeros
+or authorize AFR.
+
+The exported STL is compared offline to the pinned input in the established WORLD
+millimetre contract. Both represented shells must be closed, connected, consistently
+oriented manifolds and convex within the fixed 0.0001 mm verification tolerance;
+every vertex must satisfy every facet half-space of the other shell. Canonical
+triangle equality, bounds and full signed volume are separate facts. No alignment,
+scaling, mesh repair or bounding-box-only acceptance is used. Limits: 4 MiB/file,
+4096 triangles, 2048 vertices, coordinates within256 mm,8 million half-space tests.
+This is serialization/represented-volume verification, not a manufacturing tolerance,
+BRep identity, actual incoming TURN WIP or production qualification.
+
+Primary method semantics reused: installed ICWMachine5/dispid16 plus the saved
+CreateSTLOfStock help page (SHA e516573f87de1e35d1f1381658bc3f1442c2a48efeed4d69cdd93757bd61454f).
+The existing native single-feature export used the same `('',0)` call. The zero-feature scope was subsequently verified on one saved empty304L/MfgView1
+copy: Q16 returned strictTrue and produced a124-triangle stock mesh with mutually
+contained full convex shells. Offset readback remains unavailable; this does not
+qualify actual TURN WIP or machining.
+
+
+## Optional stock-export evidence for EMF/MfgView (pilot)
+
+The existing `solidworks_cam_qualify_mill_feature_recognition` accepts the optional
+paired `stock_export_receipt_path` and `stock_export_receipt_sha256`. Omitting them
+keeps the strict stock reader and existing request digest shape. With the pair,
+a bounded loader accepts only a completed successful empty-stock native export
+receipt, exact source/PID/material304L/MfgView1 context, unchanged before/after
+inventory, clean event transport and successful represented-volume comparison.
+Both the original input and original native exported STL must still exist with
+the exact proof hashes; the receipt is not rewritten to an archive path.
+
+The current empty inventory must match that immutable stock-export baseline using
+the existing exact-context/body-mass tolerance. The same export-only observer keeps
+`unavailable_native_false` and discards all9 offset outs. Receipt and STL hashes
+are rechecked at capture/dispatch/cleanup boundaries, not per native getter. After
+one EMF call, the existing delta guard still permits only bounded new features and
+setups plus the Boolean dirty flag. No stock/material/mode change, setter, re-export,
+GOP/GTP, save or retry is added. Raw-stock proof is not actual incoming WIP.
+
+Product help explicitly supports EMF with either AFR or MfgView; observed mode1
+is retained and the probe is labelled EMF/MfgView. The Doc3 method page gives only
+its signature, so the COM extraction result remains native-unqualified until the
+bounded probe succeeds. Programmatic tests and stock mesh proof do not establish
+complete feature geometry, physical depths or a production recipe.
+
+
+## Read-only recovery after a returned EMF and preservation save (pilot)
+
+The existing `solidworks_cam_inspect_mill_feature_inventory` accepts four optional
+fields together: `recognition_receipt_path`, `recognition_receipt_sha256`,
+`preservation_save_receipt_path`, and `preservation_save_receipt_sha256`. Omitting
+all four retains the strict stock reader. This is a read-only inventory request,
+with no prepare/apply action and no EMF replay.
+
+The optional path validates a hash-pinned uncertain EMF/MfgView receipt with a
+strict returned feature count and a successful zero-operation preservation save.
+The original stock-export evidence is derived from that recognition receipt.
+Its receipt, input STL and original native output remain pinned and available;
+only an explicit old-to-new saved-source transition proven by the save is allowed.
+A partial recognition readback does not establish unchanged geometry or options.
+
+Two fresh complete inventories must agree, match the preserved save header and
+pass the existing feature/setup-only delta check against the original empty
+recognition baseline. Each capture also checks the immutable original stock-export
+body anchor; saved SHA normalization occurs only on a comparison copy. Shared
+PID/path/source guards remain active, with evidence-file checks at boundaries.
+The initial machine snapshot cannot mark the outer feature inventory complete.
+Unsupported representations or any changed evidence/context stop the inspection.
+
+Programmatic synthetic tests and project-file provenance checks are distinct from
+native qualification of this recovery path. Output remains review_required:
+zero operations, raw qualification stock, MfgView mode1, unavailable stock offsets,
+unknown actual incoming TURN WIP, no reopen-persistence or physical-depth claim.
+Spline facets remain explicit observations with unknown native chord tolerance;
+a complete bounded inventory is not complete exact BRep or a production route.
+
+## Saved cutter continuation and compound step observations
+
+A completed `MILL_SAVED_SHARED_CUTTER_CONFIG_V1` receipt with verified native save/readback can be supplied as `saved_plan_receipt_path` to saved-plan readers. The loader verifies the original plan, tool inspection, nominal geometry, recorded session ownership, unchanged sibling context, saved source, and complete cutter/holder profiles. It preserves the original receipts. Do not relabel a configuration receipt as a plan-save receipt or repeat its setters. Continuation is limited to the recorded owned process; it does not implicitly bind a later process.
+
+`solidworks_cam_inspect_saved_compound_strategy` supports `compound_observation`:
+- `strategy`: existing strategy/catalogue read.
+- `interior_step_1`: one explicit interior-index observation when the step count is at least three; indexing basis remains unqualified.
+- `three_step_profile`: exactly three steps, indices 0, 1, 2; observed cylinder/cone parameter methods only. Unknown types, incomplete outputs and changed identity stop the read without fallback.
+
+Both snapshots must agree. `strategy_capture_mode=target_only` avoids enumerating unrelated operations. Native qualification confirmed the three-step mode on one saved compound feature; this does not establish an indexing convention for every API object.
+
+Preserve both cone depth outputs. In the qualified profile, `depth_native` matched physical step depths 0.2 and 0.3, while `cone_depth_native` returned 23.55 and 12.73636. Do not substitute the latter for a machining depth. Units, coordinate frame, retained material, tool access and actual incoming stock require their own scoped evidence. Raw step dimensions and a saved tool setup are not a production release.
+
+## Completed route: CL, explicit save and WIP (pilot)
+
+Use the newest completed route Save as the current source. A Save changes the
+SLDPRT hash without necessarily changing part geometry. Keep the preceding
+receipts immutable; verify their recorded before/after transition rather than
+passing an old current-source loader the new file. Reuse the pinned feature
+geometry and tool profiles; fresh checks cover document identity, setup/feature
+counts, operation links, generated flags, record counts and relevant parameters.
+
+- `solidworks_cam_export_completed_gtp_cl`: one inherited `SaveCLFile` call for
+  existing generated paths, with before/after checks. It neither generates paths
+  nor saves the model. The export scope is the current mill machine, not an API
+  selection of one operation.
+- `solidworks_cam_read_generic_cl`: offline, bounded parsing with raw bytes and
+  source pins retained. It recognizes the observed planar `CIRCLE` record plus
+  the following `GOTO`. Bounds include the full circle locus, conservatively for
+  partial arcs. Unknown syntax, helical geometry, sweep angle and world-frame
+  interpretation are not silently inferred. Endpoint-only bounds omit arcs.
+- `solidworks_cam_save_completed_gtp`: one `SaveActiveDocument` using the existing
+  save engine. Strict returned integer zero, the new file hash, a clean document
+  and unchanged protected route are checked. This is explicit Save/readback,
+  not a close/reopen persistence test.
+- `solidworks_cam_export_completed_gtp_wip`: one `CreateSTLOfWIPs2` from a completed
+  saved route. Scope is all WIP parts/setups; preserve every returned file and its
+  hash. There is no explicit GTP, `RunSimulationSilent`, Save or NC action. The
+  observed route must remain unchanged after export. An uncertain outcome must
+  not be replayed automatically.
+
+A saved 19-feature/three-setup/six-operation case with exactly one generated rough
+path was verified for CL, Save and WIP. The other five operations stayed
+ungenerated with unchanged record counts. This is bounded native evidence, not
+proof for arbitrary routes or undocumented internal behavior.
+
+Software-only WIP comparison may establish coordinate scale/direction and removed
+material; it need not be blocked by an already proven CL-to-world transform.
+Compare to the unchanged stock/target in fixed coordinates, without fitting.
+Separate observed mesh fidelity from cutter fidelity: one verified WIP represented
+its circular wall with 25 facets and omitted the cutter's small edge chamfer.
+Do not use that mesh to certify a 0.01 mm tolerance or a fully qualified holder,
+fixture, spindle or machine program. Coaxial geometry does not determine general
+XY yaw. Preserve the raw mesh and state any analytical cutter envelope separately.
+
+The current project catalogue and receipts hold paths, hashes and case-specific
+measurements. Skill code and shared references do not hardcode project paths.
+
+
+### CAM 操作移动的 HRESULT 与历史证据
+
+`ICWBaseOpSetup.InsertOperationAfter` 的已核对 TLB 声明只有输入参数，返回 HRESULT。当前 typed dual-vtable 路径只接受严格的整数 `0`（S_OK）；`None`、布尔值和非零值均不能作为成功。先保存有界、可安全序列化的原始返回类型和值，再执行断言，随后仍须验证实际操作顺序及受保护状态。
+
+旧收据若只保留 `int` 类型而丢失数值，不能据此补写或推断 S_OK。保留旧收据与一次性标记，禁止重复移动；只读核对必须明确绑定当时的冻结模块及证据。运行时代码修复后的新哈希不能冒充该历史模块。

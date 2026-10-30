@@ -138,7 +138,7 @@ class Transform:
 class NativeSegment:
  def __init__(self,kind,a,b=None,r=None):self.kind=kind;self.a=a;self.b=b;self.r=r;self.ConstructionGeometry=False
  def GetType(self):return self.kind
- def IsCircle(self):return self.kind==1
+ def IsCircle(self):return 1 if self.kind==1 else 0
  def GetCenterPoint2(self):return SimpleNamespace(X=self.a[0],Y=self.a[1],Z=self.a[2])
  def GetRadius(self):return self.r
  def GetStartPoint2(self):return SimpleNamespace(X=self.a[0],Y=self.a[1],Z=self.a[2])

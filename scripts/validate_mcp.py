@@ -58,6 +58,7 @@ REQUIRED_TOOLS = {
     "solidworks_cam_qualify_thread_postprocess",
     "solidworks_cam_qualify_turn_apt_postprocess",
     "solidworks_cam_export_generic_cl",
+    "solidworks_cam_export_mill_generic_cl",
     "solidworks_cam_configure_mill_qualification",
     "solidworks_cam_configure_mill_stock",
     "solidworks_cam_inspect_thread_records",

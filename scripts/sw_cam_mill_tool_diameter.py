@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 import math
 import time
+from scripts.sw_cam_mill_feature_context import (load_selected_mill_context,
+    capture_selected_mill_context, selected_context_identity)
 from scripts.sw_cam import _member, _error, document_snapshot
 from scripts.sw_cam_generation import _typed, _write_receipt
 from scripts.sw_cam_mill_qualification import _bootstrap
@@ -60,8 +62,10 @@ def qualify_mill_tool_diameter(sw, clsid, typelib_path, *, process_id,
         expected_operation_native_ids, expected_tool_native_id, expected_tool_type_raw,
         expected_cut_diameter_native, new_cut_diameter_native,
         action, qualification_only, acknowledge_disposable_copy, message_policy='vendor_default',
-        expected_state_sha256=None, receipt_path=None):
+        expected_state_sha256=None, receipt_path=None,
+        feature_kind='open_pocket', circle_creation_receipt_path=None, circle_creation_receipt_sha256=None):
     from scripts.sw_cam_events import CamMessageSession
+    selected_context=None
     report = dict(status='error', phase='preflight', action=action, process_id=process_id,
         may_continue=False, mutation_attempted=False, native_dispatch_pending=False,
         native_call_attempted=False, native_call_returned=False, native_hresult_observable=False, property_assignment=True,
@@ -76,6 +80,8 @@ def qualify_mill_tool_diameter(sw, clsid, typelib_path, *, process_id,
     def persist():
         if created: _write_receipt(receipt, report)
     def identity():
+        if selected_context is not None:
+            strict_selected_document=selected_context_identity(sw,selected_context)['document']
         pid = _member(sw, 'GetProcessID')
         if type(pid) is not int or pid != process_id:
             raise ValueError('Exact SOLIDWORKS process changed')
@@ -85,6 +91,8 @@ def qualify_mill_tool_diameter(sw, clsid, typelib_path, *, process_id,
         check_document_target(doc.get('path'), doc.get('title'), expected_path=expected_document_path, required=True)
         if _file_hash(expected_document_path) != expected_source_sha256:
             raise ValueError('Saved source file hash changed')
+        if selected_context is not None and doc!=strict_selected_document:
+            raise ValueError('Selected context document changed during identity check')
         return doc
     def check(*, active=True):
         summary = session.summary(); report['messages'] = summary
@@ -98,8 +106,9 @@ def qualify_mill_tool_diameter(sw, clsid, typelib_path, *, process_id,
         report['phase_timings'].append(timing); persist()
         start = time.monotonic(); check(); begin = identity(); check()
         diagnostic = dict(phase=phase); report['snapshot_diagnostics'].append(diagnostic)
-        state, native = capture_mill_feature_state(sw, clsid, typelib_path, expected_document_path,
-            expected_feature_native_id=expected_feature_native_id, check=check, diagnostic=diagnostic)
+        state, native = capture_selected_mill_context(sw, clsid, typelib_path, expected_document_path,
+            expected_feature_native_id=expected_feature_native_id, check=check, diagnostic=diagnostic,
+            context=selected_context,legacy_capture=capture_mill_feature_state)
         check()
         if state['document'] != begin or identity() != begin or state['saved_file_sha256'] != expected_source_sha256:
             raise ValueError('Document/source changed during phase')
@@ -111,6 +120,11 @@ def qualify_mill_tool_diameter(sw, clsid, typelib_path, *, process_id,
         check(); timing.update(completed=True, elapsed_seconds=time.monotonic()-start)
         persist(); return state, native
     try:
+        selected_context=load_selected_mill_context(process_id=process_id,
+            expected_document_path=expected_document_path,expected_feature_native_id=expected_feature_native_id,
+            expected_source_sha256=expected_source_sha256,feature_kind=feature_kind,
+            circle_creation_receipt_path=circle_creation_receipt_path,
+            circle_creation_receipt_sha256=circle_creation_receipt_sha256)
         _integer(process_id, positive=True); _integer(expected_feature_native_id, positive=True)
         _integer(expected_tool_native_id, positive=True)
         if (type(expected_operation_native_ids) is not list or not 1 <= len(expected_operation_native_ids) <= 32 or

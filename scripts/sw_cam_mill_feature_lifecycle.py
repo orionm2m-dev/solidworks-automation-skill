@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 
 from scripts.sw_cam import _error, _member, document_snapshot
+from scripts.sw_cam_mill_feature_context import load_selected_mill_context, capture_selected_mill_context
 from scripts.sw_cam_generation import _typed, _write_receipt
 from scripts.sw_cam_lifecycle import _MessageBlocked, _open_documents, _target, _verify_save
 from scripts.sw_cam_mill_qualification import _bootstrap
@@ -27,15 +28,15 @@ def _selectors(feature_id, operation_ids):
         raise ValueError('Exact ordered unique positive operation native IDs required (0 to 32)')
 
 
-def _selected_scope(state, feature_id, operation_ids):
+def _selected_scope(state, feature_id, operation_ids, feature_kind='open_pocket'):
     if state['current_machine']['machine_type'] != 1:
         raise ValueError('MILL qualification lifecycle requires native machine type 1')
     setups = state['feature_setups']
     selected = state['selected_feature']
     if (len(setups) != 1 or type(setups[0].get('feature_count')) is not int or
             setups[0]['feature_count'] != 1 or selected.get('native_id') != feature_id or
-            selected.get('volume_type') != 6):
-        raise ValueError('Exact single selected OPEN_POCKET feature required')
+            selected.get('volume_type') != (2 if feature_kind=='circular_pocket' else 6)):
+        raise ValueError('Exact single selected feature and expected volume type required')
     operations = state['operations']
     if (type(operations) is not list or len(operations) > 32 or
             [row.get('native_id') for row in operations] != operation_ids or
@@ -52,7 +53,8 @@ def _selected_scope(state, feature_id, operation_ids):
 
 def mill_feature_document_lifecycle(sw, clsid, typelib_path, *, expected_document_path, action,
         process_id, acknowledge_qualification_copy, expected_feature_native_id, expected_operation_native_ids, message_policy='vendor_default',
-        expected_state_sha256=None, receipt_path=None):
+        expected_state_sha256=None, receipt_path=None, feature_kind='open_pocket',
+        expected_source_sha256=None, circle_creation_receipt_path=None, circle_creation_receipt_sha256=None):
     from scripts.sw_cam_events import CamMessageSession
 
     report = dict(status='error', machine_kind='mill_single_feature_qualification', process_id=process_id,
@@ -67,6 +69,8 @@ def mill_feature_document_lifecycle(sw, clsid, typelib_path, *, expected_documen
         cam_dirty_state='unknown', message_policy=message_policy, post_cleanup_CAM_getters=False,
         snapshot_scope='One selected MILL feature raw geometry and exact operation definitions; no independent depth or complete toolpath proof',
         last_CAM_snapshot_scope='inside active event subscription before cleanup', snapshot_diagnostics=[])
+    circle_evidence = selected_context = None
+    circular = feature_kind == 'circular_pocket'
     receipt = None
     receipt_created = False
     session = None
@@ -75,7 +79,12 @@ def mill_feature_document_lifecycle(sw, clsid, typelib_path, *, expected_documen
         actual = _member(sw, 'GetProcessID')
         if type(actual) is not int or actual != process_id:
             raise ValueError('Exact SOLIDWORKS process identity changed')
-        doc = document_snapshot(sw)
+        if circular:
+            from scripts.sw_cam_circle_lifecycle_evidence import raw_part_identity
+            doc=raw_part_identity(sw)
+            if circle_evidence is not None and _file_hash(circle_creation_receipt_path)!=circle_creation_receipt_sha256:
+                raise ValueError('Circular creation receipt changed')
+        else:doc = document_snapshot(sw)
         _target(doc, expected_document_path)
         return dict(document=doc, saved_file_sha256=_file_hash(expected_document_path))
 
@@ -96,10 +105,20 @@ def mill_feature_document_lifecycle(sw, clsid, typelib_path, *, expected_documen
         check()
         diagnostic = dict(phase=phase)
         report['snapshot_diagnostics'].append(diagnostic)
-        state, native = capture_mill_feature_state(sw, clsid, typelib_path, expected_document_path,
-            expected_feature_native_id=expected_feature_native_id, check=check, diagnostic=diagnostic)
+        # Shared circular capture owns its full/light identity guards; callback is event-only.
+
+        if circular:
+            # Only an explicit native save may establish a new current-file checkpoint.
+            refreshed_source=before_identity['saved_file_sha256'] if phase=='after_native_save' else None
+            state,native=capture_selected_mill_context(sw,clsid,typelib_path,expected_document_path,
+                expected_feature_native_id=expected_feature_native_id,check=check,diagnostic=diagnostic,
+                context=selected_context,legacy_capture=capture_mill_feature_state,
+                current_source_sha256=refreshed_source)
+        else:
+            state, native = capture_mill_feature_state(sw, clsid, typelib_path, expected_document_path,
+                expected_feature_native_id=expected_feature_native_id, check=check, diagnostic=diagnostic)
         check()
-        _selected_scope(state, expected_feature_native_id, expected_operation_native_ids)
+        _selected_scope(state, expected_feature_native_id, expected_operation_native_ids, feature_kind)
         after_identity = identity()
         check()
         observed = {key: state[key] for key in ('document', 'saved_file_sha256')}
@@ -123,6 +142,20 @@ def mill_feature_document_lifecycle(sw, clsid, typelib_path, *, expected_documen
 
     try:
         _selectors(expected_feature_native_id, expected_operation_native_ids)
+        if type(feature_kind) is not str or feature_kind not in ('open_pocket','circular_pocket'):
+            raise ValueError('Exact supported lifecycle feature kind required')
+        if circular:
+            selected_context=load_selected_mill_context(process_id=process_id,
+                expected_document_path=expected_document_path,expected_feature_native_id=expected_feature_native_id,
+                expected_source_sha256=expected_source_sha256,feature_kind=feature_kind,
+                circle_creation_receipt_path=circle_creation_receipt_path,
+                circle_creation_receipt_sha256=circle_creation_receipt_sha256)
+            circle_evidence=selected_context['evidence']
+            report.update(feature_kind=feature_kind,circle_creation_evidence={
+                'path':circle_creation_receipt_path,'sha256':circle_creation_receipt_sha256},
+                physical_depth_verified=False)
+        elif any(x is not None for x in (expected_source_sha256,circle_creation_receipt_path,circle_creation_receipt_sha256)):
+            raise ValueError('Circle evidence inputs require explicit circular_pocket mode')
         if type(process_id) is not int or not 0 < process_id <= 0xFFFFFFFF or acknowledge_qualification_copy is not True:
             raise ValueError('Exact positive process ID and explicit qualification-copy acknowledgement required')
         if (not isinstance(expected_document_path, str) or not absolute_document_path(expected_document_path)
@@ -143,6 +176,8 @@ def mill_feature_document_lifecycle(sw, clsid, typelib_path, *, expected_documen
             _write_receipt(receipt, report, create=True)
             receipt_created = True
         initial_identity = identity()
+        if circular and initial_identity['saved_file_sha256']!=expected_source_sha256:
+            raise ValueError('Exact circular lifecycle source SHA changed')
         # Only the event-host acquisition precedes subscription; no CAM document reads here.
         app = _bootstrap(sw, clsid, typelib_path, expected_document_path)
         if identity() != initial_identity:

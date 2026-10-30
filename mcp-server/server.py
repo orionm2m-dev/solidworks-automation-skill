@@ -29,6 +29,13 @@ _MCP_STDOUT = sys.stdout
 for _stream in (_MCP_STDOUT, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
+
+from typing import Annotated
+
+
+
+
+
 if __name__ == "__main__":
     sys.stdout = sys.stderr
 
@@ -90,6 +97,7 @@ def _load_automation_modules() -> None:
         "save_document": connect.save_document,
         "extrude_boss": part.extrude_boss,
         "extrude_cut": part.extrude_cut,
+        "extrude_cut_midplane": part.extrude_cut_midplane,
         "extrude_midplane": part.extrude_midplane,
         "revolve_boss": part.revolve_boss,
         "fillet": part.fillet,
@@ -106,6 +114,7 @@ def _load_automation_modules() -> None:
         "sketch_line": part.sketch_line,
         "sketch_slot": part.sketch_slot,
         "sketch_polygon": part.sketch_polygon,
+        "sketch_profile": part.sketch_profile,
         "sketch_spline": part.sketch_spline,
         "auto_dimension_sketch": part.auto_dimension_sketch,
         "clear_sketch_selection_cache": part.clear_sketch_selection_cache,
@@ -933,6 +942,28 @@ class SolidWorksNativeAssemblyAuditInput(ActiveDocumentInput):
         return value
 
 
+class SolidWorksExplodeStepTransformTargetInput(BaseInput):
+    """One exact existing single-component explode step."""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    index: int = Field(ge=0, le=511, strict=True)
+    name: str = Field(min_length=1, max_length=1000, strict=True)
+    component_name: str = Field(min_length=1, max_length=1000, strict=True)
+
+
+class SolidWorksExplodeStepTransformsInput(SolidWorksNativeAssemblyAuditInput):
+    """Read native matrices without changing the existing explode view."""
+    targets: list[SolidWorksExplodeStepTransformTargetInput] = Field(min_length=1, max_length=32, strict=True)
+
+    @model_validator(mode="after")
+    def exact_step_matrix_targets(self):
+        if self.expected_document_title is not None:
+            raise ValueError("Step matrix reads require an exact saved path, without a title target")
+        if (len({row.index for row in self.targets}) != len(self.targets)
+                or len({row.name for row in self.targets}) != len(self.targets)):
+            raise ValueError("Duplicate step index or name")
+        return self
+
+
 class SolidWorksNativeAssemblyInspectionInput(SolidWorksNativeAssemblyAuditInput):
     expected_snapshot_path: Optional[str] = Field(default=None, strict=True)
     expected_snapshot_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
@@ -951,6 +982,127 @@ class SolidWorksNativeAssemblyInspectionInput(SolidWorksNativeAssemblyAuditInput
         if any(not absolute_document_path(old) or not absolute_document_path(new)
                 for old, new in self.path_replacements.items()):
             raise ValueError("Path replacement keys and values must be absolute")
+        return self
+
+
+class SolidWorksExplodeAxisTargetInput(BaseInput):
+    """One exact existing explode step."""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    index: int = Field(ge=0, le=511, strict=True)
+    name: str = Field(min_length=1, max_length=1000, strict=True)
+
+
+class SolidWorksExplodeAxisFaceInput(BaseInput):
+    """One explicitly allowed face in the frozen owner part."""
+    body_index: int = Field(ge=0, le=63, strict=True)
+    face_index: int = Field(ge=0, le=8191, strict=True)
+
+
+class SolidWorksExplodeAxisRebindInput(SolidWorksNativeAssemblyInspectionInput):
+    """Prepare or apply a bounded repair of missing axis references."""
+    action: Literal["prepare", "apply"]
+    expected_snapshot_path: str = Field(min_length=1, strict=True)
+    expected_snapshot_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    owner_name: str = Field(min_length=1, max_length=1000, strict=True)
+    owner_reference: str = Field(min_length=1, max_length=1000, strict=True)
+    owner_path: str = Field(min_length=1, strict=True)
+    owner_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    cylinder_parameters_native: list[float] = Field(min_length=7, max_length=7, strict=True)
+    target_steps: list[SolidWorksExplodeAxisTargetInput] = Field(min_length=1, max_length=32, strict=True)
+    equivalent_face_group: Optional[list[SolidWorksExplodeAxisFaceInput]] = Field(default=None, min_length=2, max_length=32, strict=True)
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    prepare_receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    prepare_receipt_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    @field_validator("equivalent_face_group", mode="before")
+    @classmethod
+    def explicit_face_group_only(cls, value):
+        if value is None:
+            return None
+        if type(value) is not list or not 2 <= len(value) <= 32:
+            raise ValueError("Explicit equivalent-face group requires two to 32 faces")
+        keys = []
+        for item in value:
+            if type(item) is not dict or set(item) != {"body_index", "face_index"}:
+                raise ValueError("Each group face requires only body_index and face_index")
+            body, face = item["body_index"], item["face_index"]
+            if (type(body) is not int or not 0 <= body < 64
+                    or type(face) is not int or not 0 <= face < 8192):
+                raise ValueError("Strict bounded body/face indices required")
+            keys.append((body, face))
+        if len(set(keys)) != len(keys):
+            raise ValueError("Duplicate equivalent face")
+        return value
+
+    @field_validator("cylinder_parameters_native", mode="before")
+    @classmethod
+    def cylinder_requires_finite_numbers(cls, value):
+        if type(value) is not list or len(value) != 7:
+            raise ValueError("Exactly seven native cylinder parameters required")
+        if any(type(item) not in (int, float) or item != item or abs(item) == float("inf") for item in value):
+            raise ValueError("Cylinder parameters must be finite numbers, not booleans or strings")
+        return value
+
+    @field_validator("path_replacements", mode="before")
+    @classmethod
+    def exact_path_map_only(cls, value):
+        if type(value) is not dict or any(type(k) is not str or type(v) is not str for k, v in value.items()):
+            raise ValueError("Path replacements require exact string keys and values")
+        return value
+
+    @field_validator("owner_path")
+    @classmethod
+    def owner_requires_saved_part(cls, value):
+        path = Path(value)
+        if not path.is_absolute() or not path.is_file() or path.suffix.casefold() != ".sldprt":
+            raise ValueError("The owner must be an exact existing absolute SLDPRT")
+        return value
+
+    @model_validator(mode="after")
+    def rebind_action_contract(self):
+        values = (self.expected_state_sha256, self.prepare_receipt_path, self.prepare_receipt_sha256)
+        if self.action == "prepare":
+            if any(value is not None for value in values):
+                raise ValueError("Prepare cannot accept apply credentials")
+        elif any(value is None for value in values):
+            raise ValueError("Apply requires the complete prepared state and receipt credentials")
+        if self.prepare_receipt_path is not None:
+            path = Path(self.prepare_receipt_path)
+            if not path.is_absolute() or not path.is_file() or path.suffix.casefold() != ".json":
+                raise ValueError("Prepared receipt must be an existing absolute JSON file")
+        if (len({step.index for step in self.target_steps}) != len(self.target_steps)
+                or len({step.name for step in self.target_steps}) != len(self.target_steps)):
+            raise ValueError("Target step indices and names must be unique")
+        return self
+
+
+class SolidWorksRestoreAssemblyPresentationInput(SolidWorksNativeAssemblyAuditInput):
+    """One guarded collapse of a pinned existing explode-view presentation."""
+    action: Literal["prepare", "apply"]
+    prior_rebind_receipt_path: str = Field(min_length=1, strict=True)
+    prior_rebind_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    explode_view_name: str = Field(min_length=1, max_length=1000, strict=True)
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    prepare_receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    prepare_receipt_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    @field_validator("prior_rebind_receipt_path", "prepare_receipt_path")
+    @classmethod
+    def pinned_json_must_exist(cls, value):
+        if value is not None:
+            path = Path(value)
+            if not path.is_absolute() or not path.is_file() or path.suffix.casefold() != ".json":
+                raise ValueError("An exact existing absolute JSON receipt is required")
+        return value
+
+    @model_validator(mode="after")
+    def presentation_action_contract(self):
+        values = (self.expected_state_sha256, self.prepare_receipt_path, self.prepare_receipt_sha256)
+        if self.action == "prepare":
+            if any(value is not None for value in values):
+                raise ValueError("Prepare cannot accept apply credentials")
+        elif any(value is None for value in values):
+            raise ValueError("Apply requires the complete prepared state and receipt credentials")
         return self
 
 
@@ -1559,7 +1711,7 @@ class SolidWorksOwnedProcessRecoveryInput(BaseInput):
     spec: SolidWorksOwnedRecoverySpecInput
     expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
     acknowledge_terminate_owned_process: bool = Field(default=False, strict=True)
-    acknowledged_discard_ids: Optional[list[str]] = Field(default=None, min_length=1, max_length=256)
+    acknowledged_discard_ids: Optional[list[str]] = Field(default=None, min_length=0, max_length=256)
     receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
     wait_milliseconds: int = Field(default=5000, ge=0, le=10000, strict=True)
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON)
@@ -1855,6 +2007,280 @@ class SolidWorksCamThreadToolInput(SolidWorksCamThreadReadInput):
     holder_profile: Literal["none", "operation"] = "operation"
 
 
+class SolidWorksCamMillFeatureInventoryInput(SolidWorksCamTargetInput):
+    """Bounded raw MILL discovery inventory with zero operations; no AFR or edits."""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    receipt_path: str = Field(min_length=1, strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    recognition_receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    recognition_receipt_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    preservation_save_receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    preservation_save_receipt_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    allow_saved_process_rebind: bool = Field(default=False, strict=True)
+    diagnostic_continue_known_island_error: bool = Field(default=False, strict=True)
+    diagnostic_contour_errors: bool = Field(default=False, strict=True)
+    batched_identity_checks: bool = Field(default=False, strict=True)
+
+    @model_validator(mode="after")
+    def mill_inventory_contract(self):
+        if self.expected_document_title is not None:
+            raise ValueError("Only exact saved document path is supported")
+        from scripts.sw_cam_mill_inventory import validate_inventory_request
+        validate_inventory_request(**self.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"}))
+        return self
+
+
+class SolidWorksCamMillRouteToolInput(SolidWorksCamTargetInput):
+    """只读多特征 MILL 中一个已分配刀具；不生成或修改 CAM。"""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    inventory_receipt_path: str = Field(min_length=1, strict=True)
+    inventory_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_mill_operation_type: int = Field(ge=0, le=4294967295, strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    receipt_path: str = Field(min_length=1, strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+
+    @model_validator(mode="after")
+    def mill_route_tool_contract(self):
+        if self.expected_document_title is not None:
+            raise ValueError("Only exact saved document path is supported")
+        from scripts.sw_cam_mill_inventory import validate_inventory_request
+        validate_inventory_request(**self.model_dump(include={
+            "process_id","expected_document_path","expected_source_sha256","qualification_only",
+            "acknowledge_disposable_copy","receipt_path","message_policy"}))
+        path=Path(self.inventory_receipt_path)
+        if not path.is_absolute() or path.suffix.casefold()!=".json" or not path.is_file() or path.is_symlink():
+            raise ValueError("Pinned existing complete inventory JSON required")
+        if path.resolve()==Path(self.receipt_path).resolve():
+            raise ValueError("Output receipt cannot overwrite inventory evidence")
+        return self
+
+
+class SolidWorksCamMillVolumeIslandsInput(SolidWorksCamTargetInput):
+    """Read one exact feature through the documented volume-island interface."""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_owner_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_volume_type: int = Field(ge=0, le=4294967295, strict=True)
+    expected_shape: int = Field(ge=0, le=4294967295, strict=True)
+    expected_island_count: int = Field(ge=0, le=64, strict=True)
+    include_contours: bool = Field(default=False, strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    receipt_path: str = Field(min_length=1, strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+
+    @model_validator(mode="after")
+    def exact_volume_island_contract(self):
+        if self.expected_document_title is not None:
+            raise ValueError("Only exact saved document path is supported")
+        from scripts.sw_cam_mill_volume_islands import validate_volume_islands_request
+        validate_volume_islands_request(**self.model_dump(exclude={
+            "addin_clsid", "expected_document_title", "response_format"}))
+        return self
+
+
+class SolidWorksCamSelectedMillPlanInput(SolidWorksCamTargetInput):
+    """One selected plan or checked save; scoped headers, never GTP."""
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_owner_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_volume_type: int = Field(ge=0, le=2147483647, strict=True)
+    expected_shape: int = Field(ge=0, le=2147483647, strict=True)
+    expected_island_count: int = Field(ge=0, le=256, strict=True)
+    expected_operation_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    action: Literal["plan_once", "save_checked"]
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    receipt_path: str = Field(min_length=1, strict=True)
+    profile_headers_receipt_path: str = Field(min_length=1, strict=True)
+    profile_headers_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    profile_indexed_receipt_path: str = Field(min_length=1, strict=True)
+    profile_indexed_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    diagnostic_inventory_receipt_path: str = Field(min_length=1, strict=True)
+    diagnostic_inventory_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    plan_receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    plan_receipt_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    @model_validator(mode="after")
+    def selected_plan_contract(self):
+        if self.expected_document_title is not None:
+            raise ValueError("Exact qualification path required")
+        from scripts.sw_cam_mill_selected_plan import validate_selected_plan_request
+        values = self.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        validate_selected_plan_request(**values)
+        return self
+
+
+class SolidWorksCamMillProfileHeadersInput(SolidWorksCamTargetInput):
+    """Read one exact PROFILE feature metadata without indices or contours."""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_owner_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_volume_type: int = Field(ge=0, le=4294967295, strict=True)
+    expected_shape: int = Field(ge=0, le=4294967295, strict=True)
+    expected_island_count: int = Field(ge=0, le=64, strict=True)
+    include_contours: bool = Field(default=False, strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    receipt_path: str = Field(min_length=1, strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+
+    @model_validator(mode="after")
+    def exact_profile_header_contract(self):
+        if self.expected_document_title is not None:
+            raise ValueError("Only exact saved document path is supported")
+        from scripts.sw_cam_mill_profile_headers import validate_profile_headers_request
+        validate_profile_headers_request(**self.model_dump(exclude={
+            "addin_clsid", "expected_document_title", "response_format"}))
+        return self
+
+
+class SolidWorksCamProfileIndexMappingInput(BaseInput):
+    model_config = ConfigDict(str_strip_whitespace=False)
+    native_index: int = Field(ge=0, le=64, strict=True)
+    expected_sketch_name: str = Field(min_length=1, max_length=1024, strict=True)
+
+
+class SolidWorksCamMillProfileIndexedInput(SolidWorksCamTargetInput):
+    """Explicit index/name diagnostic pinned to completed PROFILE headers."""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_owner_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_volume_type: int = Field(ge=0, le=4294967295, strict=True)
+    expected_shape: int = Field(ge=0, le=4294967295, strict=True)
+    expected_island_count: int = Field(ge=0, le=64, strict=True)
+    profile_headers_receipt_path: str = Field(min_length=1, strict=True)
+    profile_headers_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    index_mapping: list[SolidWorksCamProfileIndexMappingInput] = Field(min_length=1, max_length=64)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    receipt_path: str = Field(min_length=1, strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+
+    @model_validator(mode="after")
+    def exact_profile_indexed_contract(self):
+        if self.expected_document_title is not None:
+            raise ValueError("Only exact saved document path is supported")
+        from scripts.sw_cam_mill_profile_indexed import validate_profile_indexed_request
+        validate_profile_indexed_request(**self.model_dump(exclude={
+            "addin_clsid", "expected_document_title", "response_format"}))
+        return self
+
+
+class SolidWorksCamMillFeatureRecognitionInput(SolidWorksCamTargetInput):
+    """One prepared native AFR attempt on a stock-first empty disposable MILL copy."""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    receipt_path: str = Field(min_length=1, strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+
+    action: Literal["prepare", "apply"]
+    expected_material_raw: str = Field(min_length=1, strict=True)
+    expected_stock_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    stock_basis: Literal["documented_raw_stock", "actual_turning_wip"]
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    prepare_receipt_path: Optional[str] = Field(default=None, strict=True)
+    prepare_receipt_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    techdb_source_path: Optional[str] = Field(default=None, strict=True)
+    techdb_source_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    stock_export_receipt_path: Optional[str] = Field(default=None, strict=True)
+    stock_export_receipt_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    @model_validator(mode="after")
+    def mill_feature_recognition_contract(self):
+        if self.expected_document_title is not None:
+            raise ValueError("Only exact saved document path is supported")
+        from scripts.sw_cam_mill_afr import validate_afr_request
+        validate_afr_request(**self.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"}))
+        return self
+
+
+class SolidWorksCamSelectedFeatureContextInput(BaseInput):
+    """Explicit selected-feature provenance; default rectangle scope is unchanged."""
+    feature_kind: Literal["open_pocket", "circular_pocket"] = "open_pocket"
+    circle_creation_receipt_path: Optional[str] = Field(default=None,min_length=1,strict=True)
+    circle_creation_receipt_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+
+    @model_validator(mode="after")
+    def selected_feature_context_contract(self):
+        from scripts.sw_cam_mill_feature_context import validate_selected_mill_context_request
+        if self.feature_kind=="open_pocket" and {"circle_creation_receipt_path","circle_creation_receipt_sha256"} & self.model_fields_set:
+            raise ValueError("Explicit circle evidence fields require circular_pocket mode")
+        validate_selected_mill_context_request(feature_kind=self.feature_kind,
+            expected_feature_native_id=getattr(self,"expected_feature_native_id",None),
+            expected_source_sha256=getattr(self,"expected_source_sha256",None),
+            circle_creation_receipt_path=self.circle_creation_receipt_path,
+            circle_creation_receipt_sha256=self.circle_creation_receipt_sha256)
+        return self
+
+
+class SolidWorksCamMillGenericCLExportInput(SolidWorksCamSelectedFeatureContextInput, SolidWorksCamTargetInput):
+    """Exact generated MILL inventory in a bounded whole-machine CL export."""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_mill_operation_type: int = Field(ge=0, le=4294967295, strict=True)
+    expected_toolpath_record_counts: list[int] = Field(min_length=1, max_length=32)
+    expected_ungenerated_operation_ids: list[int] = Field(max_length=31)
+    expected_generated_operations: Optional[list[dict]] = Field(default=None, min_length=1, max_length=32, strict=True)
+    action: Literal["inspect", "prepare", "apply"]
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    acknowledge_machine_scope: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    output_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+
+    @field_validator("expected_toolpath_record_counts", "expected_ungenerated_operation_ids", mode="before")
+    @classmethod
+    def mill_generic_cl_strict_integer_lists(cls, value):
+        if type(value) is not list or any(type(v) is not int for v in value):
+            raise ValueError("Strict native integer lists required")
+        return value
+
+    @model_validator(mode="after")
+    def mill_generic_cl_contract(self):
+        if self.expected_document_title is not None:
+            raise ValueError("Only exact saved document path is supported")
+        from scripts.sw_cam_mill_generic_cl import validate_mill_cl_request
+        validate_mill_cl_request(**self.model_dump(
+            exclude={"addin_clsid", "expected_document_title", "response_format",
+                     "feature_kind", "circle_creation_receipt_path", "circle_creation_receipt_sha256"}))
+        return self
+
+
 class SolidWorksCamGenericCLExportInput(SolidWorksCamTargetInput):
     """Whole TURN machine generic CL qualification; no toolpath generation or controller assignment."""
     model_config = ConfigDict(str_strip_whitespace=False)
@@ -2010,6 +2436,64 @@ class SolidWorksCamEvidenceInput(BaseInput):
         return value
 
 
+class SolidWorksCamMillMaterialInput(SolidWorksCamTargetInput):
+    """One exact material assignment on an empty, saved disposable MILL copy."""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    receipt_path: str = Field(min_length=1, strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+
+    action: Literal["prepare", "apply"]
+    expected_old_material: str = Field(min_length=1, max_length=512, strict=True)
+    value_native: str = Field(min_length=1, max_length=512, strict=True)
+    material_evidence: SolidWorksCamEvidenceInput
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    prepare_receipt_path: Optional[str] = Field(default=None, strict=True)
+    prepare_receipt_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    @model_validator(mode="after")
+    def mill_material_contract(self):
+        if self.expected_document_title is not None:
+            raise ValueError("Only exact saved document path is supported")
+        from scripts.sw_cam_mill_material import validate_mill_material_request
+        validate_mill_material_request(**self.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"}))
+        return self
+
+
+class SolidWorksCamEmptyMillStockExportInput(SolidWorksCamTargetInput):
+    """One existing-stock file export on an empty saved MILL qualification copy."""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    receipt_path: str = Field(min_length=1, strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+
+    action: Literal["prepare", "apply"]
+    expected_stock_path: str = Field(min_length=1, strict=True)
+    expected_stock_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_stock_bounds_native: list[Any] = Field(min_length=6, max_length=6, strict=True)
+    output_dir: str = Field(min_length=1, strict=True)
+    acknowledge_document_wide_export: bool = Field(strict=True)
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    prepare_receipt_path: Optional[str] = Field(default=None, strict=True)
+    prepare_receipt_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    @model_validator(mode="after")
+    def empty_stock_export_contract(self):
+        if self.expected_document_title is not None:
+            raise ValueError("Only exact saved document path is supported")
+        from scripts.sw_cam_empty_mill_stock_export import validate_empty_stock_export_request
+        validate_empty_stock_export_request(**self.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"}))
+        return self
+
+
 class SolidWorksCamCuttingConditionsInput(SolidWorksCamTargetInput):
     """原生材料或一个切削标量；所有关联操作保守纳入授权范围。"""
     model_config = ConfigDict(str_strip_whitespace=False)
@@ -2126,11 +2610,15 @@ class SolidWorksCamProfileSketchInput(ActiveDocumentInput):
     """已保存资格副本中的有限原生二维轮廓；没有 CAM/实体写入或保存。"""
     process_id: int = Field(gt=0, le=4294967295, strict=True)
     expected_document_path: str = Field(min_length=1, strict=True)
-    action: Literal["inspect", "prepare", "apply"]
+    action: Literal["inspect", "prepare", "apply", "verify_existing"]
     spec: Dict[str, Any] = Field(description="Exact plane_axis X/Y/Z, plane_offset_mm, unique sketch_name/plane_name, profile circle(center_model_mm,radius_mm) or closed_polyline(points_model_mm:3..32).")
     qualification_only: bool = Field(strict=True)
     expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
     receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    expected_source_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    creation_receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    creation_receipt_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+
     response_format: ResponseFormat = ResponseFormat.JSON
 
     @field_validator("spec", mode="before")
@@ -2143,7 +2631,20 @@ class SolidWorksCamProfileSketchInput(ActiveDocumentInput):
     def sketch_contract(self):
         if self.qualification_only is not True or Path(self.expected_document_path).suffix.casefold() != ".sldprt" or self.expected_document_title is not None:
             raise ValueError("Exact absolute saved qualification part required")
-        if self.action == "apply":
+        evidence_fields={"expected_source_sha256","creation_receipt_path","creation_receipt_sha256"}
+        if self.action=="verify_existing":
+            if (self.expected_state_sha256 is not None or self.spec["profile"]["kind"]!="circle" or
+                    None in (self.expected_source_sha256,self.creation_receipt_path,self.creation_receipt_sha256)):
+                raise ValueError("Existing circle verification requires source SHA and pinned creator receipt, without prepared-state SHA")
+            evidence=Path(self.creation_receipt_path)
+            receipt=Path(self.receipt_path) if self.receipt_path else None
+            if (not evidence.is_absolute() or evidence.suffix.casefold()!=".json" or not evidence.is_file() or evidence.is_symlink()
+                    or receipt is None or not receipt.is_absolute() or receipt.suffix.casefold()!=".json"
+                    or not receipt.parent.is_dir() or receipt.exists() or receipt.is_symlink()):
+                raise ValueError("Pinned existing creator JSON and a new verification JSON receipt required")
+        elif evidence_fields & self.model_fields_set:
+            raise ValueError("Source/creator evidence fields are only valid for verify_existing")
+        elif self.action == "apply":
             receipt = Path(self.receipt_path) if self.receipt_path else None
             if (self.expected_state_sha256 is None or receipt is None or not receipt.is_absolute()
                     or receipt.suffix.casefold() != ".json" or not receipt.parent.is_dir() or receipt.exists() or receipt.is_symlink()):
@@ -2153,7 +2654,7 @@ class SolidWorksCamProfileSketchInput(ActiveDocumentInput):
         return self
 
 
-class SolidWorksCamMillFeaturePlanInput(SolidWorksCamMaterialCatalogueInput):
+class SolidWorksCamMillFeaturePlanInput(SolidWorksCamSelectedFeatureContextInput, SolidWorksCamMaterialCatalogueInput):
     """One explicit disposable MILL feature; no save, GTP or global GOP."""
     process_id: int = Field(gt=0, le=4294967295, strict=True)
     expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
@@ -2180,10 +2681,159 @@ class SolidWorksCamMillFeaturePlanInput(SolidWorksCamMaterialCatalogueInput):
         return self
 
 
-class SolidWorksCamMillOperationToolpathInput(SolidWorksCamMillFeaturePlanInput):
-    """Exactly one MILL operation in a disposable single-feature qualification."""
+class SolidWorksCamMillOperationLevelsInput(SolidWorksCamSelectedFeatureContextInput, SolidWorksCamMaterialCatalogueInput):
+    """Read raw levels/direction from one already generated disposable MILL operation."""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
     expected_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
     expected_mill_operation_type: int = Field(ge=0, le=2147483647, strict=True)
+    expected_toolpath_record_counts: list[int] = Field(min_length=1, max_length=32, strict=True)
+    expected_ungenerated_operation_ids: list[int] = Field(max_length=31, strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    receipt_path: str = Field(min_length=1, strict=True)
+
+    @field_validator("expected_toolpath_record_counts", mode="before")
+    @classmethod
+    def mill_levels_exact_counts(cls, value):
+        if (type(value) is not list or not 1 <= len(value) <= 32
+            or any(type(n) is not int or not 0 <= n <= 100000 for n in value)
+            or not 1 <= sum(value) <= 100000):
+            raise ValueError("Exact bounded nonempty native record counts required")
+        return value
+
+    @field_validator("expected_ungenerated_operation_ids", mode="before")
+    @classmethod
+    def mill_levels_exact_ungenerated_ids(cls, value):
+        if (type(value) is not list or len(value) > 31
+            or any(type(n) is not int or not 0 < n <= 4294967295 for n in value)
+            or len(set(value)) != len(value)):
+            raise ValueError("Unique bounded ungenerated operation IDs required")
+        return value
+
+    @field_validator("receipt_path")
+    @classmethod
+    def mill_levels_new_receipt(cls, value):
+        path = Path(value)
+        if (not path.is_absolute() or path.suffix.casefold() != ".json"
+            or not path.parent.is_dir() or path.exists() or path.is_symlink()):
+            raise ValueError("Unique absolute JSON receipt required")
+        return value
+
+    @model_validator(mode="after")
+    def mill_levels_explicit_scope(self):
+        if (self.qualification_only is not True or self.acknowledge_disposable_copy is not True
+            or self.expected_document_title is not None):
+            raise ValueError("Exact saved disposable qualification part required")
+        if self.expected_operation_native_id in self.expected_ungenerated_operation_ids:
+            raise ValueError("Selected operation cannot be listed as ungenerated")
+        return self
+
+
+class SolidWorksCamMillRoughBoundaryInput(SolidWorksCamMillOperationLevelsInput):
+    """Read raw boundary settings from one generated disposable ROUGH MILL operation."""
+    expected_mill_operation_type: int = Field(ge=0, le=0, strict=True)
+
+
+class SolidWorksCamMillRoughBoundarySetInput(SolidWorksCamMillRoughBoundaryInput):
+    """Prepare or set one raw tool-diameter percentage on a disposable rough operation."""
+    action: Literal["prepare", "apply"]
+    expected_tool_diameter_percent: float = Field(ge=0, le=150, allow_inf_nan=False, strict=True)
+    new_tool_diameter_percent: float = Field(ge=0, le=150, allow_inf_nan=False, strict=True)
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    prepare_receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    prepare_receipt_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def mill_rough_strict_percentage_numbers(cls, data):
+        if isinstance(data, dict):
+            for key in ("expected_tool_diameter_percent", "new_tool_diameter_percent"):
+                if type(data.get(key)) not in (int, float):
+                    raise ValueError("Finite numeric tool-diameter percentages required")
+        return data
+
+    @field_validator("prepare_receipt_path")
+    @classmethod
+    def mill_rough_prepared_receipt_path(cls, value):
+        if value is not None:
+            path = Path(value)
+            if not path.is_absolute() or not path.is_file() or path.suffix.casefold() != ".json":
+                raise ValueError("Exact existing absolute JSON prepare receipt required")
+        return value
+
+    @model_validator(mode="after")
+    def mill_rough_set_action_contract(self):
+        if self.expected_tool_diameter_percent == self.new_tool_diameter_percent:
+            raise ValueError("New tool-diameter percentage must differ")
+        credentials = (self.expected_state_sha256, self.prepare_receipt_path, self.prepare_receipt_sha256)
+        if self.action == "prepare":
+            if any(value is not None for value in credentials):
+                raise ValueError("Prepare rejects apply credentials")
+        elif any(value is None for value in credentials):
+            raise ValueError("Apply requires complete prepared-state and receipt credentials")
+        return self
+
+
+class SolidWorksCamMillOperationToolpathInput(SolidWorksCamMillFeaturePlanInput):
+    """One initial calculation, or explicit prepared rough-operation regeneration."""
+    expected_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_mill_operation_type: int = Field(ge=0, le=2147483647, strict=True)
+    generation_mode: Literal["initial", "regenerate"] = "initial"
+    expected_toolpath_record_counts: Optional[list[int]] = Field(default=None, min_length=1, max_length=32, strict=True)
+    expected_tool_diameter_percent: Optional[float] = Field(default=None, ge=0, le=150, allow_inf_nan=False, strict=True)
+    prepare_receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    prepare_receipt_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    @field_validator("expected_toolpath_record_counts", mode="before")
+    @classmethod
+    def mill_regenerate_exact_counts(cls, value):
+        if value is not None and (type(value) is not list or not 1 <= len(value) <= 32
+                or any(type(n) is not int or not 0 <= n <= 100000 for n in value)
+                or not 0 < sum(value) <= 100000):
+            raise ValueError("Exact bounded positive-total record counts required")
+        return value
+
+    @field_validator("expected_tool_diameter_percent", mode="before")
+    @classmethod
+    def mill_regenerate_strict_percent(cls, value):
+        if value is not None and type(value) not in (int, float):
+            raise ValueError("Strict finite numeric percentage required")
+        return value
+
+    @model_validator(mode="after")
+    def single_mill_feature_contract(self):
+        # Override this one inherited validator only; keep initial behavior intact.
+        if self.generation_mode == "initial":
+            if any(value is not None for value in (self.expected_toolpath_record_counts,
+                    self.expected_tool_diameter_percent, self.prepare_receipt_path, self.prepare_receipt_sha256)):
+                raise ValueError("Initial mode rejects regeneration credentials")
+            return super().single_mill_feature_contract()
+        if (self.expected_document_title is not None or self.qualification_only is not True
+                or self.acknowledge_disposable_copy is not True or self.expected_mill_operation_type != 0
+                or self.expected_toolpath_record_counts is None or self.expected_tool_diameter_percent is None):
+            raise ValueError("Explicit saved disposable rough operation and exact regeneration input required")
+        credentials = (self.expected_state_sha256, self.prepare_receipt_path, self.prepare_receipt_sha256)
+        if self.action == "apply":
+            if any(value is None for value in credentials):
+                raise ValueError("Regenerate apply requires complete state and prepare receipt credentials")
+            prep = Path(self.prepare_receipt_path)
+            if (not prep.is_absolute() or prep.suffix.casefold() != ".json" or not prep.is_file()
+                    or prep.is_symlink() or prep.stat().st_size > 4*1024*1024):
+                raise ValueError("Exact bounded existing JSON prepare receipt required")
+        elif any(value is not None for value in credentials):
+            raise ValueError("Inspect/prepare rejects apply credentials")
+        if self.action in ("prepare", "apply"):
+            receipt = Path(self.receipt_path) if self.receipt_path is not None else None
+            if (receipt is None or not receipt.is_absolute() or receipt.suffix.casefold() != ".json"
+                    or not receipt.parent.is_dir() or receipt.exists() or receipt.is_symlink()):
+                raise ValueError("New absolute JSON receipt required")
+        elif self.receipt_path is not None:
+            raise ValueError("Inspect rejects receipt")
+        return self
 
 
 class SolidWorksCamMillToolDiameterInput(SolidWorksCamMillFeaturePlanInput):
@@ -2214,7 +2864,7 @@ class SolidWorksCamMillToolDiameterInput(SolidWorksCamMillFeaturePlanInput):
 
 
 
-class SolidWorksCamMillFeatureGeometryInput(SolidWorksCamMaterialCatalogueInput):
+class SolidWorksCamMillFeatureGeometryInput(SolidWorksCamSelectedFeatureContextInput, SolidWorksCamMaterialCatalogueInput):
     """One native target/stock/WIP export from an exact saved MILL qualification."""
     process_id: int = Field(gt=0, le=4294967295, strict=True)
     expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
@@ -2285,8 +2935,10 @@ class SolidWorksCamMillUnitsInput(SolidWorksCamMaterialCatalogueInput):
     action: Literal["inspect", "prepare", "apply"]
     expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
     expected_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
-    sketch_spec: Dict[str, Any] = Field(description="Same saved asymmetric four-line rectangle spec used by solidworks_cam_create_profile_sketch; coordinates in model mm.")
-    depth_native: int = Field(ge=1, le=100, strict=True, description="Explicit pilot integer input, not assumed mm; native dDepth ABI is DOUBLE.")
+    feature_kind: Literal["open_pocket", "circular_pocket"] = "open_pocket"
+    sketch_spec: Dict[str, Any] = Field(description="Exact saved rectangle or circle spec used by solidworks_cam_create_profile_sketch; coordinates in model mm.")
+    depth_native: int | float = Field(description="Native DOUBLE, not assumed mm; default rectangle requires integer1..100, circle allows finite numeric >0..100.")
+    reverse_direction: bool = Field(default=False, strict=True, description="Explicit native bReverseDirection; False preserves prior behavior. Physical direction requires separate qualification.")
     qualification_only: bool = Field(strict=True)
     acknowledge_disposable_copy: bool = Field(strict=True)
     message_policy: Literal["vendor_default"] = "vendor_default"
@@ -2294,20 +2946,34 @@ class SolidWorksCamMillUnitsInput(SolidWorksCamMaterialCatalogueInput):
     expected_feature_native_id: Optional[int] = Field(default=None, gt=0, le=4294967295, strict=True)
     receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
 
+    @field_validator("depth_native", mode="before")
+    @classmethod
+    def mill_native_depth(cls, value):
+        import math
+        if type(value) not in (int, float) or not math.isfinite(value) or not 0 < value <= 100:
+            raise ValueError("Strict positive finite numeric depth <=100 required")
+        return value
+
     @field_validator("sketch_spec", mode="before")
     @classmethod
-    def mill_unit_rectangle(cls, value):
+    def mill_unit_profile(cls, value):
         from scripts.sw_cam_profile_sketch import _input
-        from scripts.sw_cam_mill_units_geometry import _rectangle
-        value = _input(value)
-        if value["profile"]["kind"] != "closed_polyline" or len(value["profile"]["points_model_mm"]) != 4:
-            raise ValueError("Unit pilot requires one asymmetric four-line rectangle")
-        points = [[v / 1000 for v in p] for p in value["profile"]["points_model_mm"]]
-        _rectangle(points, 1e-10, 1e-6, 1e-7, "request_sketch")
-        return value
+        return _input(value)
 
     @model_validator(mode="after")
     def mill_units_contract(self):
+        if self.feature_kind == "circular_pocket":
+            if self.sketch_spec["profile"]["kind"] != "circle":
+                raise ValueError("Circular pocket requires the exact saved circle specification")
+        else:
+            from scripts.sw_cam_mill_units_geometry import _rectangle
+            if type(self.depth_native) is not int or not 1 <= self.depth_native <= 100:
+                raise ValueError("Default rectangle depth remains strict integer1..100")
+            profile = self.sketch_spec["profile"]
+            if profile["kind"] != "closed_polyline" or len(profile["points_model_mm"]) != 4:
+                raise ValueError("Unit pilot requires one asymmetric four-line rectangle")
+            _rectangle([[v / 1000 for v in p] for p in profile["points_model_mm"]],
+                       1e-10, 1e-6, 1e-7, "request_sketch")
         if self.qualification_only is not True or self.acknowledge_disposable_copy is not True:
             raise ValueError("Explicit disposable qualification required")
         if self.expected_feature_native_id is not None and self.action != "inspect":
@@ -2426,7 +3092,7 @@ class SolidWorksCamMillStockInput(SolidWorksCamMillDefinitionInput):
         return self
 
 
-class SolidWorksCamDocumentLifecycleInput(SolidWorksCamTargetInput):
+class SolidWorksCamDocumentLifecycleInput(SolidWorksCamSelectedFeatureContextInput, SolidWorksCamTargetInput):
     """已绑定 PID/精确零件的 CAM 原生保存与关闭；不处理已打开的模态窗口。"""
     expected_document_path: str = Field(min_length=1, strict=True)
     action: Literal["prepare", "save", "close"] = "prepare"
@@ -2440,6 +3106,8 @@ class SolidWorksCamDocumentLifecycleInput(SolidWorksCamTargetInput):
 
     expected_feature_native_id: Optional[int] = Field(default=None, gt=0, strict=True)
     expected_operation_native_ids: Optional[list[int]] = Field(default=None, max_length=32, strict=True)
+    expected_source_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+
 
     @field_validator("expected_operation_native_ids", mode="before")
     @classmethod
@@ -2451,6 +3119,18 @@ class SolidWorksCamDocumentLifecycleInput(SolidWorksCamTargetInput):
 
     @model_validator(mode="after")
     def lifecycle_machine_scope(self):
+        circle_fields={"feature_kind","expected_source_sha256","circle_creation_receipt_path","circle_creation_receipt_sha256"}
+        if self.feature_kind=="circular_pocket":
+            if self.machine_kind!="mill_single_feature_qualification":
+                raise ValueError("Circular lifecycle requires single-feature MILL scope")
+            if None in (self.expected_source_sha256,self.circle_creation_receipt_path,self.circle_creation_receipt_sha256):
+                raise ValueError("Circular lifecycle requires current source SHA and immutable creator evidence")
+            evidence=Path(self.circle_creation_receipt_path)
+            if not evidence.is_absolute() or evidence.suffix.casefold()!=".json" or not evidence.is_file() or evidence.is_symlink():
+                raise ValueError("Circular creator evidence must be an existing absolute JSON file")
+        elif circle_fields & self.model_fields_set:
+            if self.machine_kind!="mill_single_feature_qualification" or (circle_fields-{"feature_kind"}) & self.model_fields_set:
+                raise ValueError("Circle evidence fields require explicit circular_pocket single-feature scope")
         if self.machine_kind in {"mill_qualification", "mill_single_feature_qualification"}:
             if self.process_id is None or self.acknowledge_qualification_copy is not True:
                 raise ValueError("MILL lifecycle requires exact process_id and acknowledged qualification copy")
@@ -2521,8 +3201,16 @@ class SolidWorksSketchOnPlaneInput(ActiveDocumentInput):
     """Input for sketching on a plane and creating a boss extrude."""
 
     plane_name: str = Field(default="Front Plane", description="Sketch plane, English or Chinese name.")
-    shape: Literal["circle", "rectangle", "corner_rectangle", "slot", "polygon"] = Field(
+    shape: Literal["circle", "rectangle", "corner_rectangle", "slot", "polygon", "profile"] = Field(
         default="circle", description="Profile shape to draw."
+    )
+    profile_points_mm: Optional[list[list[float]]] = Field(
+        default=None, min_length=3, max_length=512,
+        description=(
+            "shape='profile': closed loop of [x, y] or [x, y, bulge] vertices, mm; the last vertex joins the first. "
+            "bulge describes the segment to the next vertex: 0 = line, else arc with bulge = tan(sweep/4), "
+            ">0 counter-clockwise (DXF convention: 1 = semicircle, 0.4142 = quarter circle)."
+        ),
     )
     center_x_mm: float = Field(default=0.0, description="Profile center X on the sketch plane, mm.")
     center_y_mm: float = Field(default=0.0, description="Profile center Y on the sketch plane, mm.")
@@ -2969,6 +3657,27 @@ class SolidWorksConfigurationActivateInput(ActiveDocumentInput):
     rebuild: bool = Field(default=True)
     save: bool = Field(default=False)
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+
+class SolidWorksReadCustomPropertiesInput(ActiveDocumentInput):
+    """Read only the requested file or active-configuration properties."""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    process_id: int = Field(gt=0, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    names: list[str] = Field(min_length=1, max_length=64, strict=True)
+    configuration_name: str = Field(default="", max_length=240, strict=True)
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON)
+
+    @field_validator("names", mode="before")
+    @classmethod
+    def explicit_names_only(cls, value):
+        if type(value) is not list or not 1 <= len(value) <= 64:
+            raise ValueError("One to 64 explicit property names required")
+        if any(type(name) is not str or not name.strip() or len(name) > 240 for name in value):
+            raise ValueError("Nonempty property names of at most 240 characters required")
+        if len({name.casefold() for name in value}) != len(value):
+            raise ValueError("Duplicate property names are not permitted")
+        return value
 
 
 class SolidWorksCustomPropertiesInput(ActiveDocumentInput):
@@ -4480,6 +5189,171 @@ def solidworks_cam_export_mill_feature_geometry(params: SolidWorksCamMillFeature
             typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
     return _run_locked(op, params.response_format)
 
+@mcp.tool(name="solidworks_cam_inspect_mill_route_tool", title="Inspect Assigned MILL Route Tool",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_inspect_mill_route_tool(params: SolidWorksCamMillRouteToolInput) -> str:
+    """Read one full MILL tool/holder within pinned multi-feature inventory; no edits."""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("MILL route process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_mill_route_tool import inspect_mill_route_tool
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return inspect_mill_route_tool(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_inspect_mill_volume_islands", title="Inspect Exact MILL Volume Islands",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_inspect_mill_volume_islands(params: SolidWorksCamMillVolumeIslandsInput) -> str:
+    """Inspect one exact feature's volume-island representation; no inventory or edits."""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("Probe process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_mill_volume_islands import inspect_mill_volume_islands
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return inspect_mill_volume_islands(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_inspect_mill_profile_indexed", title="Inspect Explicit MILL PROFILE Indices",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_inspect_mill_profile_indexed(params: SolidWorksCamMillProfileIndexedInput) -> str:
+    """Read explicit PROFILE index/name candidates and linked chains; no edits."""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("Probe process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_mill_profile_indexed import inspect_mill_profile_indexed
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return inspect_mill_profile_indexed(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_inspect_mill_profile_headers", title="Inspect Exact MILL PROFILE Headers",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_inspect_mill_profile_headers(params: SolidWorksCamMillProfileHeadersInput) -> str:
+    """Inspect one exact PROFILE feature's headers; no indices, contours or edits."""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("Probe process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_mill_profile_headers import inspect_mill_profile_headers
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return inspect_mill_profile_headers(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_inspect_mill_feature_inventory", title="Inspect MILL Feature Inventory",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_inspect_mill_feature_inventory(params: SolidWorksCamMillFeatureInventoryInput) -> str:
+    """Read bounded MILL features/islands before operations; writes evidence, never edits CAD."""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("MILL inventory process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_mill_inventory import inspect_mill_feature_inventory
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return inspect_mill_feature_inventory(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_qualify_mill_feature_recognition", title="Qualify One MILL Feature Recognition",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_qualify_mill_feature_recognition(params: SolidWorksCamMillFeatureRecognitionInput) -> str:
+    """One receipt-consumed Doc3 extraction; no operations, save, retries or TechDB setters."""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("MILL AFR process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_mill_afr import qualify_mill_feature_recognition
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return qualify_mill_feature_recognition(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_configure_mill_material", title="Configure Empty MILL Material",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_configure_mill_material(params: SolidWorksCamMillMaterialInput) -> str:
+    """One receipt-consumed material setter on an empty MILL copy; no stock/generation/save."""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("MILL material process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_mill_material import configure_mill_material
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return configure_mill_material(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_export_empty_mill_stock", title="Export Empty MILL Existing Stock",
+          annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_export_empty_mill_stock(params: SolidWorksCamEmptyMillStockExportInput) -> str:
+    """One receipt-consumed stock file export and convex mesh comparison; no CAD setters or save."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("MILL empty stock export process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_empty_mill_stock_export import export_empty_mill_stock
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return export_empty_mill_stock(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_inspect_mill_operation_levels", title="Inspect MILL Operation Levels",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_inspect_mill_operation_levels(params: SolidWorksCamMillOperationLevelsInput) -> str:
+    """Read raw MILL levels/setup direction once; writes a receipt, never edits or saves CAD."""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("MILL levels process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_mill_levels import inspect_mill_operation_levels
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return inspect_mill_operation_levels(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_inspect_mill_rough_boundary", title="Inspect MILL Rough Boundary Settings",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_inspect_mill_rough_boundary(params: SolidWorksCamMillRoughBoundaryInput) -> str:
+    """Read raw rough settings once; writes a receipt, never edits, generates or saves CAD."""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("MILL rough process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_mill_rough_boundary import inspect_mill_rough_boundary
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return inspect_mill_rough_boundary(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_configure_mill_rough_boundary", title="Configure One MILL Rough Boundary Percentage",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_configure_mill_rough_boundary(params: SolidWorksCamMillRoughBoundarySetInput) -> str:
+    """Prepare or set one raw rough-boundary value; never generate, delete operations or save."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("MILL rough process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_mill_rough_boundary_set import configure_mill_rough_boundary
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return configure_mill_rough_boundary(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
 @mcp.tool(name="solidworks_cam_qualify_mill_operation_toolpath", title="Qualify One MILL Operation Toolpath",
           annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
 def solidworks_cam_qualify_mill_operation_toolpath(params: SolidWorksCamMillOperationToolpathInput) -> str:
@@ -4554,23 +5428,27 @@ def solidworks_cam_configure_apt_controller(params: SolidWorksCamAptControllerIn
 @mcp.tool(name="solidworks_cam_create_profile_sketch", title="Create a Bounded Native CAM Profile Sketch",
           annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
 def solidworks_cam_create_profile_sketch(params: SolidWorksCamProfileSketchInput) -> str:
-    """只创建平面/二维轮廓并读回模型坐标；不调用 CAM、拉伸或保存。"""
+    """Create a bounded reference profile or verify an exact existing circle; no CAM, solid edits or save."""
     def op():
         if _selected_process_id != params.process_id:
             raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
         from scripts.sw_cam_profile_sketch import create_cam_profile_sketch
         sw, _model = _active_part_required(params)
+        verification={}
+        if params.action=="verify_existing":
+            verification=dict(expected_source_sha256=params.expected_source_sha256,
+                creation_receipt_path=params.creation_receipt_path,creation_receipt_sha256=params.creation_receipt_sha256)
         return create_cam_profile_sketch(sw, expected_process_id=params.process_id,
             expected_document_path=params.expected_document_path, action=params.action, spec=params.spec,
             expected_state_sha256=params.expected_state_sha256, receipt_path=params.receipt_path,
-            qualification_only=params.qualification_only)
+            qualification_only=params.qualification_only, **verification)
     return _run_locked(op, params.response_format)
 
 
 @mcp.tool(name="solidworks_cam_qualify_mill_feature_units", title="Qualify One Native Mill Feature Dimensionally",
           annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
 def solidworks_cam_qualify_mill_feature_units(params: SolidWorksCamMillUnitsInput) -> str:
-    """创建一次 OPEN_POCKET 并读取真实上下四直线轮廓；不生成、保存或推广数值单位。"""
+    """Create one explicit rectangle or circular pocket and read actual contours; no generation, save or physical-depth claim."""
     def op():
         if _selected_process_id != params.process_id:
             raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
@@ -4662,6 +5540,23 @@ def solidworks_cam_inspect_thread_tool(params: SolidWorksCamThreadToolInput) -> 
         sw, registration = _cam_target(params)
         values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
         return inspect_thread_tool(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_export_mill_generic_cl",
+          title="Export bounded generated MILL generic CL",
+          annotations={"readOnlyHint": False, "destructiveHint": False,
+                       "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_export_mill_generic_cl(params: SolidWorksCamMillGenericCLExportInput) -> str:
+    """Inspect/prepare/apply one machine-scope CL export; no generation or model save."""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("Exact already-selected SOLIDWORKS process required")
+        from scripts.sw_cam_mill_generic_cl import export_mill_generic_cl
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return export_mill_generic_cl(sw, registration["clsid"],
             typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
     return _run_locked(op, params.response_format)
 
@@ -4802,6 +5697,11 @@ def solidworks_cam_document_lifecycle(params: SolidWorksCamDocumentLifecycleInpu
         from scripts.sw_cam_lifecycle import document_lifecycle
         sw, registration = _cam_target(params)
         if params.machine_kind == "mill_single_feature_qualification":
+            circle_options={}
+            if params.feature_kind=="circular_pocket":
+                circle_options=dict(feature_kind=params.feature_kind,expected_source_sha256=params.expected_source_sha256,
+                    circle_creation_receipt_path=params.circle_creation_receipt_path,
+                    circle_creation_receipt_sha256=params.circle_creation_receipt_sha256)
             return document_lifecycle(sw, registration["clsid"],
                 typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"),
                 expected_document_path=params.expected_document_path, action=params.action,
@@ -4809,7 +5709,7 @@ def solidworks_cam_document_lifecycle(params: SolidWorksCamDocumentLifecycleInpu
                 receipt_path=params.receipt_path, machine_kind=params.machine_kind,
                 process_id=params.process_id, acknowledge_qualification_copy=params.acknowledge_qualification_copy,
                 expected_feature_native_id=params.expected_feature_native_id,
-                expected_operation_native_ids=params.expected_operation_native_ids)
+                expected_operation_native_ids=params.expected_operation_native_ids, **circle_options)
         if params.machine_kind == "mill_qualification":
             return document_lifecycle(sw, registration["clsid"],
                 typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"),
@@ -5318,13 +6218,32 @@ def solidworks_list_edges(params: SolidWorksEdgeInspectionInput = SolidWorksEdge
     return _run_locked(op, params.response_format)
 
 
+def _profile_vertices_m(points_mm):
+    """Validate a closed line/arc loop given in mm and return (x, y, bulge) vertices in metres."""
+    if not points_mm or len(points_mm) < 3:
+        raise ValueError("shape='profile' requires profile_points_mm with at least 3 vertices.")
+    vertices = []
+    for index, point in enumerate(points_mm):
+        if len(point) not in (2, 3) or not all(math.isfinite(value) for value in point):
+            raise ValueError(f"profile_points_mm[{index}] must be [x, y] or [x, y, bulge] with finite numbers.")
+        bulge = point[2] if len(point) == 3 else 0.0
+        if abs(bulge) > 1000.0:
+            raise ValueError(f"profile_points_mm[{index}] bulge must be within ±1000.")
+        vertices.append((point[0] / 1000.0, point[1] / 1000.0, bulge))
+    for index, (x1, y1, _bulge) in enumerate(vertices):
+        x2, y2, _next = vertices[(index + 1) % len(vertices)]
+        if math.hypot(x2 - x1, y2 - y1) < 1e-6:
+            raise ValueError(f"profile_points_mm[{index}] repeats the next vertex; segments must be longer than 1 µm.")
+    return vertices
+
+
 @mcp.tool(
     name="solidworks_sketch_and_extrude",
     title="Sketch a Profile and Extrude It",
     annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
 )
 def solidworks_sketch_and_extrude(params: SolidWorksSketchOnPlaneInput) -> str:
-    """Draw a circle, rectangle, slot, or polygon on a plane and extrude it as a boss or cut.
+    """Draw a circle, rectangle, slot, polygon, or closed line/arc profile on a plane and extrude it as a boss or cut.
 
     This is the main modeling entry point: one call creates a sketch and the feature built
     from it, so the sketch object reference is never lost between calls.
@@ -5343,6 +6262,8 @@ def solidworks_sketch_and_extrude(params: SolidWorksSketchOnPlaneInput) -> str:
             raise ValueError("shape='slot' requires slot_end_x_mm, slot_end_y_mm and radius_mm.")
         if params.shape == "slot" and params.radius_mm is None:
             raise ValueError("shape='slot' requires radius_mm (slot half-width).")
+        if params.shape == "profile":
+            profile = _profile_vertices_m(params.profile_points_mm)
 
         with sketch(model, params.plane_name) as sketch_ref:
             if params.shape == "circle":
@@ -5359,11 +6280,19 @@ def solidworks_sketch_and_extrude(params: SolidWorksSketchOnPlaneInput) -> str:
             elif params.shape == "polygon":
                 sketch_polygon(model, mm(params.center_x_mm), mm(params.center_y_mm),
                                mm(params.radius_mm or 10.0), params.sides)
+            elif params.shape == "profile":
+                sketch_profile(model, profile)
 
-        if params.midplane:
-            feature = extrude_midplane(model, sketch_ref, mm(params.depth_mm))
+        # Check cut first: midplane used to shadow cut and silently build a boss.
+        if params.cut and params.midplane:
+            feature = extrude_cut_midplane(model, sketch_ref, mm(params.depth_mm))
         elif params.cut:
             feature = extrude_cut(model, sketch_ref, mm(params.depth_mm))
+            if feature is None:
+                # Empty side of the sketch plane: retry flipped, as solidworks_sketch_selection_regression does.
+                feature = extrude_cut(model, sketch_ref, mm(params.depth_mm), flip=True)
+        elif params.midplane:
+            feature = extrude_midplane(model, sketch_ref, mm(params.depth_mm))
         else:
             feature = extrude_boss(model, sketch_ref, mm(params.depth_mm))
 
@@ -5387,7 +6316,7 @@ def solidworks_sketch_and_extrude(params: SolidWorksSketchOnPlaneInput) -> str:
             "feature_name": get_com_member(feature, "Name"),
             "sketch_name": str(sketch_ref),
             "depth_mm": params.depth_mm,
-            "operation": "cut" if params.cut else ("midplane" if params.midplane else "boss"),
+            "operation": ("cut" if params.cut else "boss") + (" midplane" if params.midplane else ""),
             "document": _model_summary(model),
         }
 
@@ -6341,6 +7270,24 @@ def solidworks_resize_capsule_sketch(params: SolidWorksCapsuleResizeInput) -> st
 
 
 @mcp.tool(
+    name="solidworks_read_custom_properties",
+    title="Read Exact Custom Properties",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def solidworks_read_custom_properties(params: SolidWorksReadCustomPropertiesInput) -> str:
+    """Read requested properties without editing, activating configurations or saving."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the selected SOLIDWORKS process")
+        sw, _model = _active_model_required(params)
+        from scripts.sw_custom_properties_read import read_custom_properties
+        return read_custom_properties(
+            sw, **params.model_dump(exclude={"response_format", "expected_document_title"})
+        )
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
     name="solidworks_set_custom_properties",
     title="Set SolidWorks Custom Properties",
     annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
@@ -6947,6 +7894,39 @@ def _native_audit_target(params):
     return sw
 
 
+@mcp.tool(name="solidworks_rebind_explode_axes", title="Repair Missing Axes on Existing Explode Steps",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_rebind_explode_axes(params: SolidWorksExplodeAxisRebindInput) -> str:
+    """Prepare or apply an exact missing-axis repair; never save or create steps."""
+    def op():
+        from scripts.sw_explode_axis_rebind import rebind_explode_axes
+        sw = _native_audit_target(params)
+        return rebind_explode_axes(sw, **params.model_dump(exclude={"response_format", "expected_document_title"}))
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_restore_assembly_presentation", title="Restore a Pinned Existing Assembly Presentation",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_restore_assembly_presentation(params: SolidWorksRestoreAssemblyPresentationInput) -> str:
+    """Prepare or collapse one existing explode view; never save, replay axes, or activate a study."""
+    def op():
+        from scripts.sw_assembly_presentation_restore import restore_assembly_presentation
+        sw = _native_audit_target(params)
+        return restore_assembly_presentation(sw, **params.model_dump(exclude={"response_format", "expected_document_title"}))
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_read_explode_step_transforms", title="Read Exact Existing Explode-Step Transforms",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_read_explode_step_transforms(params: SolidWorksExplodeStepTransformsInput) -> str:
+    """Read native step/component matrices; never move, calculate, rebuild or save."""
+    def op():
+        from scripts.sw_explode_step_transforms import read_explode_step_transforms
+        sw = _native_audit_target(params)
+        return read_explode_step_transforms(sw, **params.model_dump(exclude={"response_format", "expected_document_title"}))
+    return _run_locked(op, params.response_format)
+
+
 @mcp.tool(name="solidworks_inspect_native_assembly", title="Inspect Native Assembly Instances and Explode Axes",
           annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
 def solidworks_inspect_native_assembly(params: SolidWorksNativeAssemblyInspectionInput) -> str:
@@ -6967,6 +7947,1720 @@ def solidworks_audit_native_animation(params: SolidWorksNativeAnimationAuditInpu
         sw = _native_audit_target(params)
         return audit_native_animation(sw, **params.model_dump(exclude={"response_format", "expected_document_title"}))
     return _run_locked(op, params.response_format)
+
+class SolidWorksCamMillHoleMetadataInput(SolidWorksCamTargetInput):
+    """Read explicitly selected hole metadata from a pinned diagnostic inventory."""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_feature_native_ids: list[Annotated[int, Field(gt=0, le=4294967295, strict=True)]] = Field(min_length=1, max_length=5, strict=True)
+    inventory_receipt_path: str = Field(min_length=1, strict=True)
+    inventory_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    receipt_path: str = Field(min_length=1, strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+
+    @model_validator(mode="after")
+    def exact_hole_metadata_contract(self):
+        if self.expected_document_title is not None:
+            raise ValueError("Only exact saved document path is supported")
+        from scripts.sw_cam_mill_hole_metadata import validate_hole_metadata_request
+        validate_hole_metadata_request(**self.model_dump(exclude={
+            "addin_clsid", "expected_document_title", "response_format"}))
+        return self
+
+
+@mcp.tool(name="solidworks_cam_inspect_mill_hole_metadata", title="Inspect Exact MILL Hole Metadata",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_inspect_mill_hole_metadata(params: SolidWorksCamMillHoleMetadataInput) -> str:
+    """Inspect up to five pinned hole features; no indexed steps, contours or edits."""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("Probe process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_mill_hole_metadata import inspect_mill_hole_metadata
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return inspect_mill_hole_metadata(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_selected_mill_plan_lifecycle", title="Create One Selected MILL Plan or Save Its Checked Definitions",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_selected_mill_plan_lifecycle(params: SolidWorksCamSelectedMillPlanInput) -> str:
+    """One RETAIN GOP or one native save in an explicit 18-feature qualification scope."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Selected MILL plan requires the explicitly connected process")
+        from scripts.sw_cam_mill_selected_plan import selected_mill_plan_lifecycle
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return selected_mill_plan_lifecycle(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+class SolidWorksCamSavedMillPlanToolsInput(SolidWorksCamTargetInput):
+    """Read existing assigned tools anchored to a completed selected-plan save."""
+    model_config = ConfigDict(str_strip_whitespace=False)
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    session_rebind_receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    session_rebind_receipt_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    saved_plan_receipt_path: str = Field(min_length=1, strict=True)
+    saved_plan_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_operation_native_ids: list[int] = Field(min_length=1, max_length=32, strict=True)
+    expected_operation_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_tool_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    receipt_path: str = Field(min_length=1, strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+
+    @field_validator("expected_operation_native_ids", mode="before")
+    @classmethod
+    def strict_operation_ids(cls, value):
+        if type(value) is not list or any(type(v) is not int or not 0 < v < 2**32 for v in value):
+            raise ValueError("Strict ordered native operation IDs required")
+        if len(set(value)) != len(value):
+            raise ValueError("Duplicate operation IDs")
+        return value
+
+    @model_validator(mode="after")
+    def saved_plan_tools_contract(self):
+        if self.expected_document_title is not None:
+            raise ValueError("Only exact saved document path is supported")
+        from scripts.sw_cam_mill_inventory import validate_inventory_request
+        validate_inventory_request(**self.model_dump(include={
+            "process_id","expected_document_path","expected_source_sha256","qualification_only",
+            "acknowledge_disposable_copy","receipt_path","message_policy"}))
+        path=Path(self.saved_plan_receipt_path)
+        if not path.is_absolute() or path.suffix.casefold()!=".json" or not path.is_file() or path.is_symlink():
+            raise ValueError("Pinned saved-plan JSON required")
+        if path.resolve()==Path(self.receipt_path).resolve():
+            raise ValueError("Output cannot overwrite saved-plan evidence")
+        pair=(self.session_rebind_receipt_path,self.session_rebind_receipt_sha256)
+        if any(value is not None for value in pair):
+            if any(value is None for value in pair):
+                raise ValueError("Both explicit session rebind pin fields required")
+            binding=Path(self.session_rebind_receipt_path)
+            if not binding.is_absolute() or binding.suffix.casefold()!=".json" or not binding.is_file() or binding.is_symlink():
+                raise ValueError("Pinned session rebind JSON required")
+            if binding.resolve()==Path(self.receipt_path).resolve():
+                raise ValueError("Output cannot overwrite session rebind evidence")
+        return self
+
+
+@mcp.tool(name="solidworks_cam_inspect_saved_mill_plan_tools", title="Inspect Saved MILL Plan Tools",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_inspect_saved_mill_plan_tools(params: SolidWorksCamSavedMillPlanToolsInput) -> str:
+    """Read assigned tools in a saved compact plan scope; never generate, save or assign."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Saved MILL tool reader requires the explicitly connected process")
+        from scripts.sw_cam_mill_saved_plan_tools import inspect_saved_plan_tools
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return inspect_saved_plan_tools(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+class SolidWorksCamSavedCompoundStrategyInput(SolidWorksCamSavedMillPlanToolsInput):
+    """Read one compound strategy or explicit bounded step-dimension observation."""
+    expected_compound_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_compound_owner_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_compound_step_count: int = Field(gt=0, le=64, strict=True)
+    strategy_capture_mode: Literal["full_plan", "target_only"] = "full_plan"
+    compound_observation: Literal["strategy", "interior_step_1", "three_step_profile"] = "strategy"
+
+
+@mcp.tool(name="solidworks_cam_inspect_saved_compound_strategy",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_inspect_saved_compound_strategy(params: SolidWorksCamSavedCompoundStrategyInput) -> str:
+    """Read an exact compound strategy or bounded step profile against a saved plan; never assign, generate or save."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Compound strategy reader requires the explicitly connected process")
+        from scripts.sw_cam_mill_compound_strategy import inspect_saved_compound_strategy
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return inspect_saved_compound_strategy(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+class SolidWorksCamSavedMillPlanSessionInput(SolidWorksCamSavedMillPlanToolsInput):
+    """Verify one explicitly owned new session against unchanged saved evidence."""
+    previous_process_id: int = Field(gt=0, le=4294967295, strict=True)
+    tool_receipt_path: str = Field(min_length=1, strict=True)
+    tool_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    owned_startup_receipt_path: str = Field(min_length=1, strict=True)
+    owned_startup_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    @model_validator(mode="after")
+    def explicit_new_session_contract(self):
+        if self.previous_process_id == self.process_id:
+            raise ValueError("Distinct historical and new process IDs required")
+        if self.session_rebind_receipt_path is not None or self.session_rebind_receipt_sha256 is not None:
+            raise ValueError("Verifier creates a new rebind receipt")
+        for value in (self.tool_receipt_path, self.owned_startup_receipt_path):
+            path = Path(value)
+            if not path.is_absolute() or path.suffix.casefold() != ".json" or not path.is_file() or path.is_symlink():
+                raise ValueError("Regular JSON tool and owned-startup evidence required")
+            if path.resolve() == Path(self.receipt_path).resolve():
+                raise ValueError("Output cannot overwrite session evidence")
+        return self
+
+
+@mcp.tool(name="solidworks_cam_verify_saved_mill_plan_session",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_verify_saved_mill_plan_session(params: SolidWorksCamSavedMillPlanSessionInput) -> str:
+    """Read saved CAM and full tools twice in an explicitly owned new session."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Session verifier requires the explicitly connected process")
+        from scripts.sw_cam_mill_saved_plan_rebind import verify_saved_plan_session
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format",
+            "session_rebind_receipt_path", "session_rebind_receipt_sha256"})
+        return verify_saved_plan_session(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+
+class SolidWorksCamSharedCutterConfigInput(SolidWorksCamSavedMillPlanToolsInput):
+    """Bounded document-local shared cutter configuration; no toolpaths or save."""
+    tools_receipt_path: str = Field(min_length=1, strict=True)
+    tools_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    nominal_geometry_receipt_path: str = Field(min_length=1, strict=True)
+    nominal_geometry_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    target_geometry: dict[str, Any] = Field(strict=True)
+    save_after_verified: bool = Field(default=False,strict=True)
+    session_rebind_receipt_path: Optional[str] = Field(default=None,strict=True)
+    session_rebind_receipt_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+
+    holder_file_path: Optional[str] = Field(default=None,strict=True)
+    holder_file_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+    holder_recipe_path: Optional[str] = Field(default=None,strict=True)
+    holder_recipe_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+
+    @field_validator("target_geometry", mode="before")
+    @classmethod
+    def exact_tapered_recipe(cls,value):
+        from scripts.sw_cam_shared_cutter_geometry import validate_target
+        return validate_target(value)
+
+    @model_validator(mode="after")
+    def shared_cutter_evidence_contract(self):
+        pair=(self.session_rebind_receipt_path,self.session_rebind_receipt_sha256)
+        if any(v is not None for v in pair) and not all(type(v) is str and v for v in pair):
+            raise ValueError("Complete explicit rebind pair required")
+        paths=[self.tools_receipt_path,self.nominal_geometry_receipt_path]
+        if self.session_rebind_receipt_path is not None:paths.append(self.session_rebind_receipt_path)
+        for value in paths:
+            path=Path(value)
+            if not path.is_absolute() or path.suffix.casefold()!=".json" or not path.is_file() or path.is_symlink():
+                raise ValueError("Pinned existing tool/nominal JSON required")
+            if path.resolve()==Path(self.receipt_path).resolve():
+                raise ValueError("Output cannot overwrite source evidence")
+        bundle=(self.holder_file_path,self.holder_file_sha256,self.holder_recipe_path,self.holder_recipe_sha256)
+        if any(v is not None for v in bundle):
+            if not all(type(v) is str and v for v in bundle):
+                raise ValueError("Complete holder file and nominal binding required")
+            from scripts.sw_cam_shared_holder_geometry import read_holder_recipe
+            holder=read_holder_recipe(*bundle)
+            if any(Path(p["path"]).resolve()==Path(self.receipt_path).resolve() for p in holder["pins"]):
+                raise ValueError("Output cannot overwrite holder binding")
+        return self
+
+@mcp.tool(name="solidworks_cam_configure_saved_shared_cutter", title="Configure Saved Shared MILL Cutter",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_configure_saved_shared_cutter(params: SolidWorksCamSharedCutterConfigInput) -> str:
+    """Apply one declared cutter geometry batch; optional holder profile and explicit save after verified readback; no GOP or GTP."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Shared cutter configuration requires the explicitly connected process")
+        from scripts.sw_cam_shared_cutter_config import configure_shared_cutter
+        sw,registration=_cam_target(params)
+        values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format"})
+        return configure_shared_cutter(sw,registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"),**values)
+    return _run_locked(op,params.response_format)
+
+class SolidWorksCamAppendMillOperationsInput(SolidWorksCamSavedMillPlanToolsInput):
+    """Append definitions for one observed three-step MILL feature; optional checked save."""
+    target_profile_receipt_path: str = Field(min_length=1, strict=True)
+    target_profile_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    target_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    target_owner_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    target_operation_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_strategy_id: int = Field(ge=-2147483648, le=2147483647, strict=True)
+    expected_strategy_name: str = Field(min_length=1, max_length=4096, strict=True)
+    save_after_verified: bool = Field(strict=True)
+    attempt_registry_path: str = Field(min_length=1, strict=True)
+
+    @model_validator(mode="after")
+    def additive_plan_contract(self):
+        if self.session_rebind_receipt_path is not None or self.session_rebind_receipt_sha256 is not None:
+            raise ValueError("Use the configured receipt's recorded current owned session")
+        from scripts.sw_cam_mill_append_operations import validate_append_request
+        validate_append_request(**self.model_dump(exclude={
+            "addin_clsid", "expected_document_title", "response_format",
+            "session_rebind_receipt_path", "session_rebind_receipt_sha256"}))
+        return self
+
+
+@mcp.tool(name="solidworks_cam_append_mill_operations",
+    title="Append One Compound MILL Feature Plan and Optionally Save",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_append_mill_operations(params: SolidWorksCamAppendMillOperationsInput) -> str:
+    """One RETAIN plan for a pinned three-step feature; preserve prior tools and optional checked save."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Additive MILL planning requires the explicitly connected process")
+        from scripts.sw_cam_mill_append_operations import append_mill_operations
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={
+            "addin_clsid", "expected_document_title", "response_format",
+            "session_rebind_receipt_path", "session_rebind_receipt_sha256"})
+        return append_mill_operations(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+class SolidWorksCamReplaceCompoundPlanInput(SolidWorksCamSavedMillPlanToolsInput):
+    """Replace one pinned compound feature plan with verified Rough-Finish definitions."""
+    primary_route_receipt_path: str = Field(min_length=1, strict=True)
+    primary_route_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    target_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    target_owner_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    target_operation_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_target_operation_native_ids: list[Annotated[int, Field(gt=0, le=4294967295, strict=True)]] = Field(min_length=1, max_length=32, strict=True)
+    expected_target_operation_types: list[Annotated[int, Field(ge=0, le=4294967295, strict=True)]] = Field(min_length=1, max_length=32, strict=True)
+    expected_target_tool_native_ids: list[Annotated[int, Field(gt=0, le=4294967295, strict=True)]] = Field(min_length=1, max_length=32, strict=True)
+    expected_strategy_id: int = Field(gt=0, le=2147483647, strict=True)
+    expected_strategy_name: str = Field(min_length=1, max_length=4096, strict=True)
+    requested_strategy_name: Literal["Rough-Finish"] = "Rough-Finish"
+    save_after_verified: bool = Field(strict=True)
+    attempt_registry_path: str = Field(min_length=1, strict=True)
+
+    @model_validator(mode="after")
+    def replacement_contract(self):
+        if self.session_rebind_receipt_path is not None or self.session_rebind_receipt_sha256 is not None:
+            raise ValueError("Use the saved receipt's recorded current owned session")
+        from scripts.sw_cam_replace_compound_plan import validate_replace_request
+        validate_replace_request(**self.model_dump(exclude={
+            "addin_clsid","expected_document_title","response_format",
+            "session_rebind_receipt_path","session_rebind_receipt_sha256"}))
+        return self
+
+
+@mcp.tool(name="solidworks_cam_replace_compound_strategy_plan",
+    title="Replace One Compound MILL Strategy and Its Plan",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_replace_compound_strategy_plan(params: SolidWorksCamReplaceCompoundPlanInput) -> str:
+    """One exact strategy assignment, one feature REGENERATE2, then checked save."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Compound replacement requires the explicitly connected process")
+        from scripts.sw_cam_replace_compound_plan import replace_compound_strategy_plan
+        sw,registration = _cam_target(params)
+        values = params.model_dump(exclude={
+            "addin_clsid","expected_document_title","response_format",
+            "session_rebind_receipt_path","session_rebind_receipt_sha256"})
+        return replace_compound_strategy_plan(sw,registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"),**values)
+    return _run_locked(op,params.response_format)
+
+from pydantic import StrictInt
+
+
+class SolidWorksCamUd14SpecimenInput(SolidWorksCamTargetInput):
+    """One local UD creation and one existing MT load in an isolated saved MILL part."""
+    model_config = ConfigDict(str_strip_whitespace=False, extra="forbid")
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    mt_specimen_path: str = Field(min_length=1, strict=True)
+    mt_specimen_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_sw_document_units_raw: list[StrictInt] = Field(min_length=5, max_length=5)
+    expected_cam_use_document_units: bool = Field(strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    receipt_path: str = Field(min_length=1, strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+
+    @model_validator(mode="after")
+    def ud14_specimen_contract(self):
+        if self.expected_document_title is not None:
+            raise ValueError("Exact saved document path required")
+        from scripts.sw_cam_ud14_qualification import validate_ud14_request
+        validate_ud14_request(**self.model_dump(exclude={
+            "addin_clsid", "expected_document_title", "response_format"}))
+        return self
+
+
+@mcp.tool(name="solidworks_cam_qualify_ud14_specimen", title="Qualify Isolated UD Mill Specimen",
+          annotations={"readOnlyHint": False, "destructiveHint": True,
+                       "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_qualify_ud14_specimen(params: SolidWorksCamUd14SpecimenInput) -> str:
+    """Create one local UD, load one pinned MT, read parameters/profiles twice. No assignment/GTP/save/library write."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("UD specimen requires the explicitly connected process")
+        from scripts.sw_cam_ud14_qualification import qualify_ud14_specimen
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return qualify_ud14_specimen(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+class SolidWorksCamDocumentUnitScopeInput(SolidWorksCamTargetInput):
+    """Read only the active saved MILL document and CAM document-unit flag."""
+    model_config = ConfigDict(str_strip_whitespace=False, extra="forbid")
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: str = Field(min_length=1, strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+
+    @model_validator(mode="after")
+    def document_unit_scope_contract(self):
+        if self.expected_document_title is not None:
+            raise ValueError("Exact saved document path required")
+        from scripts.sw_cam_document_unit_scope import validate_unit_scope_request
+        validate_unit_scope_request(**self.model_dump(exclude={
+            "addin_clsid", "expected_document_title", "response_format"}))
+        return self
+
+
+@mcp.tool(name="solidworks_cam_inspect_document_unit_scope", title="Inspect Saved MILL Document Unit Scope",
+          annotations={"readOnlyHint": True, "destructiveHint": False,
+                       "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_inspect_document_unit_scope(params: SolidWorksCamDocumentUnitScopeInput) -> str:
+    """Read model.GetUnits and ICWApp4.GetUseDocumentUnit twice; no MT, native unit-record getter or settings writes."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Unit scope requires the explicitly connected process")
+        from scripts.sw_cam_document_unit_scope import inspect_document_cam_unit_scope
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return inspect_document_cam_unit_scope(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+class SolidWorksCamAddCircularPocketInput(SolidWorksCamSavedMillPlanToolsInput):
+
+    """Add one nominal cylindrical pocket while retaining all existing plans."""
+
+    action: Literal["create_sketch", "create_pocket_plan"]
+
+    route_receipt_path: str = Field(min_length=1, strict=True)
+
+    route_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    reference_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+
+    owner_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
+
+    operation_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
+
+    cylinder_step_index: int = Field(ge=1, le=1, strict=True)
+
+    sketch_spec: dict
+
+    depth_native: float = Field(gt=0, allow_inf_nan=False, strict=True)
+
+    reverse_direction: bool = Field(strict=True)
+
+    save_after_verified: bool = Field(strict=True)
+
+    attempt_registry_path: str = Field(min_length=1, strict=True)
+
+
+
+    @model_validator(mode="after")
+
+    def additive_pocket_contract(self):
+
+        if self.action != "create_sketch" and (self.session_rebind_receipt_path is not None or self.session_rebind_receipt_sha256 is not None):
+
+            raise ValueError("A new session binding is supported only before creating the circle")
+
+        from scripts.sw_cam_add_circular_pocket import validate_add_pocket_request
+
+        validate_add_pocket_request(**self.model_dump(exclude={
+
+            "addin_clsid","expected_document_title","response_format"}))
+
+        return self
+
+
+@mcp.tool(name="solidworks_cam_add_circular_pocket_plan",
+
+    title="Add One Circular Pocket and Its MILL Plan",
+
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+
+def solidworks_cam_add_circular_pocket_plan(params: SolidWorksCamAddCircularPocketInput) -> str:
+
+    """Create and save a circle, add one pocket, RETAIN its definitions, verify and save."""
+
+    def op():
+
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+
+            raise ValueError("Pocket creation requires the explicitly connected process")
+
+        from scripts.sw_cam_add_circular_pocket import add_circular_pocket_plan
+
+        sw,registration=_cam_target(params)
+
+        values=params.model_dump(exclude={
+
+            "addin_clsid","expected_document_title","response_format"})
+
+        return add_circular_pocket_plan(sw,registration["clsid"],
+
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"),**values)
+
+    return _run_locked(op,params.response_format)
+
+
+class SolidWorksCamUd14SaveExistingInput(SolidWorksCamTargetInput):
+    """One CAM save of the already observed local UD in an isolated saved MILL part."""
+    model_config = ConfigDict(str_strip_whitespace=False, extra="forbid")
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_tool_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    probe_receipt_path: str = Field(min_length=1, strict=True)
+    probe_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    receipt_path: str = Field(min_length=1, strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+
+    @model_validator(mode="after")
+    def ud14_save_existing_contract(self):
+        if self.expected_document_title is not None:
+            raise ValueError("Exact saved document path required")
+        from scripts.sw_cam_ud14_save import validate_ud14_save_request
+        validate_ud14_save_request(**self.model_dump(exclude={
+            "addin_clsid", "expected_document_title", "response_format"}))
+        return self
+
+
+@mcp.tool(name="solidworks_cam_save_existing_ud14", title="Save Existing Observed UD Specimen",
+          annotations={"readOnlyHint": False, "destructiveHint": True,
+                       "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_save_existing_ud14(params: SolidWorksCamUd14SaveExistingInput) -> str:
+    """Pin a completed UD observation, save CAM once, compare once before/after. No creator/load/assignment/GTP/close."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("UD save requires the explicitly connected process")
+        from scripts.sw_cam_ud14_save import save_existing_ud14
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        return save_existing_ud14(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+
+
+class SolidWorksCamDefinedRoughLevelsInput(SolidWorksCamSavedMillPlanToolsInput):
+    """Read raw start/depth/setup levels before generating one added rough operation."""
+    target_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    target_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    target_operation_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
+
+    @model_validator(mode="after")
+    def current_saved_additive_session(self):
+        if self.session_rebind_receipt_path is not None or self.session_rebind_receipt_sha256 is not None:
+            raise ValueError("Use the saved additive receipt's recorded current owned session")
+        return self
+
+@mcp.tool(name="solidworks_cam_inspect_defined_rough_levels",
+    title="Inspect Ungenerated MILL Rough Operation Levels",
+    annotations={"readOnlyHint":True,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_inspect_defined_rough_levels(params: SolidWorksCamDefinedRoughLevelsInput) -> str:
+    """Read exact zero-path rough levels, preserving saved context; no entry-strategy qualification."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Readback requires the explicitly connected owned process")
+        from scripts.sw_cam_defined_rough_levels import inspect_defined_rough_levels
+        sw,registration=_cam_target(params)
+        values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format",
+            "session_rebind_receipt_path","session_rebind_receipt_sha256"})
+        return inspect_defined_rough_levels(sw,registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"),**values)
+    return _run_locked(op,params.response_format)
+
+
+
+
+class SolidWorksCamRoughFirstCutStockInput(SolidWorksCamDefinedRoughLevelsInput):
+    """One first-cut reference change, anchored to a completed read-only observation."""
+    levels_receipt_path: str = Field(min_length=1, max_length=4096)
+    levels_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    primary_contract_path: str = Field(min_length=1, max_length=4096)
+    primary_contract_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+@mcp.tool(name="solidworks_cam_set_rough_first_cut_to_stock",
+    title="Set One Rough First Cut Reference to Stock",
+    annotations={"readOnlyHint":False,"destructiveHint":True,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_set_rough_first_cut_to_stock(params: SolidWorksCamRoughFirstCutStockInput) -> str:
+    """Set documented first-cut enum1 to0 once; no GTP, Save, assignment or rollback."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Exact explicitly connected owned process required")
+        from scripts.sw_cam_rough_firstcut import set_rough_first_cut_to_stock
+        sw, registration = _cam_target(params)
+        values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format",
+            "session_rebind_receipt_path","session_rebind_receipt_sha256"})
+        return set_rough_first_cut_to_stock(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+class SolidWorksCamSandvikQualificationInput(SolidWorksCamSavedMillPlanToolsInput):
+    """Bounded experimental UD candidate; never assigns or generates operations."""
+    firstcut_receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    firstcut_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    candidate_contract_path: str = Field(min_length=1, max_length=4096, strict=True)
+    candidate_contract_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    source_cad_path: str = Field(min_length=1, max_length=4096, strict=True)
+    source_cad_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    reference_mt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    reference_mt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    profile_analysis_path: str = Field(min_length=1, max_length=4096, strict=True)
+    profile_analysis_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    candidate_mt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    holder_file_path: str = Field(min_length=1, max_length=4096, strict=True)
+    holder_file_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    holder_recipe_path: str = Field(min_length=1, max_length=4096, strict=True)
+    holder_recipe_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    cutting_stl_path: str = Field(min_length=1, max_length=4096, strict=True)
+    noncutting_stl_path: str = Field(min_length=1, max_length=4096, strict=True)
+    expected_sw_document_units_raw: list[int] = Field(min_length=5,max_length=5,strict=True)
+    expected_cam_use_document_units: Literal[True]
+    acknowledge_experimental: Literal[True]
+
+    @field_validator("expected_sw_document_units_raw",mode="before")
+    @classmethod
+    def strict_metric_scope(cls,value):
+        if type(value) is not list or len(value)!=5 or any(type(x) is not int for x in value) or value[0]!=0:
+            raise ValueError("Explicit five-value metric document units required")
+        return value
+
+    @field_validator("expected_cam_use_document_units","acknowledge_experimental",mode="before")
+    @classmethod
+    def strict_true(cls,value):
+        if value is not True:raise ValueError("Explicit strict true acknowledgement required")
+        return value
+
+    @model_validator(mode="after")
+    def no_implicit_rebind(self):
+        if self.session_rebind_receipt_path is not None or self.session_rebind_receipt_sha256 is not None:
+            raise ValueError("Current saved additive owned session required")
+        if self.expected_cam_use_document_units is not True or self.acknowledge_experimental is not True:
+            raise ValueError("Strict metric and experimental acknowledgement required")
+        return self
+
+@mcp.tool(name="solidworks_cam_qualify_sandvik_ud14",
+    title="Qualify One Experimental UD Cutter Profile and Native Portions",
+    annotations={"readOnlyHint":False,"destructiveHint":True,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_qualify_sandvik_ud14(params: SolidWorksCamSandvikQualificationInput) -> str:
+    """Create one local cutter, observe exact numeric geometry; no assignment/GTP/save."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id!=params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_sandvik_phase1 import qualify_sandvik_ud14
+        sw,registration=_cam_target(params)
+        values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format",
+            "session_rebind_receipt_path","session_rebind_receipt_sha256"})
+        return qualify_sandvik_ud14(sw,registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"),**values)
+    return _run_locked(op,params.response_format)
+
+
+
+class SolidWorksCamSandvikDraftSaveInput(SolidWorksCamSavedMillPlanToolsInput):
+    """One native draft save of successful firstcut and stage1 candidate results."""
+    phase1_receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+    phase1_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    expected_candidate_tool_native_id: int = Field(gt=0,lt=2**32,strict=True)
+
+    @model_validator(mode="after")
+    def no_implicit_rebind(self):
+        if self.session_rebind_receipt_path is not None or self.session_rebind_receipt_sha256 is not None:
+            raise ValueError("Exact current owned session required")
+        return self
+
+@mcp.tool(name="solidworks_cam_save_sandvik_draft",
+    title="Save Verified First-cut and Sandvik Draft Once",
+    annotations={"readOnlyHint":False,"destructiveHint":True,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_save_sandvik_draft(params: SolidWorksCamSandvikDraftSaveInput) -> str:
+    """One native CAM Save; no creation/assignment/GTP/CloseDoc or reopen."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id!=params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_sandvik_save import save_sandvik_draft
+        sw,registration=_cam_target(params)
+        values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format",
+            "session_rebind_receipt_path","session_rebind_receipt_sha256"})
+        return save_sandvik_draft(sw,registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"),**values)
+    return _run_locked(op,params.response_format)
+
+
+
+class SolidWorksCamExistingSandvikObservationInput(SolidWorksCamSavedMillPlanToolsInput):
+    """Read and export exactly one already-created candidate; no assignment or Save."""
+    phase1_receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+    phase1_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    expected_candidate_tool_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    phase1_backend_path: str = Field(min_length=1,max_length=4096,strict=True)
+    phase1_backend_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    profile_validator_path: str = Field(min_length=1,max_length=4096,strict=True)
+    profile_validator_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    cutting_stl_path: str = Field(min_length=1,max_length=4096,strict=True)
+    noncutting_stl_path: str = Field(min_length=1,max_length=4096,strict=True)
+
+    failed_observation_receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+    failed_observation_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    failed_observer_backend_path: str = Field(min_length=1,max_length=4096,strict=True)
+    failed_observer_backend_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    failed_read_batch_backend_path: str = Field(min_length=1,max_length=4096,strict=True)
+    failed_read_batch_backend_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+
+    @model_validator(mode="after")
+    def no_implicit_rebind(self):
+        if self.session_rebind_receipt_path is not None or self.session_rebind_receipt_sha256 is not None:
+            raise ValueError("Exact current owned session required")
+        return self
+
+@mcp.tool(name="solidworks_cam_observe_existing_sandvik",
+    title="Observe and Export Existing Sandvik Candidate",
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_observe_existing_sandvik(params: SolidWorksCamExistingSandvikObservationInput) -> str:
+    """One-shot native STL file exports; CAD/tool/operation setters and Save are absent."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id!=params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_existing_sandvik import observe_existing_sandvik
+        sw,registration=_cam_target(params)
+        values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format",
+            "session_rebind_receipt_path","session_rebind_receipt_sha256"})
+        return observe_existing_sandvik(sw,registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"),**values)
+    return _run_locked(op,params.response_format)
+
+
+
+class SolidWorksCamExistingHolderQueryInput(SolidWorksCamSavedMillPlanToolsInput):
+    """Read existing candidate holder mode and scalar dimensions only."""
+    observation_receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+    observation_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    expected_candidate_tool_native_id: int = Field(gt=0,lt=2**32,strict=True)
+
+    @model_validator(mode="after")
+    def no_implicit_rebind(self):
+        if self.session_rebind_receipt_path is not None or self.session_rebind_receipt_sha256 is not None:
+            raise ValueError("Exact current owned session required")
+        return self
+
+@mcp.tool(name="solidworks_cam_query_existing_holder",
+    title="Read Existing Candidate Holder Mode",
+    annotations={"readOnlyHint":True,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_query_existing_holder(params: SolidWorksCamExistingHolderQueryInput) -> str:
+    """Bounded native getters; no profiles, exports, setters, Save or GTP."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id!=params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_holder_mode_query import query_existing_holder
+        sw,registration=_cam_target(params)
+        values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format",
+            "session_rebind_receipt_path","session_rebind_receipt_sha256"})
+        return query_existing_holder(sw,registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"),**values)
+    return _run_locked(op,params.response_format)
+
+
+class SolidWorksCamHolderShapeChangeInput(SolidWorksCamSavedMillPlanToolsInput):
+    """One documented holder shape input, guarded by exact prior raw query."""
+    holder_query_receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+    holder_query_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    expected_candidate_tool_native_id: int = Field(gt=0,lt=2**32,strict=True)
+
+    expected_holder_shape_raw: str = Field(min_length=1,max_length=4096,strict=True)
+    desired_holder_shape: Literal["User Defined"]
+
+    @model_validator(mode="after")
+    def no_implicit_rebind(self):
+        if self.session_rebind_receipt_path is not None or self.session_rebind_receipt_sha256 is not None:
+            raise ValueError("Exact current owned session required")
+        return self
+
+@mcp.tool(name="solidworks_cam_set_existing_holder_shape",
+    title="Select Existing Holder Shape Once",
+    annotations={"readOnlyHint":False,"destructiveHint":True,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_set_existing_holder_shape(params: SolidWorksCamHolderShapeChangeInput) -> str:
+    """One holder shape setter with raw profile readback; no file reload, Save or GTP."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id!=params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_holder_shape_cas import change_existing_holder_shape
+        sw,registration=_cam_target(params)
+        values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format",
+            "session_rebind_receipt_path","session_rebind_receipt_sha256"})
+        return change_existing_holder_shape(sw,registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"),**values)
+    return _run_locked(op,params.response_format)
+
+
+class SolidWorksCamCompleteSandvikObservationInput(SolidWorksCamSavedMillPlanToolsInput):
+    """Reuse cutting bytes and complete one missing noncutting export after verified holder CAS."""
+    phase1_receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+    phase1_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    expected_candidate_tool_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    phase1_backend_path: str = Field(min_length=1,max_length=4096,strict=True)
+    phase1_backend_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    profile_validator_path: str = Field(min_length=1,max_length=4096,strict=True)
+    profile_validator_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    completed_receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+    completed_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    expected_cutting_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    holder_shape_receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+    holder_shape_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    noncutting_stl_path: str = Field(min_length=1,max_length=4096,strict=True)
+
+    @model_validator(mode="after")
+    def no_implicit_rebind(self):
+        if self.session_rebind_receipt_path is not None or self.session_rebind_receipt_sha256 is not None:
+            raise ValueError("Exact current owned session required")
+        return self
+
+@mcp.tool(name="solidworks_cam_complete_sandvik_observation",
+    title="Complete Existing Sandvik Observation",
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_complete_sandvik_observation(params: SolidWorksCamCompleteSandvikObservationInput) -> str:
+    """One missing noncutting export and a full protected after-read; no Save or machining."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id!=params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_complete_sandvik_observation import complete_sandvik_observation
+        sw,registration=_cam_target(params)
+        values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format",
+            "session_rebind_receipt_path","session_rebind_receipt_sha256"})
+        return complete_sandvik_observation(sw,registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"),**values)
+    return _run_locked(op,params.response_format)
+
+
+class SolidWorksCamCompletedSandvikDraftSaveInput(SolidWorksCamSavedMillPlanToolsInput):
+    """One native draft save of completed candidate observation; shape remains pending."""
+    observation_receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+    observation_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    expected_candidate_tool_native_id: int = Field(gt=0,lt=2**32,strict=True)
+
+    @model_validator(mode="after")
+    def no_implicit_rebind(self):
+        if self.session_rebind_receipt_path is not None or self.session_rebind_receipt_sha256 is not None:
+            raise ValueError("Exact current owned session required")
+        return self
+
+@mcp.tool(name="solidworks_cam_save_completed_sandvik_draft",
+    title="Save Completed Sandvik Draft Once",
+    annotations={"readOnlyHint":False,"destructiveHint":True,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_save_completed_sandvik_draft(params: SolidWorksCamCompletedSandvikDraftSaveInput) -> str:
+    """One native CAM Save; no creation/assignment/GTP/CloseDoc or reopen."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id!=params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_completed_sandvik_save import save_completed_sandvik_draft
+        sw,registration=_cam_target(params)
+        values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format",
+            "session_rebind_receipt_path","session_rebind_receipt_sha256"})
+        return save_completed_sandvik_draft(sw,registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"),**values)
+    return _run_locked(op,params.response_format)
+
+
+class SolidWorksCamSandvikAssignmentInput(SolidWorksCamTargetInput):
+    """One existing draft tool assigned to the exact added rough operation; no GTP."""
+    process_id: int = Field(gt=0, lt=2**32, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    saved_draft_receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    saved_draft_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_candidate_tool_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    target_feature_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    target_operation_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    target_operation_setup_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    assignment_contract_path: str = Field(min_length=1, max_length=4096, strict=True)
+    assignment_contract_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+
+    read_mode: Literal["strong", "qualified_batch"] = "strong"
+    read_batch_qualification_receipt_path: Optional[str] = Field(default=None, min_length=1, max_length=4096, strict=True)
+    read_batch_qualification_receipt_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    @model_validator(mode="after")
+    def exact_optional_batch_pin(self):
+        pair=(self.read_batch_qualification_receipt_path,self.read_batch_qualification_receipt_sha256)
+        if self.read_mode == "strong":
+            if pair != (None,None):
+                raise ValueError("Qualification pin is only accepted with qualified_batch")
+        elif any(value is None for value in pair):
+            raise ValueError("Explicit complete read-only qualification pin required")
+        elif (not absolute_document_path(pair[0]) or Path(pair[0]).suffix.casefold() != ".json"
+                or "\x00" in pair[0]):
+            raise ValueError("Absolute JSON qualification receipt required")
+        elif str(Path(pair[0]).resolve()).casefold() in {
+                str(Path(p).resolve()).casefold() for p in (self.expected_document_path,self.receipt_path)}:
+            raise ValueError("Qualification receipt cannot alias source or output")
+        return self
+
+    @model_validator(mode="after")
+    def explicit_assignment_scope(self):
+        if (self.expected_document_title is not None or self.qualification_only is not True
+                or self.acknowledge_disposable_copy is not True):
+            raise ValueError("Exact saved disposable qualification part required")
+        return self
+
+
+@mcp.tool(name="solidworks_cam_assign_sandvik_to_rough",
+    title="Assign Existing Draft Cutter to One Rough Operation",
+    annotations={"readOnlyHint":False,"destructiveHint":True,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_assign_sandvik_to_rough(params: SolidWorksCamSandvikAssignmentInput) -> str:
+    """One native SetTool; read back firstcut and full protected context. No Save/GTP."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_completed_sandvik_assignment import assign_sandvik_to_rough
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid","expected_document_title","response_format"})
+        return assign_sandvik_to_rough(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+class SolidWorksCamRouteReadBatchQualificationInput(SolidWorksCamTargetInput):
+    """Read-only strong/batch/strong comparison on the exact saved qualification part."""
+    process_id: int = Field(gt=0, lt=2**32, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    saved_draft_receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    saved_draft_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_candidate_tool_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    target_feature_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    target_operation_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    target_operation_setup_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+
+    @model_validator(mode="after")
+    def explicit_read_only_scope(self):
+        if (self.expected_document_title is not None or self.qualification_only is not True
+                or self.acknowledge_disposable_copy is not True):
+            raise ValueError("Exact saved disposable qualification part required")
+        return self
+
+
+@mcp.tool(name="solidworks_cam_qualify_route_read_batch",
+    title="Qualify Retained CAM Read Batch",
+    annotations={"readOnlyHint":True,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_qualify_route_read_batch(params: SolidWorksCamRouteReadBatchQualificationInput) -> str:
+    """Read target, tool/holder scalar fields and raw entry returns; no mutation or geometry refresh."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_route_read_batch_qualification import qualify_route_read_batch
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid","expected_document_title","response_format"})
+        return qualify_route_read_batch(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+class SolidWorksCamSandvikInitialGtpInput(SolidWorksCamTargetInput):
+    """One virtual initial path for an explicitly assigned disposable rough operation."""
+    process_id: int = Field(gt=0, lt=2**32, strict=True)
+    expected_document_path: str = Field(min_length=1, max_length=4096, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    saved_draft_receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    saved_draft_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    assignment_receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    assignment_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    experiment_evidence_path: str = Field(min_length=1, max_length=4096, strict=True)
+    experiment_evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_candidate_tool_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    target_feature_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    target_operation_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    target_operation_setup_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    software_only_experiment: bool = Field(strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+
+    @field_validator("saved_draft_receipt_path", "assignment_receipt_path", "experiment_evidence_path", "receipt_path")
+    @classmethod
+    def initial_gtp_absolute_json(cls, value):
+        if not absolute_document_path(value) or Path(value).suffix.casefold() != ".json" or "\x00" in value:
+            raise ValueError("Exact absolute JSON evidence/output path required")
+        return value
+
+    read_mode: Literal["strong", "qualified_batch"] = "strong"
+    read_batch_qualification_receipt_path: Optional[str] = Field(default=None, min_length=1, max_length=4096, strict=True)
+    read_batch_qualification_receipt_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    @model_validator(mode="after")
+    def exact_optional_batch_pin(self):
+        pair=(self.read_batch_qualification_receipt_path,self.read_batch_qualification_receipt_sha256)
+        if self.read_mode == "strong":
+            if pair != (None,None):
+                raise ValueError("Qualification pin is only accepted with qualified_batch")
+        elif any(value is None for value in pair):
+            raise ValueError("Explicit complete read-only qualification pin required")
+        elif (not absolute_document_path(pair[0]) or Path(pair[0]).suffix.casefold() != ".json"
+                or "\x00" in pair[0]):
+            raise ValueError("Absolute JSON qualification receipt required")
+        elif str(Path(pair[0]).resolve()).casefold() in {
+                str(Path(p).resolve()).casefold() for p in (self.expected_document_path,self.receipt_path)}:
+            raise ValueError("Qualification receipt cannot alias source or output")
+        return self
+
+    @model_validator(mode="after")
+    def explicit_initial_gtp_scope(self):
+        if (self.expected_document_title is not None or self.qualification_only is not True
+                or self.acknowledge_disposable_copy is not True or self.software_only_experiment is not True):
+            raise ValueError("Exact disposable qualification part and explicit software-only experiment required")
+        if Path(self.expected_document_path).suffix.casefold() != ".sldprt" or "\x00" in self.expected_document_path:
+            raise ValueError("Exact saved SLDPRT required")
+        paths = [str(Path(p).resolve()).casefold() for p in (self.expected_document_path,
+            self.saved_draft_receipt_path, self.assignment_receipt_path, self.experiment_evidence_path, self.receipt_path)]
+        if len(paths) != len(set(paths)):
+            raise ValueError("Source, evidence and output paths must be distinct")
+        return self
+
+
+@mcp.tool(name="solidworks_cam_generate_assigned_sandvik_once",
+    title="Generate One Virtual Path for an Assigned Draft Cutter",
+    annotations={"readOnlyHint":False,"destructiveHint":True,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_generate_assigned_sandvik_once(params: SolidWorksCamSandvikInitialGtpInput) -> str:
+    """One native initial GTP for exact rough; no Save, assignment, retries, NC or simulation."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_sandvik_initial_gtp import generate_assigned_sandvik_once
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid","expected_document_title","response_format"})
+        return generate_assigned_sandvik_once(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+class SolidWorksCamCompletedGtpCLInput(SolidWorksCamTargetInput):
+    """One generic CL export from an explicitly completed disposable initial GTP."""
+    process_id: int = Field(gt=0, lt=2**32, strict=True)
+    expected_document_path: str = Field(min_length=1, max_length=4096, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    saved_draft_receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    saved_draft_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    assignment_receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    assignment_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    gtp_receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    gtp_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    read_mode: Literal["strong", "qualified_batch"] = "strong"
+    batch_qualification_receipt_path: Optional[str] = Field(default=None,min_length=1,max_length=4096,strict=True)
+    batch_qualification_receipt_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+    expected_candidate_tool_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    target_feature_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    target_operation_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    target_operation_setup_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    acknowledge_machine_scope: bool = Field(strict=True)
+    project_root: str = Field(min_length=1,max_length=4096,strict=True)
+    output_path: str = Field(min_length=1,max_length=4096,strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+
+    @field_validator("saved_draft_receipt_path", "assignment_receipt_path", "gtp_receipt_path", "receipt_path", "batch_qualification_receipt_path")
+    @classmethod
+    def completed_gtp_cl_absolute_json(cls, value):
+        if value is None:return value
+        if not absolute_document_path(value) or Path(value).suffix.casefold() != ".json" or "\x00" in value:
+            raise ValueError("Exact absolute JSON evidence/output path required")
+        return value
+
+    @model_validator(mode="after")
+    def explicit_completed_gtp_cl_scope(self):
+        if self.read_mode == "qualified_batch":
+            if self.batch_qualification_receipt_path is None or self.batch_qualification_receipt_sha256 is None:
+                raise ValueError("Pinned batch qualification required")
+        elif self.batch_qualification_receipt_path is not None or self.batch_qualification_receipt_sha256 is not None:
+            raise ValueError("Strong mode does not accept unused batch evidence")
+        if (self.expected_document_title is not None or self.qualification_only is not True
+                or self.acknowledge_disposable_copy is not True or self.acknowledge_machine_scope is not True):
+            raise ValueError("Exact disposable qualification part and explicit whole-machine export acknowledgement required")
+        if Path(self.expected_document_path).suffix.casefold() != ".sldprt" or "\x00" in self.expected_document_path:
+            raise ValueError("Exact saved SLDPRT required")
+        paths = [str(Path(p).resolve()).casefold() for p in (self.expected_document_path,
+            self.saved_draft_receipt_path, self.assignment_receipt_path, self.gtp_receipt_path, self.receipt_path)]
+        if self.batch_qualification_receipt_path is not None:
+            paths.append(str(Path(self.batch_qualification_receipt_path).resolve()).casefold())
+        if len(paths) != len(set(paths)):
+            raise ValueError("Source, evidence and output paths must be distinct")
+        if not absolute_document_path(self.project_root) or not absolute_document_path(self.output_path):
+            raise ValueError("Absolute project root and CL output required")
+        if Path(self.output_path).suffix.casefold() != ".cl":
+            raise ValueError("Generic CL extension required")
+        return self
+
+
+@mcp.tool(name="solidworks_cam_export_completed_gtp_cl",
+    title="Export Generic CL for One Completed Initial Path",
+    annotations={"readOnlyHint":False,"destructiveHint":True,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_export_completed_gtp_cl(params: SolidWorksCamCompletedGtpCLInput) -> str:
+    """One existing SaveCLFile export; no generation, Save, assignment, NC or simulation."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_generated_plan_cl import export_completed_gtp_cl
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid","expected_document_title","response_format"})
+        return export_completed_gtp_cl(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+class SolidWorksCamGenericCLReadInput(BaseInput):
+    response_format: ResponseFormat = ResponseFormat.JSON
+    export_receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+    export_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    cl_path: str = Field(min_length=1,max_length=4096,strict=True)
+    cl_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    expected_operation_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    output_path: str = Field(min_length=1,max_length=4096,strict=True)
+    encoding: Literal["cp1251","utf-8","ascii"] = "cp1251"
+    expected_generated_operations: Optional[list[dict]] = Field(default=None,min_length=1,max_length=32,strict=True)
+    expected_ungenerated_operation_ids: Optional[list] = Field(default=None,max_length=31,strict=True)
+
+    @model_validator(mode="after")
+    def strict_offline_cl_files(self):
+        for value,suffix in ((self.export_receipt_path,".json"),(self.cl_path,".cl"),(self.output_path,".json")):
+            if not absolute_document_path(value) or Path(value).suffix.casefold()!=suffix or chr(0) in value:
+                raise ValueError("Exact absolute CL/JSON paths required")
+        paths=[str(Path(p).resolve()).casefold() for p in (self.export_receipt_path,self.cl_path,self.output_path)]
+        if len(set(paths))!=3:raise ValueError("Distinct input and output paths required")
+        if self.expected_generated_operations is None:
+            if self.expected_ungenerated_operation_ids is not None:
+                raise ValueError("Explicit generated and ungenerated contracts must be supplied together")
+        else:
+            from scripts.sw_cam_cl_inventory import generated_operation_contract
+            selected=[r for r in self.expected_generated_operations if r.get("operation_native_id")==self.expected_operation_native_id]
+            if len(selected)!=1:raise ValueError("Selected operation must occur once in generated contract")
+            generated_operation_contract(self.expected_operation_native_id,selected[0].get("toolpath_record_counts"),
+                self.expected_ungenerated_operation_ids,self.expected_generated_operations)
+        return self
+
+@mcp.tool(name="solidworks_cam_read_generic_cl",title="Read Exported Generic CL Offline",
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_read_generic_cl(params: SolidWorksCamGenericCLReadInput) -> str:
+    """Read raw declared CL positions and bounds into a new report; never connect to CAM or transform frames."""
+    try:
+        from scripts.sw_cam_generic_cl_reader import analyze_exported_generic_cl
+        value=analyze_exported_generic_cl(**params.model_dump(exclude={"response_format"}))
+        return _result(value,params.response_format)
+    except Exception as exc:
+        return _tool_error(exc,params.response_format)
+
+
+class SolidWorksCamCompletedGtpSaveInput(SolidWorksCamTargetInput):
+    """One native Save of an explicitly completed disposable initial GTP."""
+    process_id: int = Field(gt=0, lt=2**32, strict=True)
+    expected_document_path: str = Field(min_length=1, max_length=4096, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    saved_draft_receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    saved_draft_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    assignment_receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    assignment_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    gtp_receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    gtp_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_candidate_tool_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    target_feature_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    target_operation_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    target_operation_setup_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    read_mode: Literal["strong", "qualified_batch"] = "strong"
+    batch_qualification_receipt_path: Optional[str] = Field(default=None,min_length=1,max_length=4096,strict=True)
+    batch_qualification_receipt_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+
+    @field_validator("saved_draft_receipt_path", "assignment_receipt_path", "gtp_receipt_path", "receipt_path")
+    @classmethod
+    def completed_gtp_save_absolute_json(cls, value):
+        if not absolute_document_path(value) or Path(value).suffix.casefold() != ".json" or "\x00" in value:
+            raise ValueError("Exact absolute JSON evidence/output path required")
+        return value
+
+    @model_validator(mode="after")
+    def explicit_completed_gtp_save_scope(self):
+        if (self.expected_document_title is not None or self.qualification_only is not True
+                or self.acknowledge_disposable_copy is not True):
+            raise ValueError("Exact disposable qualification part required")
+        if not absolute_document_path(self.expected_document_path) or Path(self.expected_document_path).suffix.casefold() != ".sldprt" or "\x00" in self.expected_document_path:
+            raise ValueError("Exact saved SLDPRT required")
+        paths = [str(Path(p).resolve()).casefold() for p in (self.expected_document_path,
+            self.saved_draft_receipt_path, self.assignment_receipt_path, self.gtp_receipt_path, self.receipt_path)]
+        if len(paths) != len(set(paths)):
+            raise ValueError("Source, evidence and output paths must be distinct")
+        pins=(self.batch_qualification_receipt_path,self.batch_qualification_receipt_sha256)
+        if self.read_mode == "qualified_batch":
+            if any(v is None for v in pins):
+                raise ValueError("Qualified batch requires both qualification pin fields")
+            self.completed_gtp_save_absolute_json(self.batch_qualification_receipt_path)
+            if str(Path(self.batch_qualification_receipt_path).resolve()).casefold() in paths:
+                raise ValueError("Qualification evidence must be distinct")
+        elif any(v is not None for v in pins):
+            raise ValueError("Strong mode must not carry unused qualification fields")
+        return self
+
+
+@mcp.tool(name="solidworks_cam_save_completed_gtp",
+    title="Save One Completed Initial Toolpath",
+    annotations={"readOnlyHint":False,"destructiveHint":True,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_save_completed_gtp(params: SolidWorksCamCompletedGtpSaveInput) -> str:
+    """One existing SaveActiveDocument; no generation, assignment, CL/NC export or simulation."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_completed_gtp_save import save_completed_gtp
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid","expected_document_title","response_format"})
+        return save_completed_gtp(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+class SolidWorksCamCompletedGtpWipInput(SolidWorksCamTargetInput):
+    """One software-only native WIP export after an explicitly completed route Save."""
+    process_id: int = Field(gt=0, lt=2**32, strict=True)
+    expected_document_path: str = Field(min_length=1, max_length=4096, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    saved_gtp_receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    saved_gtp_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    owned_startup_receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    owned_startup_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_candidate_tool_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    target_feature_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    target_operation_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    target_operation_setup_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    expected_toolpath_record_counts: list[int] = Field(min_length=1, max_length=32)
+    read_mode: Literal["strong", "qualified_batch"] = "strong"
+    batch_qualification_receipt_path: Optional[str] = Field(default=None, min_length=1, max_length=4096, strict=True)
+    batch_qualification_receipt_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    acknowledge_machine_scope: bool = Field(strict=True)
+    project_root: str = Field(min_length=1, max_length=4096, strict=True)
+    output_dir: str = Field(min_length=1, max_length=4096, strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+
+    @field_validator("expected_toolpath_record_counts", mode="before")
+    @classmethod
+    def strict_wip_record_counts(cls, value):
+        if type(value) is not list or not 1 <= len(value) <= 32 or any(type(n) is not int or n <= 0 for n in value):
+            raise ValueError("Exact positive existing path record counts required")
+        return value
+
+    @field_validator("saved_gtp_receipt_path", "owned_startup_receipt_path", "receipt_path", "batch_qualification_receipt_path")
+    @classmethod
+    def absolute_wip_evidence(cls, value):
+        if value is not None and (not absolute_document_path(value) or Path(value).suffix.casefold() != ".json" or "\x00" in value):
+            raise ValueError("Absolute JSON evidence/output path required")
+        return value
+
+    @model_validator(mode="after")
+    def explicit_wip_scope(self):
+        if self.expected_document_title is not None or self.qualification_only is not True or self.acknowledge_disposable_copy is not True or self.acknowledge_machine_scope is not True:
+            raise ValueError("Exact qualification part and explicit whole-machine export acknowledgement required")
+        if not absolute_document_path(self.expected_document_path) or Path(self.expected_document_path).suffix.casefold() != ".sldprt":
+            raise ValueError("Exact saved SLDPRT required")
+        if self.read_mode == "qualified_batch":
+            if self.batch_qualification_receipt_path is None or self.batch_qualification_receipt_sha256 is None:
+                raise ValueError("Original read-only qualification pin required")
+        elif self.batch_qualification_receipt_path is not None or self.batch_qualification_receipt_sha256 is not None:
+            raise ValueError("Strong mode does not accept unused batch pins")
+        if not absolute_document_path(self.project_root) or not absolute_document_path(self.output_dir):
+            raise ValueError("Absolute project root and new WIP directory required")
+        paths = [self.expected_document_path, self.saved_gtp_receipt_path, self.owned_startup_receipt_path, self.receipt_path]
+        if self.batch_qualification_receipt_path is not None: paths.append(self.batch_qualification_receipt_path)
+        if len({str(Path(p).resolve()).casefold() for p in paths}) != len(paths):
+            raise ValueError("Source, evidence and output must be distinct")
+        return self
+
+
+@mcp.tool(name="solidworks_cam_export_completed_gtp_wip",
+    title="Export Native WIP from One Saved Existing Path",
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_export_completed_gtp_wip(params: SolidWorksCamCompletedGtpWipInput) -> str:
+    """One CreateSTLOfWIPs2 export; no generation, simulation, model Save or NC."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_completed_gtp_wip import export_completed_gtp_wip
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid","expected_document_title","response_format"})
+        return export_completed_gtp_wip(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"), **values)
+    return _run_locked(op, params.response_format)
+
+
+
+class SolidWorksCamRoughEntryCASInput(SolidWorksCamTargetInput):
+    """One explicit raw entry-mode compare-and-set on the saved observed route."""
+    process_id: int = Field(gt=0,lt=2**32,strict=True)
+    expected_document_path: str = Field(min_length=1,max_length=4096,strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    saved_gtp_receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+    saved_gtp_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    owned_startup_receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+    owned_startup_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    wip_witness_receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+    wip_witness_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    entry_contract_path: str = Field(min_length=1,max_length=4096,strict=True)
+    entry_contract_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    expected_candidate_tool_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    target_feature_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    target_operation_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    target_operation_setup_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    expected_toolpath_record_counts: list[int] = Field(min_length=1,max_length=32)
+    expected_old: int = Field(ge=0,le=5,strict=True)
+    new_value: int = Field(ge=0,le=5,strict=True)
+    acknowledge_experimental_enum: bool = Field(strict=True)
+    read_mode: Literal["strong","qualified_batch"] = "strong"
+    batch_qualification_receipt_path: Optional[str] = Field(default=None,min_length=1,max_length=4096,strict=True)
+    batch_qualification_receipt_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+
+    @field_validator("expected_toolpath_record_counts",mode="before")
+    @classmethod
+    def strict_entry_prior_counts(cls,value):
+        if type(value) is not list or not 1<=len(value)<=32 or any(type(n) is not int or n<=0 for n in value):
+            raise ValueError("Exact positive existing path record counts required")
+        return value
+
+    @field_validator("saved_gtp_receipt_path","owned_startup_receipt_path","wip_witness_receipt_path",
+        "entry_contract_path","receipt_path","batch_qualification_receipt_path")
+    @classmethod
+    def entry_json_paths(cls,value):
+        if value is not None and (not absolute_document_path(value) or Path(value).suffix.casefold()!=".json" or "\x00" in value):
+            raise ValueError("Absolute JSON evidence/output path required")
+        return value
+
+    @model_validator(mode="after")
+    def explicit_entry_scope(self):
+        if self.expected_document_title is not None or self.qualification_only is not True or self.acknowledge_disposable_copy is not True or self.acknowledge_experimental_enum is not True:
+            raise ValueError("Exact qualification part and explicit experimental enum acknowledgement required")
+        if self.expected_old==self.new_value:
+            raise ValueError("Distinct expected old and requested new values required")
+        if not absolute_document_path(self.expected_document_path) or Path(self.expected_document_path).suffix.casefold()!=".sldprt":
+            raise ValueError("Exact saved SLDPRT required")
+        if self.read_mode=="qualified_batch":
+            if self.batch_qualification_receipt_path is None or self.batch_qualification_receipt_sha256 is None:
+                raise ValueError("Pinned qualified reader required")
+        elif self.batch_qualification_receipt_path is not None or self.batch_qualification_receipt_sha256 is not None:
+            raise ValueError("Unused qualification pin")
+        paths=[self.expected_document_path,self.saved_gtp_receipt_path,self.owned_startup_receipt_path,
+            self.wip_witness_receipt_path,self.entry_contract_path,self.receipt_path]
+        if self.batch_qualification_receipt_path is not None:paths.append(self.batch_qualification_receipt_path)
+        if len({str(Path(p).resolve()).casefold() for p in paths})!=len(paths):
+            raise ValueError("Source, evidence and output paths must be distinct")
+        return self
+
+@mcp.tool(name="solidworks_cam_set_rough_entry_cas",title="Compare and Set One Rough Entry Mode",
+    annotations={"readOnlyHint":False,"destructiveHint":True,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_set_rough_entry_cas(params: SolidWorksCamRoughEntryCASInput)->str:
+    """One guarded SetEntryExitType; no implicit generation, Save or simulation."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id!=params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_rough_entry_cas import edit_rough_entry
+        sw,registration=_cam_target(params)
+        values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format"})
+        return edit_rough_entry(sw,registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"),**values)
+    return _run_locked(op,params.response_format)
+
+
+
+class SolidWorksCamRouteEntryContinuationInput(SolidWorksCamTargetInput):
+    """One explicit action from a pinned completed entry/route checkpoint."""
+    process_id: int = Field(gt=0, lt=2**32, strict=True)
+    expected_document_path: str = Field(min_length=1,max_length=4096,strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    checkpoint_receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+    checkpoint_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    expected_candidate_tool_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    target_feature_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    target_operation_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    target_operation_setup_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    software_only_experiment: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+
+    @field_validator("checkpoint_receipt_path", "receipt_path")
+    @classmethod
+    def route_entry_json_path(cls, value):
+        if not absolute_document_path(value) or Path(value).suffix.lower() != ".json" or chr(0) in value:
+            raise ValueError("Exact absolute JSON path required")
+        return value
+
+    @model_validator(mode="after")
+    def route_entry_scope(self):
+        if (self.expected_document_title is not None or self.qualification_only is not True
+                or self.acknowledge_disposable_copy is not True or self.software_only_experiment is not True):
+            raise ValueError("Explicit disposable software-only scope required")
+        if not absolute_document_path(self.expected_document_path) or Path(self.expected_document_path).suffix.lower() != ".sldprt" or chr(0) in self.expected_document_path:
+            raise ValueError("Exact absolute saved part required")
+        paths=[str(Path(p).resolve()).casefold() for p in (self.expected_document_path,self.checkpoint_receipt_path,self.receipt_path)]
+        if len(set(paths)) != len(paths): raise ValueError("Distinct source/checkpoint/output required")
+        return self
+
+
+class SolidWorksCamRouteEntrySaveInput(SolidWorksCamRouteEntryContinuationInput):
+    checkpoint_action: Literal["gtp", "cl"]
+
+
+class SolidWorksCamRouteEntryCLInput(SolidWorksCamRouteEntryContinuationInput):
+    project_root: str = Field(min_length=1,max_length=4096,strict=True)
+    output_path: str = Field(min_length=1,max_length=4096,strict=True)
+    acknowledge_machine_scope: bool = Field(strict=True)
+
+    @model_validator(mode="after")
+    def route_entry_cl_scope(self):
+        if self.acknowledge_machine_scope is not True: raise ValueError("Explicit machine-scope acknowledgement required")
+        if not absolute_document_path(self.project_root) or not absolute_document_path(self.output_path) or Path(self.output_path).suffix.lower() != ".cl":
+            raise ValueError("Absolute project root and generic CL path required")
+        return self
+
+
+def _route_entry_continuation_call(params, method):
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts import sw_cam_route_entry_continuation
+        backend = getattr(sw_cam_route_entry_continuation, method)
+        sw, registration = _cam_target(params)
+        values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format"})
+        return backend(sw, registration["clsid"], typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"), **values)
+    return _run_locked(op,params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_generate_after_entry_edit",title="Regenerate One Route After Entry Edit",
+    annotations={"readOnlyHint":False,"destructiveHint":True,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_generate_after_entry_edit(params: SolidWorksCamRouteEntryContinuationInput) -> str:
+    """One explicit GTP on the edited rough operation; no export or Save."""
+    return _route_entry_continuation_call(params,"generate_route_after_entry")
+
+
+@mcp.tool(name="solidworks_cam_export_after_entry_gtp_cl",title="Export Generic CL After Entry Regeneration",
+    annotations={"readOnlyHint":False,"destructiveHint":True,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_export_after_entry_gtp_cl(params: SolidWorksCamRouteEntryCLInput) -> str:
+    """One existing SaveCLFile export; no GTP, model Save, NC or simulation."""
+    return _route_entry_continuation_call(params,"export_route_after_entry_cl")
+
+
+@mcp.tool(name="solidworks_cam_save_after_entry_route",title="Save Existing Regenerated Entry Route",
+    annotations={"readOnlyHint":False,"destructiveHint":True,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_save_after_entry_route(params: SolidWorksCamRouteEntrySaveInput) -> str:
+    """One existing native Save and bounded readback; no implicit GTP or export."""
+    return _route_entry_continuation_call(params,"save_route_after_entry")
+
+
+class SolidWorksCamFinishObservationInput(SolidWorksCamRouteEntryContinuationInput):
+    """Read one existing finish definition after a completed working Save."""
+    finish_operation_native_id: int = Field(gt=0, lt=2**32, strict=True)
+    finish_tool_native_id: int = Field(gt=0, lt=2**32, strict=True)
+
+    @model_validator(mode="after")
+    def separate_finish_target(self):
+        if self.finish_operation_native_id == self.target_operation_native_id:
+            raise ValueError("Observed finish must differ from the checkpoint rough")
+        return self
+
+@mcp.tool(name="solidworks_cam_inspect_saved_route_finish", title="Inspect Saved Route Finish Definition",
+    annotations={"readOnlyHint":True,"destructiveHint":False,"idempotentHint":True,"openWorldHint":False})
+def solidworks_cam_inspect_saved_route_finish(params: SolidWorksCamFinishObservationInput)->str:
+    """Read finish settings, levels and assigned tool scalars without generation."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_finish_observation import inspect_saved_route_finish
+        sw,registration=_cam_target(params)
+        values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format"})
+        return inspect_saved_route_finish(sw,registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"),**values)
+    return _run_locked(op,params.response_format)
+
+
+
+@mcp.tool(name="solidworks_cam_inspect_saved_finish_leads", title="Inspect Saved Finish Lead Definitions",
+    annotations={"readOnlyHint":True,"destructiveHint":False,"idempotentHint":True,"openWorldHint":False})
+def solidworks_cam_inspect_saved_finish_leads(params: SolidWorksCamFinishObservationInput)->str:
+    """Read only missing lead definitions over a completed finish observation."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_finish_lead_observation import inspect_saved_finish_leads
+        sw,registration=_cam_target(params)
+        values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format"})
+        return inspect_saved_finish_leads(sw,registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"),**values)
+    return _run_locked(op,params.response_format)
+
+
+
+class SolidWorksSavedRouteManifestInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    process_id: int = Field(gt=0, strict=True)
+    expected_document_path: str = Field(min_length=1, max_length=4096, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    target_feature_native_id: int = Field(gt=0, strict=True)
+    target_operation_native_id: int = Field(gt=0, strict=True)
+    target_operation_setup_native_id: int = Field(gt=0, strict=True)
+    expected_candidate_tool_native_id: int = Field(gt=0, strict=True)
+    finish_operation_native_id: int = Field(gt=0, strict=True)
+    finish_tool_native_id: int = Field(gt=0, strict=True)
+    owned_startup_receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    owned_startup_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    lead_receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    lead_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    output_path: str = Field(min_length=1, max_length=4096, strict=True)
+    project_root: str = Field(min_length=1, max_length=4096, strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+@mcp.tool(name="solidworks_cam_create_saved_route_manifest", title="Create Saved Route Evidence Manifest",
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_create_saved_route_manifest(params: SolidWorksSavedRouteManifestInput) -> str:
+    """Package already verified route history; no SolidWorks connection or native call."""
+    def op():
+        from scripts.sw_cam_route_manifest import build_saved_route_manifest
+        return build_saved_route_manifest(**params.model_dump(exclude={"response_format"}))
+    return _run_locked(op, params.response_format)
+
+
+class SolidWorksCamFinishRecipeInput(SolidWorksCamTargetInput):
+    process_id: int = Field(gt=0,lt=2**32,strict=True)
+    expected_document_path: str = Field(min_length=1,max_length=4096,strict=True)
+    expected_source_sha256: str = Field(pattern=r'^[0-9a-f]{64}$',strict=True)
+    manifest_path: str = Field(min_length=1,max_length=4096,strict=True)
+    manifest_sha256: str = Field(pattern=r'^[0-9a-f]{64}$',strict=True)
+    runtime_pins: list[dict] = Field(min_length=1,max_length=64)
+    generated_typelib_path: str = Field(min_length=1,max_length=4096,strict=True)
+    expected_candidate_tool_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    target_feature_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    target_operation_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    target_operation_setup_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    finish_operation_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    finish_tool_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    holder_file_path: str = Field(min_length=1,max_length=4096,strict=True)
+    holder_file_sha256: str = Field(pattern=r'^[0-9a-f]{64}$',strict=True)
+    holder_recipe_path: str = Field(min_length=1,max_length=4096,strict=True)
+    holder_recipe_sha256: str = Field(pattern=r'^[0-9a-f]{64}$',strict=True)
+    recipe_provenance_path: str = Field(min_length=1,max_length=4096,strict=True)
+    recipe_provenance_sha256: str = Field(pattern=r'^[0-9a-f]{64}$',strict=True)
+    target_geometry: dict
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    software_only_experiment: bool = Field(strict=True)
+    message_policy: Literal['vendor_default'] = 'vendor_default'
+    receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+
+    @model_validator(mode='after')
+    def finish_recipe_scope(self):
+        from scripts.sw_cam_straight_cutter_geometry import validate_target
+        from scripts.sw_cam_route_batch_qualified_capture import canonical_evidence_pins
+        validate_target(self.target_geometry); canonical_evidence_pins(self.runtime_pins)
+        if self.expected_document_title is not None or not (self.qualification_only and self.acknowledge_disposable_copy and self.software_only_experiment):
+            raise ValueError('Explicit disposable software-only qualification required')
+        if self.finish_operation_native_id == self.target_operation_native_id or self.finish_tool_native_id == self.expected_candidate_tool_native_id:
+            raise ValueError('Distinct protected rough and finish targets required')
+        paths=[self.expected_document_path,self.manifest_path,self.generated_typelib_path,self.holder_file_path,
+            self.holder_recipe_path,self.recipe_provenance_path,self.receipt_path]
+        if not all(absolute_document_path(p) and chr(0) not in p for p in paths): raise ValueError('Absolute paths required')
+        if Path(self.expected_document_path).suffix.lower()!='.sldprt' or Path(self.holder_file_path).suffix.lower()!='.mh':
+            raise ValueError('Exact native part and MH file required')
+        if any(Path(p).suffix.lower()!='.json' for p in (self.manifest_path,self.holder_recipe_path,self.recipe_provenance_path,self.receipt_path)):
+            raise ValueError('Explicit JSON evidence and receipt required')
+        if len({str(Path(p).resolve()).casefold() for p in paths})!=len(paths): raise ValueError('Distinct sources and outputs required')
+        return self
+
+
+@mcp.tool(name='solidworks_cam_configure_saved_finish_recipe',title='Configure Existing Finish Cutter Recipe',
+    annotations={'readOnlyHint':False,'destructiveHint':True,'idempotentHint':False,'openWorldHint':False})
+def solidworks_cam_configure_saved_finish_recipe(params: SolidWorksCamFinishRecipeInput)->str:
+    """Configure one existing straight cutter and custom holder; no generation or save."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError('Explicit owned process connection required')
+        from scripts.sw_cam_finish_recipe import configure_finish_recipe
+        sw,registration=_cam_target(params)
+        values=params.model_dump(exclude={'addin_clsid','expected_document_title','response_format'})
+        return configure_finish_recipe(sw,registration['clsid'],typelib_path=str(Path(registration['addin_path']).parent/'camworks.tlb'),**values)
+    return _run_locked(op,params.response_format)
+
+
+class SolidWorksCamFinishContinuationInput(SolidWorksCamTargetInput):
+    """One explicit action from a pinned completed finish recipe/route checkpoint."""
+    process_id: int = Field(gt=0, lt=2**32, strict=True)
+    expected_document_path: str = Field(min_length=1,max_length=4096,strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    checkpoint_receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+    checkpoint_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    expected_candidate_tool_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    finish_operation_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    finish_tool_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    target_feature_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    target_operation_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    target_operation_setup_native_id: int = Field(gt=0,lt=2**32,strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    software_only_experiment: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+
+    @field_validator("checkpoint_receipt_path", "receipt_path")
+    @classmethod
+    def finish_json_path(cls, value):
+        if not absolute_document_path(value) or Path(value).suffix.lower() != ".json" or chr(0) in value:
+            raise ValueError("Exact absolute JSON path required")
+        return value
+
+    @model_validator(mode="after")
+    def finish_scope(self):
+        if (self.expected_document_title is not None or self.qualification_only is not True
+                or self.acknowledge_disposable_copy is not True or self.software_only_experiment is not True):
+            raise ValueError("Explicit disposable software-only scope required")
+        if not absolute_document_path(self.expected_document_path) or Path(self.expected_document_path).suffix.lower() != ".sldprt" or chr(0) in self.expected_document_path:
+            raise ValueError("Exact absolute saved part required")
+        paths=[str(Path(p).resolve()).casefold() for p in (self.expected_document_path,self.checkpoint_receipt_path,self.receipt_path)]
+        if len(set(paths)) != len(paths): raise ValueError("Distinct source/checkpoint/output required")
+        return self
+
+
+class SolidWorksCamFinishSaveInput(SolidWorksCamFinishContinuationInput):
+    checkpoint_action: Literal["recipe", "gtp", "cl"]
+
+
+class SolidWorksCamFinishCLInput(SolidWorksCamFinishContinuationInput):
+    project_root: str = Field(min_length=1,max_length=4096,strict=True)
+    output_path: str = Field(min_length=1,max_length=4096,strict=True)
+    acknowledge_machine_scope: bool = Field(strict=True)
+
+    @model_validator(mode="after")
+    def finish_cl_scope(self):
+        if self.acknowledge_machine_scope is not True: raise ValueError("Explicit machine-scope acknowledgement required")
+        if not absolute_document_path(self.project_root) or not absolute_document_path(self.output_path) or Path(self.output_path).suffix.lower() != ".cl":
+            raise ValueError("Absolute project root and generic CL path required")
+        return self
+
+
+def _finish_continuation_call(params, method):
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts import sw_cam_finish_continuation
+        backend = getattr(sw_cam_finish_continuation, method)
+        sw, registration = _cam_target(params)
+        values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format"})
+        return backend(sw, registration["clsid"], typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"), **values)
+    return _run_locked(op,params.response_format)
+
+
+@mcp.tool(name="solidworks_cam_generate_finish_recipe",title="Generate One Saved Finish Route",
+    annotations={"readOnlyHint":False,"destructiveHint":True,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_generate_finish_recipe(params: SolidWorksCamFinishContinuationInput) -> str:
+    """One explicit GTP on the saved ungenerated finish operation; no export or Save."""
+    return _finish_continuation_call(params,"generate_finish_after_recipe")
+
+
+@mcp.tool(name="solidworks_cam_export_finish_generic_cl",title="Export Rough and Finish Generic CL",
+    annotations={"readOnlyHint":False,"destructiveHint":True,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_export_finish_generic_cl(params: SolidWorksCamFinishCLInput) -> str:
+    """One existing SaveCLFile export; no GTP, model Save, NC or simulation."""
+    return _finish_continuation_call(params,"export_finish_generic_cl")
+
+
+@mcp.tool(name="solidworks_cam_save_finish_progress",title="Save Existing Finish Progress",
+    annotations={"readOnlyHint":False,"destructiveHint":True,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_save_finish_progress(params: SolidWorksCamFinishSaveInput) -> str:
+    """One existing native Save and bounded readback; no implicit GTP or export."""
+    return _finish_continuation_call(params,"save_finish_progress")
+
+
+class SolidWorksCamUpperConeFeatureInput(SolidWorksCamTargetInput):
+    """One unsaved upper tapered CAM feature; no operations or toolpaths."""
+    process_id: int = Field(gt=0,le=4294967295,strict=True)
+    expected_document_path: str = Field(min_length=1,strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    baseline_path: str = Field(min_length=1,strict=True)
+    baseline_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    sketch_receipt_path: str = Field(min_length=1,strict=True)
+    sketch_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    sketch_spec: Dict[str,Any]
+    taper_angle_native: float = Field(gt=0,le=90,strict=True,allow_inf_nan=False)
+    taper_type: int = Field(ge=0,le=1,strict=True)
+    acknowledge_unqualified_taper: bool = Field(strict=True)
+    receipt_path: str = Field(min_length=1,strict=True)
+    qualification_only: bool = Field(strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def upper_cone_contract(self):
+        from scripts.sw_cam_upper_cone_feature import validate_cone_request
+        if self.expected_document_title is not None or self.qualification_only is not True or self.acknowledge_disposable_copy is not True:
+            raise ValueError("Exact saved disposable qualification path required")
+        validate_cone_request(sketch_spec=self.sketch_spec,taper_angle_native=self.taper_angle_native,
+            taper_type=self.taper_type,acknowledge_unqualified_taper=self.acknowledge_unqualified_taper)
+        return self
+
+@mcp.tool(name="solidworks_cam_create_upper_cone_feature",title="Create One Upper Tapered CAM Feature",
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_create_upper_cone_feature(params: SolidWorksCamUpperConeFeatureInput) -> str:
+    """One CreateMillFeature2 with raw configuration readback; physical depth/frame unverified; no GOP/GTP/Save."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id!=params.process_id:
+            raise ValueError("Explicitly connected owned process required")
+        from scripts.sw_cam_upper_cone_feature import create_upper_cone_feature
+        sw,registration=_cam_target(params)
+        values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format"})
+        return create_upper_cone_feature(sw,registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"),**values)
+    return _run_locked(op,params.response_format)
+
 
 if __name__ == "__main__":
     main()

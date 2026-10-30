@@ -32,6 +32,8 @@ metadata: { "openclaw": { "homepage": "https://github.com/wzyn20051216/solidwork
 
 Контракт контрольной точки и пример: [references/cam-resume-checkpoint.md](references/cam-resume-checkpoint.md).
 
+Для продолжения рассчитанного фрезерного маршрута читать раздел [Completed route: CL, explicit save and WIP](references/solidworks-cam.md#completed-route-cl-explicit-save-and-wip-pilot). Он различает текущий сохранённый источник, исторические квитанции, движения, остаток и точность их представления.
+
 ## Каталог знаний о возможностях MCP и скилла
 
 Перед новым исследованием возможностей, ограничений или ранее выполненных доработок сначала запросить существующий каталог через `solidworks_query_knowledge_index`: `summary` для обзора, `search` по задаче и `get` нужной темы. Путь к JSON-индексу брать из текущего проекта и передавать явно; не перечитывать весь HTML-отчёт и не повторять готовое исследование.

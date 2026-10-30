@@ -238,6 +238,8 @@ claude mcp add --scope user solidworks -- python C:\path\to\solidworks-automatio
 | `solidworks_create_configuration` | 用 AddConfiguration3 创建/复用配置，可激活、重建、保存并回读 | 是 |
 | `solidworks_activate_configuration` | 切换配置并用活动配置名和重建结果回读验证 | 是 |
 | `solidworks_update_dimension` | 按准确尺寸名修改参数，返回修改前后、重建和保存证据 | 是 |
+| `solidworks_read_explode_step_transforms` | Read exact existing single-component step matrices with PID, source and full snapshot guards; pilot | No |
+| `solidworks_read_custom_properties` | Read requested file/current-configuration properties with PID, path and state guards; pilot pending native qualification | No |
 | `solidworks_set_custom_properties` | 写入并回读文件级或配置级自定义属性 | 是 |
 | `solidworks_batch_export_files` | 多文件、多格式批量导出并核验本轮产物 | 是，写输出文件 |
 | `solidworks_export_assembly_bom` | 导出装配组件/属性 BOM CSV，强制人工复核 | 是，写输出文件 |
@@ -412,3 +414,11 @@ claude mcp add --scope user solidworks -- python C:\path\to\solidworks-automatio
 ## 原生圆截面路径工具
 
 五个受保护的试验性工具支持原生扫描、STEP 导入、实体审查/排除和保持位置的组件替换。规格、限制和审查要求见 [工具说明](../docs/native-wire-tools.md)。
+
+The pilot `solidworks_cam_inspect_mill_operation_levels` reads raw depth, level flags, origin and setup direction from one generated disposable MILL operation. Exact source/inventory guards and a new receipt are required; it performs no generation, edits, saves, exports or CL-record access. See [CAM reference](../references/solidworks-cam.md#bounded-mill-operation-levels-reader).
+
+The offline-tested pilot solidworks_cam_inspect_mill_rough_boundary reads raw roughing boundary settings from one exact generated disposable MILL operation. It preserves source/inventory/event guards, writes a unique receipt and performs no CAD edits or generation. Native qualification and air-edge semantic mapping remain pending. See [CAM reference](../references/solidworks-cam.md#bounded-mill-rough-boundary-reader).
+
+The pilot solidworks_cam_export_mill_generic_cl prepares and exports one bounded generated MILL machine to a new generic CL file. Exact process/source/inventory/controller guards apply. No GTP, simulation, model save or controller assignment is performed. See [CAM reference](../references/solidworks-cam.md#bounded-mill-generic-cl-export).
+
+The pilot solidworks_cam_configure_mill_rough_boundary changes only one explicitly prepared raw tool-diameter percentage on a disposable rough operation. Exact prepared state and receipt credentials are required for apply. It never generates or saves; retained old toolpath records are not proof of a current path. See [CAM reference](../references/solidworks-cam.md#bounded-mill-rough-boundary-percentage-setting).

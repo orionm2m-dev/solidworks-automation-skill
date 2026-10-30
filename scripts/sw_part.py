@@ -665,15 +665,49 @@ def sketch_polygon(model, cx, cy, radius, sides=6):
 
 
 def sketch_slot(model, x1, y1, x2, y2, radius):
-    """画槽口"""
+    """画槽口；radius 为半宽，(x1, y1)–(x2, y2) 为两端圆弧中心"""
     return model.SketchManager.CreateSketchSlot(
         0,  # swSketchSlotCreationType_e: 0=Straight
-        radius, radius,  # 宽度
+        0,  # swSketchSlotLengthType_e: 0=CenterCenter
+        2 * radius,  # 宽度 = 2 × 半宽（此前误传半宽，槽宽只有一半）
         x1, y1, 0,
         x2, y2, 0,
         0, 0, 0,
         1, False
     )
+
+
+def profile_arc_center(x1, y1, x2, y2, bulge):
+    """bulge = tan(θ/4) 弧段的圆心：θ 为圆心角，bulge>0 逆时针（DXF LWPOLYLINE 约定）"""
+    k = (1.0 - bulge * bulge) / (4.0 * bulge)
+    return (x1 + x2) / 2.0 - k * (y2 - y1), (y1 + y2) / 2.0 + k * (x2 - x1)
+
+
+def sketch_profile(model, vertices):
+    """
+    画闭合直线/圆弧轮廓（单位: 米），最后一点自动连回第一点
+
+    参数:
+        vertices: [(x, y, bulge), ...]；bulge 描述该点到下一点的段：0=直线，
+                  否则为圆弧，bulge = tan(圆心角/4)，>0 逆时针、<0 顺时针
+    """
+    manager = model.SketchManager
+    old_add_to_db = bool(manager.AddToDB)
+    manager.AddToDB = True  # 不吸附到附近几何，端点按给定坐标落（同 sw_gear）
+    segments = []
+    try:
+        for (x1, y1, bulge), (x2, y2, _next) in zip(vertices, list(vertices[1:]) + list(vertices[:1])):
+            if bulge:
+                cx, cy = profile_arc_center(x1, y1, x2, y2, bulge)
+                segment = sketch_arc(model, cx, cy, x1, y1, x2, y2, 1 if bulge > 0 else -1)
+            else:
+                segment = sketch_line(model, x1, y1, x2, y2)
+            if segment is None:
+                raise RuntimeError(f"创建轮廓段失败: ({x1}, {y1}) -> ({x2}, {y2}), bulge={bulge}")
+            segments.append(segment)
+    finally:
+        manager.AddToDB = old_add_to_db
+    return segments
 
 
 def sketch_spline(model, points):
@@ -857,6 +891,26 @@ def extrude_cut(model, sketch_name, depth, direction=True, flip=False):
         direction, flip, False,
         end_condition, 0,
         depth, 0,
+        False, False, False, False,
+        0.0, 0.0,
+        False, False, False, False, False,
+        True, True, True, True,
+        False, 0, 0, False, False
+    )
+
+
+def extrude_cut_midplane(model, sketch_name, total_depth):
+    """
+    中面切除（两侧对称切除）
+
+    参数:
+        total_depth: 总深度（米），每侧为 total_depth/2
+    """
+    _ensure_sketch_selected(model, sketch_name)
+    return model.FeatureManager.FeatureCut4(
+        True, False, False,
+        6, 0,              # T1: swEndCondMidPlane
+        total_depth, 0,
         False, False, False, False,
         0.0, 0.0,
         False, False, False, False, False,

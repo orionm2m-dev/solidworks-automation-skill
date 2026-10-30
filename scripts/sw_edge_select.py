@@ -106,7 +106,13 @@ def describe_edge(edge, index=0):
         descriptor["errors"].append(f"读取曲线类型失败: {exc}")
 
     try:
-        descriptor["length_mm"] = round(float(_safe(edge, "GetLength")) * _MM_PER_M, 6)
+        length = _safe(edge, "GetLength")
+        if length is None:
+            # 真实 IEdge 没有 GetLength：按裁剪参数区间取曲线长度（同 sw_guarded_fillet.inspect_edge）。
+            trim = get_com_member(edge, "GetCurveParams3")
+            length = get_com_member(edge, "GetCurve").GetLength3(
+                float(get_com_member(trim, "UMinValue")), float(get_com_member(trim, "UMaxValue")))
+        descriptor["length_mm"] = round(float(length) * _MM_PER_M, 6)
     except Exception as exc:
         descriptor["errors"].append(f"读取边长失败: {exc}")
 

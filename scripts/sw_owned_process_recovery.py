@@ -75,6 +75,68 @@ def _spec(spec):
     return spec
 
 
+def _clean_inventory(manifest, pid, checkpoint_paths):
+    """Validate the last known clean native inventory; never infer live state."""
+    if (manifest.get('clean_inventory_is_last_known') is not True
+            or manifest.get('no_known_unsaved_changes_since_inventory') is not True):
+        raise ValueError('Explicit last-known clean inventory assertions required')
+    ref=manifest.get('clean_inventory_evidence')
+    observed=_pin(ref)
+    if 'results' in observed:
+        rows=observed.get('results')
+        if (observed.get('status')!='success' or type(rows) is not list
+                or not 1<=len(rows)<=64 or type(observed.get('request_count')) is not int
+                or observed['request_count']!=len(rows)):
+            raise ValueError('Invalid complete inventory batch')
+        matches=[row for row in rows if isinstance(row,dict)
+                 and row.get('name')=='solidworks_inspect_open_documents']
+        if len(matches)!=1: raise ValueError('One exact native inventory result required')
+        wrapped=matches[0].get('result')
+        if not isinstance(wrapped,dict) or wrapped.get('isError') is not False:
+            raise ValueError('Native inventory result contains an error')
+        content=wrapped.get('content')
+        if type(content) is not list or len(content)!=1 or content[0].get('type')!='text':
+            raise ValueError('One text inventory payload required')
+        text=content[0].get('text')
+        if type(text) is not str: raise ValueError('Inventory text must be JSON')
+        payload=json.loads(text)
+        representations=[payload]
+        if 'parsed_json' in content[0]: representations.append(content[0]['parsed_json'])
+        if 'structuredContent' in wrapped:
+            structured=wrapped['structuredContent']
+            if not isinstance(structured,dict) or type(structured.get('result')) is not str:
+                raise ValueError('Invalid structured inventory representation')
+            representations.append(json.loads(structured['result']))
+        canonical=json.dumps(payload,sort_keys=True,separators=(',',':'),allow_nan=False)
+        if any(json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False)!=canonical for value in representations):
+            raise ValueError('Inventory result representations disagree')
+        observed=payload
+    if (not isinstance(observed,dict) or observed.get('status')!='ok'
+            or type(observed.get('process_id')) is not int or observed['process_id']!=pid
+            or observed.get('mutation_attempted') is not False):
+        raise ValueError('Clean native inventory status/PID/read-only evidence required')
+    documents=observed.get('documents'); count=observed.get('document_count')
+    if (type(documents) is not list or type(count) is not int
+            or not 1<=count<=64 or count!=len(documents)):
+        raise ValueError('Complete bounded native document count required')
+    seen=set()
+    for doc in documents:
+        if (not isinstance(doc,dict) or doc.get('needs_save') is not False
+                or type(doc.get('type')) is not int or doc['type'] not in (1,2,3)):
+            raise ValueError('Every native inventory document must be saved and clean')
+        path=_path(doc.get('path'))
+        if path in seen: raise ValueError('Duplicate native inventory document')
+        seen.add(path)
+    if seen!=checkpoint_paths:
+        raise ValueError('Native clean inventory must exactly match saved checkpoint documents')
+    active=observed.get('active_document')
+    if not isinstance(active,dict) or _path(active.get('path')) not in seen:
+        raise ValueError('Active inventory document must belong to saved checkpoints')
+    return {'evidence':ref,'process_id':pid,'document_count':count,
+            'document_paths':sorted(seen),'last_known_clean':True,
+            'live_document_state_verified':False}
+
+
 def _evidence(spec):
     pid=spec['process_id']; exe=_path(spec['expected_executable_path']); ticks=spec['expected_creation_filetime']
     owned=_pin(spec['ownership_receipt']); observed=_pin(spec['process_identity_evidence']); manifest=_pin(spec['recovery_manifest'])
@@ -100,7 +162,7 @@ def _evidence(spec):
     if manifest.get('process_id')!=pid or manifest.get('complete_known_document_inventory') is not True or manifest.get('no_other_unsaved_work_known') is not True:
         raise ValueError('Known document/discard inventory is incomplete')
     documents=manifest.get('documents'); items=manifest.get('known_unsaved_items')
-    if not isinstance(documents,list) or not 1<=len(documents)<=64 or not isinstance(items,list) or not 1<=len(items)<=256:
+    if not isinstance(documents,list) or not 1<=len(documents)<=64 or not isinstance(items,list) or not 0<=len(items)<=256:
         raise ValueError('Bounded checkpoint/discard lists required')
     paths=set(); evidence_pins=[]
     for doc in documents:
@@ -115,6 +177,10 @@ def _evidence(spec):
                 and after.get('saved_file_sha256')==doc['sha256']):
             raise ValueError('Saved checkpoint not proven by native save receipt')
         evidence_pins.append(doc['saved_evidence'])
+    clean_inventory=None
+    if not items:
+        clean_inventory=_clean_inventory(manifest,pid,paths)
+        evidence_pins.append(manifest['clean_inventory_evidence'])
     ids=[]
     for item in items:
         if not isinstance(item,dict) or set(item)!={'id','document_path','description','evidence'}: raise ValueError('Invalid discard item')
@@ -124,9 +190,11 @@ def _evidence(spec):
         if not isinstance(item['evidence'],list) or not 1<=len(item['evidence'])<=16: raise ValueError('Discard evidence required')
         for ref in item['evidence']: _pin(ref); evidence_pins.append(ref)
         ids.append(item['id'])
-    return {'checkpoint_documents':documents,'known_unsaved_items':items,'discard_ids':sorted(ids),
+    result={'checkpoint_documents':documents,'known_unsaved_items':items,'discard_ids':sorted(ids),
             'scope':'Supplied complete known inventory; no COM/live document inspection',
             'pinned_supporting_evidence':evidence_pins}
+    if clean_inventory is not None: result['clean_inventory']=clean_inventory
+    return result
 
 
 class Win32ProcessAPI:

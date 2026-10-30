@@ -5,16 +5,9 @@ from types import SimpleNamespace as N
 from unittest.mock import Mock
 import pytest
 from scripts import sw_cam_events as events
-import importlib.util
-import sys
-from pathlib import Path
-STAGE=Path(__file__).resolve().parents[1]
-# Each test monkeypatches the shared reader; do not replace its module globally.
-def load(name,path):
-    spec=importlib.util.spec_from_file_location(name,path);module=importlib.util.module_from_spec(spec)
-    sys.modules[name]=module;spec.loader.exec_module(module);return module
-entry=load('staged_mill_feature_lifecycle_dispatch',STAGE/'scripts/sw_cam_lifecycle.py')
-cam=load('scripts.sw_cam_mill_feature_lifecycle',STAGE/'scripts/sw_cam_mill_feature_lifecycle.py')
+# 使用同一个模块对象，避免收集测试时替换全局导入缓存。
+from scripts import sw_cam_lifecycle as entry
+from scripts import sw_cam_mill_feature_lifecycle as cam
 from scripts import sw_cam_mill_qualification as mill
 
 

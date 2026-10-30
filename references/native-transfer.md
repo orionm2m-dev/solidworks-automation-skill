@@ -159,3 +159,32 @@ apply 令 dry_run=false，并提供 expected_selection_sha256、新 receipt_path
 The first full detailed live inventory of the threaded BASE exceeded 180 seconds; no geometry mutation was attempted. Use optional `endpoint_bounds_mm=[xmin,ymin,zmin,xmax,ymax,zmax]` in `solidworks_list_edges` for local inspection. Both trim endpoints must be inside. This is not a bound on the entire curved edge, and cannot be mixed with legacy filters. The operation enumerates GetCurveParams2 once per edge and reads detailed curve/surface geometry only for local candidates.
 
 Exact fillet prepare and apply now require a clean saved working copy. The state hash retains file SHA, all edge trim endpoint/parameter data (excluding packed native curve tags), body validity/volume, feature history, and exact selected signatures. The complete STEP comparison after native execution remains mandatory; this fast state guard is not a substitute for full B-Rep equivalence. The existing 9-decimal mm signature precision is unchanged. Local regression: 101 tests passed. Native local-inspector and fillet qualification remain pending.
+
+
+## Bounded repair of missing exploded-view axes (pilot)
+
+The solidworks_rebind_explode_axes tool prepares or applies missing entity
+references on explicit existing explode steps. It reuses a hash-qualified assembly
+snapshot and an explicit reference-path map. The only permitted baseline difference
+is that both axes are missing on the requested steps. All component identities,
+transforms, step scalars, study records and reverse flags are retained.
+
+Selection requires exactly one cylindrical face on the named, resolved,
+identity-transform owner. Signed axis line and radius are matched; largest-face
+selection is forbidden. The frozen surface parameterization must also match
+exactly. The existing native setters receive the assembly-context face and index
+-1. Generated metadata identifies both setters as VT_VOID; a returned None
+alone is not proof of success. Each setter needs exact entity/owner/cylinder/index
+and full-step readback, followed by whole-assembly comparison and an exact change
+count.
+
+Prepare does not modify the document. Apply requires its exact state digest and
+receipt hash. A durable consumption marker and per-setter intent prevent replay
+after an unknown or partial outcome. The first failure stops without rollback or
+fallback. No document is saved, rebuilt, opened or closed, and no steps or studies
+are created. A successful repair remains unsaved and requires separate explicit
+save, reopen and motion review.
+
+This endpoint is a pilot. Unit tests and installed type-library metadata validate
+the local contract; they do not establish that reassigning existing steps has
+succeeded in a live CAD document.

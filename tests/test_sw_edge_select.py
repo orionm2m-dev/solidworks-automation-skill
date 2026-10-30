@@ -384,3 +384,53 @@ def test_describe_convexity_tolerates_missing_faces():
             return []
 
     assert sw_edge_select.describe_convexity(NoFaces((0, 0, 0), (0, 0, 1))) is None
+
+
+class _TrimParams:
+    """IEdge::GetCurveParams3 替身：裁剪参数区间。"""
+
+    UMinValue = 0.0
+    UMaxValue = 0.5
+
+
+class _TrimmedCurve:
+    """ICurve 替身：真实 IEdge 没有 GetLength，长度只能按裁剪区间从曲线取。"""
+
+    def IsLine(self):
+        return True
+
+    def IsCircle(self):
+        return False
+
+    def GetLength3(self, low, high):
+        assert (low, high) == (0.0, 0.5)
+        return 0.0707
+
+
+class _RealLikeEdge:
+    """没有 GetLength 的边（真机 IEdge），端点与裁剪曲线齐全。"""
+
+    def GetCurve(self):
+        return _TrimmedCurve()
+
+    def GetCurveParams3(self):
+        return _TrimParams()
+
+    def GetCurveParams2(self):
+        return [0.0, 0.0, 0.0, 0.0707, 0.0, 0.0, 1.0, 0.0, 0.0]
+
+    def GetStartVertex(self):
+        return types.SimpleNamespace(GetPoint=lambda: (0.0, 0.0, 0.0))
+
+    def GetEndVertex(self):
+        return types.SimpleNamespace(GetPoint=lambda: (0.0707, 0.0, 0.0))
+
+
+def test_describe_edge_takes_length_from_trimmed_curve_when_edge_has_no_getlength():
+    """真机回归：IEdge 无 GetLength → 以前 length_mm 为 None，长度筛选拒绝所有边。"""
+    descriptor = sw_edge_select.describe_edge(_RealLikeEdge(), index=3)
+
+    assert descriptor["length_mm"] == pytest.approx(70.7)
+    assert not [e for e in descriptor["errors"] if "边长" in e]
+    selected, rejected = sw_edge_select.filter_edges([descriptor], min_length_mm=45.0)
+    assert [d["index"] for d in selected] == [3] and rejected == []

@@ -18,7 +18,7 @@ assert {n.name for n in NODES}==NAMES
 NS=dict(BaseModel=BaseModel,ConfigDict=ConfigDict,Field=Field,field_validator=field_validator,
     model_validator=model_validator,Optional=Optional,Literal=Literal,Any=Any,Enum=Enum,Path=Path,
     absolute_document_path=absolute_document_path)
-exec(compile(ast.Module(body=NODES,type_ignores=[]),'<real runtime schemas>','exec'),NS)
+exec(compile(ast.Module(body=NODES,type_ignores=[]),str(Path(__file__).resolve().parents[1] / 'mcp-server/server.py'),'exec'),NS)
 MODEL=NS['SolidWorksCamTurnAptPostprocessInput']
 TOOL='solidworks_cam_qualify_turn_apt_postprocess'
 NODE=next(n for n in TREE.body if isinstance(n,ast.FunctionDef) and n.name==TOOL)
@@ -39,7 +39,7 @@ def probe(tmp_path,monkeypatch):
         try:return json.dumps(fn())
         except Exception as exc:return json.dumps(dict(status='error',message=str(exc)))
     ns=dict(NS,mcp=N(tool=tool),_selected_process_id=731,_cam_target=target,_run_locked=locked)
-    exec(compile(ast.Module(body=[NODE],type_ignores=[]),'<real runtime wrapper>','exec'),ns)
+    exec(compile(ast.Module(body=[NODE],type_ignores=[]),str(Path(__file__).resolve().parents[1] / 'mcp-server/server.py'),'exec'),ns)
     def params(**changes):
         values=dict(process_id=731,addin_clsid=registration['clsid'],expected_document_path=str(document),
             setup_index=0,operation_index=3,expected_operation_type=2,expected_operation_native_id=130,

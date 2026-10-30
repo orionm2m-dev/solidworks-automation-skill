@@ -22,6 +22,26 @@ def _bbox(raw):
     return [float(x) for x in values]
 
 
+def _bounded_read_value(value, *, sequence=True):
+    """JSON-safe raw diagnostic only; never coerce a value used by validation."""
+    kind=type(value);result={'python_type':kind.__name__[:128]}
+    if value is None or kind is bool:result['value']=value
+    elif kind is int:
+        if value.bit_length()<=64:result['value']=value
+        else:result['value_omitted']='integer_exceeds_64_bits'
+    elif kind is float:
+        result['finite']=math.isfinite(value)
+        if result['finite']:result['value']=value
+    elif kind is str:
+        result['length']=len(value);result['value']=value[:2048]
+        if len(value)>2048:result['truncated']=True
+    elif sequence and kind in (tuple,list):
+        result['length']=len(value)
+        result['items']=[_bounded_read_value(x,sequence=False) for x in value[:16]]
+        if len(value)>16:result['truncated']=True
+    return result
+
+
 def _stock(workpiece,typelib_path,read):
     stock=_typed(workpiece,'ICWMillWorkpiece',typelib_path)
     kind=_int(read(stock,'GetMillWorkpieceType'))
@@ -40,16 +60,30 @@ def _stock(workpiece,typelib_path,read):
     return result,stock
 
 
-def _snapshot(sw,clsid,typelib_path,expected_path,*,check=lambda:None):
+def _snapshot(sw,clsid,typelib_path,expected_path,*,check=lambda:None,diagnostic=None):
+    if diagnostic is not None:diagnostic['capture_complete']=False
     base,native=_mill_snapshot(sw,clsid,typelib_path,expected_path,check=check)
     if base['current_machine']['machine_type']!=1:raise ValueError('MILL machine required')
-    def read(obj,name,*args):check();v=_member(obj,name,*args);check();return v
+    def read(obj,name,*args):
+        check();item=None
+        if diagnostic is not None:
+            diagnostic['last_native_method']=name
+            item={'method':name,'native_returned':False}
+            diagnostic.setdefault('stock_native_reads',[]).append(item)
+        try:value=_member(obj,name,*args)
+        except Exception as exc:
+            if item is not None:item['raised_type']=type(exc).__name__[:128]
+            raise
+        if item is not None:item.update(native_returned=True,raw=_bounded_read_value(value))
+        # Keep the exact native output even if the following event guard stops.
+        check();return value
     workpiece=read(native['machine'],'IGetWorkpiece')
     if workpiece is None or not bool(workpiece):raise ValueError('Existing native workpiece required')
     values,stock=_stock(workpiece,typelib_path,read)
     final,_=_mill_snapshot(sw,clsid,typelib_path,expected_path,check=check)
     if final!=base:raise ValueError('Document definitions changed during stock read')
     base['stock']=values;native['stock']=stock
+    if diagnostic is not None:diagnostic['capture_complete']=True
     return base,native
 
 
@@ -95,7 +129,7 @@ def configure_mill_stock(sw,clsid,typelib_path,*,expected_document_path,action,
     report=dict(status='started',phase='initial',action=action,mutation_attempted=False,native_call_returned=False,
                 readback_verified=False,model_saved=False,AFR_attempted=False,GOP_attempted=False,GTP_attempted=False,
                 product_geometry_edit_attempted=False,physical_stock_independently_qualified=False,
-                bounding_box_api_units_independently_qualified=False,post_cleanup_CAM_getters=False,may_continue=False)
+                bounding_box_api_units_independently_qualified=False,post_cleanup_CAM_getters=False,may_continue=False,snapshot_diagnostics=[])
     if receipt:_write_receipt(receipt,report,create=True)
     session=None
     try:
@@ -103,6 +137,11 @@ def configure_mill_stock(sw,clsid,typelib_path,*,expected_document_path,action,
         def check():
             s=session.summary();report['messages']=s
             if (not s.get('subscribed') or not s.get('active') or s.get('event_count') or s.get('overflow') or s.get('callback_errors') or s.get('callback_error_count') or s.get('subscription_error') or s.get('disconnect_errors')):raise ValueError('Native message/event transport: stop')
+        def capture(phase):
+            report['phase']=phase
+            diagnostic={'phase':phase,'capture_complete':False}
+            report['snapshot_diagnostics'].append(diagnostic)
+            return _snapshot(sw,clsid,typelib_path,expected_document_path,check=check,diagnostic=diagnostic)
         def verify(after):
             actual=after['stock']
             if (actual['type_raw']!=4 or actual.get('length_units_raw')!=0 or actual.get('coordinate_system')!=''
@@ -112,7 +151,7 @@ def configure_mill_stock(sw,clsid,typelib_path,*,expected_document_path,action,
             if expected!=after:raise ValueError('Unrequested CAM definition changes')
         with session:
             check()
-            before,native=_snapshot(sw,clsid,typelib_path,expected_document_path,check=check)
+            before,native=capture('before')
             eligible=(not before['document']['needs_save'] and not any(x['feature_count'] for x in before['feature_setups']) and not before['operation_counts'])
             report.update(before=before,state_sha256=_digest(before),apply_eligible=eligible)
             if action=='apply':
@@ -121,15 +160,15 @@ def configure_mill_stock(sw,clsid,typelib_path,*,expected_document_path,action,
                 evidence=_evidence(stock_evidence,stl_path,stl_sha256,before['saved_file_sha256']);report['stock_evidence']=evidence
                 old=before['stock']
                 if old.get('stl_sha256')==stl_sha256 and old.get('length_units_raw')==0 and old.get('coordinate_system')=='':raise ValueError('Stock already assigned; no write')
-                check();current,native=_snapshot(sw,clsid,typelib_path,expected_document_path,check=check)
+                check();current,native=capture('before_assignment')
                 if current!=before or _file_hash(stl_path)!=stl_sha256 or _evidence(stock_evidence,stl_path,stl_sha256,before['saved_file_sha256'])!=evidence:raise ValueError('Definition/source evidence changed before assignment')
                 report.update(phase='native_write',mutation_attempted=True);_write_receipt(receipt,report)
                 if document_snapshot(sw)!=before['document'] or _file_hash(expected_document_path)!=before['saved_file_sha256']:raise ValueError('Document/file changed before assignment')
                 check();result=_member(native['stock'],'DefineWorkpieceFromSTL2',str(stl_path),0,'',0)
                 report.update(native_call_returned=True,native_return_value=result,phase='native_return');_write_receipt(receipt,report);check()
                 if result is not True:raise ValueError('Native stock assignment did not return true')
-                after,_=_snapshot(sw,clsid,typelib_path,expected_document_path,check=check);verify(after);report['after']=after
-                final,_=_snapshot(sw,clsid,typelib_path,expected_document_path,check=check);verify(final);report['final_subscribed']=final;check()
+                after,_=capture('after_assignment');verify(after);report['after']=after
+                final,_=capture('final_subscribed');verify(final);report['final_subscribed']=final;check()
             else:
                 report.update(status='ok',phase='prepared' if action=='prepare' else 'inspected')
                 final=before

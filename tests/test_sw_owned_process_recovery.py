@@ -230,3 +230,112 @@ def test_pre_api_intent_write_failure_no_attempt(case,monkeypatch):
     r=case['apply']()
     assert r['termination_attempted'] is False and r['status']=='review_required' and 'receipt_finalize_error' in r
     assert not any(c[0]=='terminate' for c in case['api'].calls)
+
+def install_clean(case, *, batch=True):
+    payload={'status':'ok','process_id':case['pid'],'mutation_attempted':False,
+        'document_count':1,'documents':[{'path':str(case['checkpoint']),'needs_save':False,'type':1}],
+        'active_document':{'path':str(case['checkpoint']),'type':1}}
+    def publish(value=None):
+        value=deepcopy(payload if value is None else value)
+        if batch:
+            text=json.dumps(value)
+            value={'status':'success','request_count':1,'results':[{'name':'solidworks_inspect_open_documents',
+                'result':{'isError':False,'content':[{'type':'text','text':text,'parsed_json':deepcopy(value)}],
+                          'structuredContent':{'result':text}}}]}
+        case['manifest'].update(known_unsaved_items=[],clean_inventory_is_last_known=True,
+            no_known_unsaved_changes_since_inventory=True,
+            clean_inventory_evidence=case['pin']('clean_inventory.json',value))
+        case['change']('recovery_manifest',case['manifest'])
+        return value
+    publish()
+    return payload,publish
+
+
+@pytest.mark.parametrize('batch',[False,True])
+def test_empty_unsaved_list_requires_and_accepts_clean_native_proof(case,batch):
+    install_clean(case,batch=batch)
+    result=case['apply'](acknowledged_discard_ids=[])
+    assert result['status']=='ok' and result['saved_files_preserved'] is True
+    assert result['evidence']['discard_ids']==[]
+    assert result['evidence']['clean_inventory']['last_known_clean'] is True
+    assert result['evidence']['clean_inventory']['live_document_state_verified'] is False
+    assert case['api'].calls.count(('terminate','owned-handle'))==1
+
+
+@pytest.mark.parametrize('field,value',[
+    ('clean_inventory_is_last_known',None),('clean_inventory_is_last_known',1),
+    ('no_known_unsaved_changes_since_inventory',False),
+    ('clean_inventory_evidence',None)])
+def test_empty_list_without_explicit_clean_proof_never_opens_process(case,field,value):
+    install_clean(case)
+    case['manifest'][field]=value;case['change']('recovery_manifest',case['manifest'])
+    assert case['apply'](acknowledged_discard_ids=[])['status']=='blocked'
+    assert case['api'].calls==[]
+
+
+@pytest.mark.parametrize('change',[
+    'pid','pid_float','count','count_bool','count_float','dirty','missing_dirty','dirty_zero',
+    'type_bool','type_float','unknown_path','duplicate','mutating','mutation_zero','failed',
+    'empty','active_unknown'])
+def test_malformed_or_dirty_clean_inventory_refuses(case,change):
+    payload,publish=install_clean(case)
+    if change=='pid':payload['process_id']=456
+    elif change=='pid_float':payload['process_id']=float(case['pid'])
+    elif change=='count':payload['document_count']=2
+    elif change=='count_bool':payload['document_count']=True
+    elif change=='count_float':payload['document_count']=1.0
+    elif change=='dirty':payload['documents'][0]['needs_save']=True
+    elif change=='missing_dirty':del payload['documents'][0]['needs_save']
+    elif change=='dirty_zero':payload['documents'][0]['needs_save']=0
+    elif change=='type_bool':payload['documents'][0]['type']=True
+    elif change=='type_float':payload['documents'][0]['type']=1.0
+    elif change=='unknown_path':payload['documents'][0]['path']=str(case['tmp_path']/'other.SLDPRT')
+    elif change=='duplicate':payload['documents'].append(payload['documents'][0]);payload['document_count']=2
+    elif change=='mutating':payload['mutation_attempted']=True
+    elif change=='mutation_zero':payload['mutation_attempted']=0
+    elif change=='failed':payload['status']='error'
+    elif change=='empty':payload['documents']=[];payload['document_count']=0
+    elif change=='active_unknown':payload['active_document']['path']=str(case['tmp_path']/'other.SLDPRT')
+    publish()
+    assert case['apply'](acknowledged_discard_ids=[])['status']=='blocked'
+    assert case['api'].calls==[]
+
+
+@pytest.mark.parametrize('change',['parsed','structured','coercible','duplicate_result','batch_count','error'])
+def test_inventory_batch_representations_and_scope_must_agree(case,change):
+    _,publish=install_clean(case)
+    batch=publish(); wrapped=batch['results'][0]['result']
+    if change=='parsed':wrapped['content'][0]['parsed_json']['process_id']=456
+    elif change=='structured':wrapped['structuredContent']['result']='{}'
+    elif change=='coercible':wrapped['content'][0]['parsed_json']['mutation_attempted']=0
+    elif change=='duplicate_result':batch['results'].append(deepcopy(batch['results'][0]));batch['request_count']=2
+    elif change=='batch_count':batch['request_count']=2
+    elif change=='error':wrapped['isError']=True
+    case['manifest']['clean_inventory_evidence']=case['pin']('clean_inventory.json',batch)
+    case['change']('recovery_manifest',case['manifest'])
+    assert case['apply'](acknowledged_discard_ids=[])['status']=='blocked'
+    assert case['api'].calls==[]
+
+
+def test_clean_case_still_requires_save_and_current_file_hash(case):
+    install_clean(case)
+    case['checkpoint'].write_bytes(b'changed since save')
+    assert case['apply'](acknowledged_discard_ids=[])['status']=='blocked'
+    assert case['api'].calls==[]
+
+
+def test_clean_inventory_change_after_intent_blocks_termination(case):
+    install_clean(case)
+    state=case['run']()['state_sha256'];count=[0]
+    def race(api):
+        count[0]+=1
+        if count[0]==2:(case['tmp_path']/'clean_inventory.json').write_text('{}')
+    case['api'].after_identity=race
+    result=case['run']('apply',expected_state_sha256=state,acknowledge_terminate_owned_process=True,
+        acknowledged_discard_ids=[],receipt_path=str(case['tmp_path']/'new.json'))
+    assert result['status']=='blocked' and not any(x[0]=='terminate' for x in case['api'].calls)
+
+
+def test_dirty_case_cannot_acknowledge_empty_discard_list(case):
+    result=case['apply'](acknowledged_discard_ids=[])
+    assert result['status']=='blocked' and not any(x[0]=='terminate' for x in case['api'].calls)

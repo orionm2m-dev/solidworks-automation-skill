@@ -10,14 +10,15 @@ from unittest.mock import Mock
 
 import pytest
 
-STAGE=Path(__file__).resolve().parent
-for short in ('sw_cam_mill_units_geometry','sw_cam_mill_units_qualification'):
-    name='scripts.'+short
-    source=STAGE/(short+'.py')
-    if not source.is_file():source=STAGE.parent/'scripts'/(short+'.py')
-    spec=importlib.util.spec_from_file_location(name,source)
-    module=importlib.util.module_from_spec(spec);sys.modules[name]=module;spec.loader.exec_module(module)
-cam=sys.modules['scripts.sw_cam_mill_units_qualification']
+STAGED = Path(__file__).resolve().parents[1] / "sw_cam_mill_units_qualification.py"
+if STAGED.is_file():
+    name = "scripts.sw_cam_mill_units_qualification"
+    spec = importlib.util.spec_from_file_location(name, STAGED)
+    cam = importlib.util.module_from_spec(spec)
+    sys.modules[name] = cam
+    spec.loader.exec_module(cam)
+else:
+    from scripts import sw_cam_mill_units_qualification as cam
 from scripts import sw_cam_events as events
 
 
@@ -74,7 +75,7 @@ def case(tmp_path,monkeypatch):
         durable=json.loads(receipt.read_text(encoding='utf8'))
         assert status['active'] and durable['mutation_attempted'] and not durable['native_call_returned']
         assert durable['phase']=='CreateMillFeature2'
-        assert args==(5,'UnitRectangle',False,3.,False,False,False,False,0.,-1,False,0,0)
+        assert args==(5,'UnitRectangle',False,3.,state.get('expected_reverse_direction',False),False,False,False,0.,-1,False,0,0)
         assert type(args[3]) is float and type(args[8]) is float
         assert all(type(args[i]) is bool for i in (2,4,5,6,7,10))
         state['writes'].append(args);state['features']=[feature];state['document']['needs_save']=True
@@ -315,3 +316,60 @@ def test_receipt_return_marker_is_written_before_any_new_id_getter(case):
     case.state['callbacks']['GetCWObjectID']=check_durable
     out=case.apply()
     assert out['status']=='review_required'
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, 0., 1., "true", "false", []])
+def test_reverse_direction_rejects_coercion_before_bootstrap(case, value):
+    out = case.run(reverse_direction=value)
+    assert out["status"] == "error"
+    cam._bootstrap.assert_not_called()
+    case.setup.CreateMillFeature2.assert_not_called()
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_explicit_reverse_native_argument_and_durable_provenance(case, reverse):
+    case.state["expected_reverse_direction"] = reverse
+    prepared = case.run(reverse_direction=reverse)
+    assert prepared["status"] == "ok"
+    assert prepared["before"]["requested_reverse_direction"] is reverse
+    out = case.run("apply", reverse_direction=reverse,
+                   expected_state_sha256=prepared["state_sha256"], receipt_path=str(case.receipt))
+    assert out["status"] == "review_required"
+    assert out["creation_delta_verified"] and out["native_feature_readback_complete"]
+    assert out["requested_reverse_direction"] is reverse
+    assert not out["reverse_direction_native_readback_verified"]
+    assert not out["orientation_semantics_verified"]
+    assert out["observed_feature"] == out["after"]["features"][0]
+    assert type(case.state["writes"][0][4]) is bool and case.state["writes"][0][4] is reverse
+    assert json.loads(case.receipt.read_text())["requested_reverse_direction"] is reverse
+
+
+@pytest.mark.parametrize("prepared_value,apply_value", [(False, True), (True, False)])
+def test_reverse_direction_change_invalidates_prepared_state(case, prepared_value, apply_value):
+    prepared = case.run(reverse_direction=prepared_value)
+    assert prepared["status"] == "ok"
+    out = case.run("apply", reverse_direction=apply_value,
+                   expected_state_sha256=prepared["state_sha256"], receipt_path=str(case.receipt))
+    assert out["status"] == "error"
+    assert not out["mutation_attempted"]
+    case.setup.CreateMillFeature2.assert_not_called()
+
+
+def test_default_false_matches_explicit_false_native_policy(case):
+    implicit = case.run()
+    explicit = case.run(reverse_direction=False)
+    assert implicit["state_sha256"] == explicit["state_sha256"]
+    assert implicit["requested_reverse_direction"] is False
+    assert explicit["before"]["requested_reverse_direction"] is False
+
+
+def test_structural_readback_retained_without_weakening_failed_depth_gate(case):
+    case.state["separation"] = 0.
+    out = case.apply()
+    assert out["status"] == "uncertain" and not out["readback_verified"]
+    assert out["creation_delta_verified"] and out["native_feature_readback_complete"]
+    assert out["observed_feature"]["depth_native"] == 3.
+    assert not out["orientation_semantics_verified"]
+    assert not out["reverse_direction_native_readback_verified"]
+    assert out["mutation_attempted"] and case.setup.CreateMillFeature2.call_count == 1
+    assert json.loads(case.receipt.read_text())["observed_feature"] == out["observed_feature"]

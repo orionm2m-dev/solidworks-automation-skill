@@ -148,7 +148,7 @@ def _rigid_transform(transform):
             if abs(sum(a*b for a,b in zip(rows[i],rows[j]))-(1. if i==j else 0.))>1e-10:raise ValueError('orthonormal transform required')
     return values
 
-def _read_sketch(sw,sketch,spec):
+def _read_sketch(sw,sketch,spec,*,diagnostic=None):
     if call(sketch,'Is3D') is not False:raise ValueError('2D sketch required')
     segments=call(sketch,'GetSketchSegments')
     count=1 if spec['profile']['kind']=='circle' else len(spec['profile']['points_model_mm'])
@@ -160,7 +160,15 @@ def _read_sketch(sw,sketch,spec):
         if seg.ConstructionGeometry is not False or k not in (0,1):raise ValueError('unexpected construction or entity')
         raw=_typed_segment(seg,k)
         if k==1:
-            if spec['profile']['kind']!='circle' or call(raw,'IsCircle') is not True:raise ValueError('full circle required')
+            if spec['profile']['kind']!='circle':raise ValueError('full circle required')
+            is_circle=call(raw,'IsCircle')
+            if diagnostic is not None:
+                diagnostic['IsCircle']={'native_type':type(is_circle).__name__,
+                    'native_value':is_circle if type(is_circle) in (int,bool,str) or
+                        (type(is_circle) is float and math.isfinite(is_circle)) else None}
+                if type(is_circle) is float and not math.isfinite(is_circle):
+                    diagnostic['IsCircle']['native_repr']=repr(is_circle)
+            if type(is_circle) is not int or is_circle!=1:raise ValueError('full circle requires native integer 1')
             center=_point(mu,_point_values(call(raw,'GetCenterPoint2')),inverse);rad=_finite(call(raw,'GetRadius'))
             exp=spec['profile'];wanted=[x/1000 for x in exp['center_model_mm']]
             if math.dist(center,wanted)>TOL_M or abs(rad-exp['radius_mm']/1000)>TOL_M:raise ValueError('circle geometry mismatch')
@@ -252,11 +260,22 @@ def _create(sw,model,state,refs,check,report):
     return created_names+[spec['sketch_name']]
 
 def create_cam_profile_sketch(sw,*,expected_process_id,expected_document_path,action,spec,
-        expected_state_sha256=None,receipt_path=None,qualification_only=True):
-    """Inspect/prepare/apply one new 2D profile; apply never saves the part."""
+        expected_state_sha256=None,receipt_path=None,qualification_only=True,
+        expected_source_sha256=None,creation_receipt_path=None,creation_receipt_sha256=None):
+    """Create a new profile or verify an existing pinned circle without editing."""
+    if action=='verify_existing':
+        from scripts.sw_cam_profile_verify import verify_existing_cam_profile_sketch
+        return verify_existing_cam_profile_sketch(sw,
+            expected_process_id=expected_process_id,expected_document_path=expected_document_path,
+            spec=spec,expected_source_sha256=expected_source_sha256,
+            creation_receipt_path=creation_receipt_path,creation_receipt_sha256=creation_receipt_sha256,
+            receipt_path=receipt_path,qualification_only=qualification_only,
+            expected_state_sha256=expected_state_sha256)
     report={'status':'error','phase':'preflight','mutation_attempted':False,'saved':False,'CAD_solid_edit_attempted':False,'CAM_calls':0,'native_readback_verified':False}
     receipt_created=False
     try:
+        if any(v is not None for v in (expected_source_sha256,creation_receipt_path,creation_receipt_sha256)):
+            raise ValueError('Existing-profile evidence requires verify_existing action')
         if type(expected_process_id) is not int or expected_process_id<=0:raise ValueError('exact positive PID required')
         if not isinstance(expected_document_path,str) or not absolute_document_path(expected_document_path) or Path(expected_document_path).suffix.lower()!='.sldprt' or not Path(expected_document_path).is_file():raise ValueError('exact saved part required')
         if qualification_only is not True or action not in ('inspect','prepare','apply'):raise ValueError('qualification action required')

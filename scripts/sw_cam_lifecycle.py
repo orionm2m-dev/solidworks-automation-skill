@@ -86,13 +86,21 @@ def document_lifecycle(sw, clsid, typelib_path, *, expected_document_path, actio
                        message_policy="vendor_default", expected_state_sha256=None,
                        receipt_path=None, machine_kind="turn", process_id=None,
                        acknowledge_qualification_copy=False, expected_feature_native_id=None,
-                       expected_operation_native_ids=None):
+                       expected_operation_native_ids=None, feature_kind='open_pocket', expected_source_sha256=None,
+                       circle_creation_receipt_path=None, circle_creation_receipt_sha256=None):
     """准备状态指纹，或显式单次保存/关闭精确工作副本；不自动重试。
 
     prepare 只读且不接收回执。save/close 要求先前 SHA 和新的绝对 JSON 回执。
     close 要求 SOLIDWORKS 脏标志为假；CAM Save Restore 标志及默认响应仍未知。
     原生方法返回不证明 CAM 数据持久化；本方法从不自动再次关闭、保存或生成。
     """
+    circle_options={}
+    if feature_kind!='open_pocket' or any(x is not None for x in
+            (expected_source_sha256,circle_creation_receipt_path,circle_creation_receipt_sha256)):
+        if machine_kind!='mill_single_feature_qualification':
+            raise ValueError('Circular lifecycle evidence requires single-feature MILL mode')
+        circle_options=dict(feature_kind=feature_kind,expected_source_sha256=expected_source_sha256,
+            circle_creation_receipt_path=circle_creation_receipt_path,circle_creation_receipt_sha256=circle_creation_receipt_sha256)
     if machine_kind == "mill_single_feature_qualification":
         from scripts.sw_cam_mill_feature_lifecycle import mill_feature_document_lifecycle
         return mill_feature_document_lifecycle(sw, clsid, typelib_path,
@@ -101,7 +109,7 @@ def document_lifecycle(sw, clsid, typelib_path, *, expected_document_path, actio
             expected_feature_native_id=expected_feature_native_id,
             expected_operation_native_ids=expected_operation_native_ids,
             message_policy=message_policy, expected_state_sha256=expected_state_sha256,
-            receipt_path=receipt_path)
+            receipt_path=receipt_path, **circle_options)
     if expected_feature_native_id is not None or expected_operation_native_ids is not None:
         raise ValueError("Feature/operation selectors require mill_single_feature_qualification")
     if machine_kind == "mill_qualification":

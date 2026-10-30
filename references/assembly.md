@@ -239,3 +239,86 @@ count = interference.GetInterferenceCount()
 
 
 受限原生零件副本、关闭装配引用替换及既有动画基线回读，见 [原生副本迁移](native-transfer.md)。当前仍需逐步活体资格，不代表生产放行。
+
+## Missing explode-axis references: explicit equivalent cylindrical faces
+
+solidworks_rebind_explode_axes keeps unique semantic cylinder selection as its
+default. Missing references are repaired on exact existing steps only; it does
+not create steps, change angles/distances, set reverse flags, rebuild or save.
+
+The optional equivalent_face_group is an explicit list of two to 32
+body_index/face_index pairs from the frozen owner part. Every index is a strict
+bounded integer. The group must equal the complete set of semantic matches;
+every member must also have the exact frozen seven cylinder parameters, not
+merely a coaxial line, nearby radius or shifted axial origin. Each face is mapped
+into assembly context and must retain the same exact owner, face type and
+cylinder parameters. File, owner, configuration and identity-transform guards
+remain unchanged.
+
+The lowest sorted body/face index in the explicit group is selected. Face area
+does not determine selection. All candidate rows, areas, group membership,
+assembly-context evidence and the selected face are included in the prepared
+state digest. Changed membership, geometry or evidence blocks apply before its
+first setter. The default unique branch retains its existing receipt shape.
+
+This proves only geometric equality of the represented oriented cylinder axes.
+FaceInSurfaceSense and the native default-direction effect of an entity setter
+are not measured by these getters. The report therefore retains
+face_surface_sense_verified=false and native_direction_equivalence_verified=false.
+Every setter must pass the existing exact local readback and reverse-flag checks;
+the complete final snapshot must match the frozen expected result. Explicit
+save/reopen and affected-motion verification remain required before accepting
+the repaired animation. A partial or uncertain setter outcome stops without
+automatic replay, fallback selection or rollback.
+
+## Guarded restoration of an existing assembly presentation
+
+The native tool solidworks_restore_assembly_presentation has separate prepare and apply actions.
+Its scope is one existing explode view after a pinned, fully returned axis-repair operation
+whose final comparison differs only in component transformation matrices. It does not accept
+a partial or pending setter journal, a different error, changed reverse flags, or changed source files.
+
+Prepare captures the exact dirty document in the specified process, complete current structure,
+all existing step reverse flags, and component file hashes. The caller must supply the previous
+repair receipt and its SHA-256. Apply consumes a new prepared receipt and performs at most one
+ShowExploded2(False, exact_view_name), with durable intent before dispatch. A successful native
+return alone is insufficient: the complete structure including axes and component poses must
+match the frozen mapped baseline; reverse flags and source/dependency hashes must remain unchanged.
+
+This operation never saves, reloads, closes, rebuilds, creates steps, writes component transforms,
+activates a motion study, or retries a native collapse. A failure after dispatch is uncertain and
+must not be replayed. A successful result remains an unsaved review state. Persistence after an
+explicit save/reload and affected movement must be verified separately. Comparing a pre-existing
+motion study alone does not establish that newly selected face entities reproduce that motion.
+
+The implementation has offline mock/schema checks; native qualification must be recorded for
+each supported application/version case before claiming a working recovery path.
+
+## Read existing native explode-step transforms
+
+The pilot tool solidworks_read_explode_step_transforms reads one to 32 exact
+existing steps from a saved clean active assembly. Each target supplies its native
+index, exact step name and exact single component name. The caller pins the process,
+assembly path and file SHA-256, and supplies a new receipt path.
+
+The reader reuses the complete active-configuration snapshot and reverse-flag
+capture. It requires GetNumOfComponents() to return the strict integer one and
+GetComponentName(0) to identify the exact target before reading
+GetComponentXform() and GetSpecificComponentXForm(0). It does not probe an
+alternative index. Each matrix must contain exactly 16 finite numeric values;
+Boolean/status values are rejected. Both arrays and any difference are reported,
+without automatically treating equal arrays as a motion qualification.
+
+The full captured structure, reverse flags and document/dependency file hashes
+must remain unchanged. This covers the captured active configuration and existing
+study metadata; it is not a proof of every in-memory property or configuration.
+The operation never moves components, calculates or activates a study, sets time,
+changes steps, saves, closes, or rebuilds the document.
+
+The API describes these values as native step transformation matrices. Their
+coordinate-frame and incremental versus cumulative interpretation must be reviewed
+for the qualified application case. Reading a valid matrix does not itself approve
+native direction, continuous movement, interference clearance or manufacturing.
+An intermediate non-full-turn matrix can expose a rotation-sign difference that a
+final whole-turn pose would hide. Existing cached motion-study samples do not
+replace this step-native review.
