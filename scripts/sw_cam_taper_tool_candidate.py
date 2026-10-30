@@ -31,6 +31,10 @@ DB_TYPE, TOOL_TYPE = 11, 8
 FIELD_ORDER = ('EndDia','TaperLength','TaperAngle','ShankDia','OverallLength',
                'MillToolShankType','ShoulderLength','NoOfFlutes',
                'ToolIdentifier','ToolVendor','ToolDescription','Protrusion')
+MAX_TOOLS=128
+TOOLS_PER_PROFILE_BATCH=4
+PROFILE_BATCH_CALLS=5000
+CATALOGUE_BATCH_CALLS=1500
 STAGES = dict(EndDia='after_end_dia', TaperLength='after_taper_length',
               TaperAngle='after_taper_angle')
 TAPER_FIELDS = ('TaperToolType','EndDia','EndRadius','ShankDia','TaperAngle',
@@ -150,9 +154,11 @@ class ToolReadBatch(ScopedCamReadBatch):
             self._invalid=True;self._completed=False;raise
 
 
-def read_holder(tool,read,typed):
+def read_holder(tool,read,typed,diagnostic=None):
+    row={}
+    if diagnostic is not None:diagnostic['holder']=row
     holder=typed(read(tool,'IGetMillToolHolder'),'ICWMillToolHolder')
-    row=dict(holder_id=read(holder,'GetHolderId'))
+    row['holder_id']=read(holder,'GetHolderId')
     for name in ('GetName','GetHolderNumber','GetHolderShape','GetHolderType','GetHolderSpec',
                  'GetHolderTopDia','GetHolderBottomDia','GetHolderOverallLength',
                  'GetHolderBottomLength','GetProtrusion'):
@@ -184,10 +190,71 @@ def read_taper(raw,doc,read,typed,diagnostic,*,profiles=True,holder=True):
     for label,method in (('tool','GetToolProfile'),('shank','GetShankProfile')):
         partial={};row['profiles'][label]=partial
         read_segment_chains(tool,method,read=read,typed=typed,diagnostic={'state':partial},budget=budget)
-    if holder:row['holder'],_=read_holder(tool,read,typed)
+    if holder:row['holder'],_=read_holder(tool,read,typed,diagnostic=row)
     diagnostic['capture_complete']=True
     return row
 
+
+
+def profile_read_budget(tool_count):
+    require(type(tool_count) is int and 0<=tool_count<=MAX_TOOLS,'Bounded prior tool count required')
+    batches=(tool_count+TOOLS_PER_PROFILE_BATCH-1)//TOOLS_PER_PROFILE_BATCH
+    return dict(prior_tool_count=tool_count,tools_per_batch=TOOLS_PER_PROFILE_BATCH,
+        profile_batches=batches,max_profile_native_calls=batches*PROFILE_BATCH_CALLS,
+        max_catalogue_and_handle_native_calls=2*CATALOGUE_BATCH_CALLS,
+        max_total_native_calls=batches*PROFILE_BATCH_CALLS+2*CATALOGUE_BATCH_CALLS,
+        per_batch_limit=PROFILE_BATCH_CALLS,limit_is_stop_not_partial_acceptance=True)
+
+
+def observed_profile_complete(profile):
+    require(type(profile) is dict,'Actual decoder result required')
+    if profile.get('status')=='observed_not_available':
+        require(profile.get('declared_chain_count') is None and profile.get('chains')==[],
+                'Exact explicit native profile absence required')
+        return False
+    require(profile.get('status')=='observed','Incomplete or failed legacy profile')
+    chains=profile.get('chains');count=profile.get('declared_chain_count')
+    require(type(count) is int and count>0 and type(chains) is list and len(chains)==count,
+            'Complete bounded profile chains required')
+    for chain in chains:
+        curves=chain.get('curves');n=chain.get('declared_curve_count')
+        require(chain.get('read_complete') is True and type(n) is int and n>0
+            and type(curves) is list and len(curves)==n
+            and all(v.get('read_complete') is True for v in curves),'Incomplete native profile curve')
+    return True
+
+
+def read_generic_preserved_tool(tool,*,generic,doc,read,typed,diagnostic):
+    row=dict(scope='legacy_native_profiles_holder_and_catalogue_fields',
+        geometry_read_complete=False,profile_complete=False,subtype_settings_read=False,
+        physical_tool_qualified=False,production_qualified=False,profiles={},catalogue=deepcopy(generic))
+    diagnostic['state']=row
+    require(type(generic.get('tool_type_raw')) is int and generic['tool_type_raw']>0,
+            'Strict positive observed prior tool type required')
+    row['native_id']=_object_id(doc,tool,read)
+    row['tool_type_raw']=read(tool,'ToolType')
+    row['is_mill_tool']=read(tool,'IsMillTool')
+    require(row['native_id']==generic['native_id'] and
+        group.exact(row['tool_type_raw'],generic['tool_type_raw']) and row['is_mill_tool'] is True,
+        'Exact prior MILL tool identity/type required')
+    row['scalar_readback']={}
+    for name in ('CutDiameter','Protrusion','StnNo'):
+        value=read(tool,name);row['scalar_readback'][name]=value
+        require(scalar_equal(value,generic[name]),'Prior catalogue field changed during profile read')
+    row['metadata']={}
+    for name in ('ToolIdentifier','ToolVendor','ToolDescription'):
+        value=read(tool,name);row['metadata'][name]=value
+        require(type(value) is str and len(value)<=4096,'Bounded native tool metadata required')
+    budget=dict(curves=0,chains=0,islands=0)
+    for label,method in (('tool','GetToolProfile'),('shank','GetShankProfile')):
+        partial={};row['profiles'][label]=partial
+        read_segment_chains(tool,method,read=read,typed=typed,diagnostic={'state':partial},budget=budget)
+    row['holder'],_=read_holder(tool,read,typed,diagnostic=row)
+    complete=[observed_profile_complete(p) for p in list(row['profiles'].values())+[row['holder']['profile']]]
+    row.update(geometry_read_complete=True,profile_complete=all(complete),
+        explicit_native_profile_absence=not all(complete),profile_budget=deepcopy(budget))
+    diagnostic['capture_complete']=True
+    return row
 
 class NativeBackend(group.NativeBackend):
     def __init__(self,loaded,args,sw,clsid,typelib_path,report,persist):
@@ -207,7 +274,7 @@ class NativeBackend(group.NativeBackend):
             self.native=dict(doc=doc,machine=machine,setups=setups,operations={})
             self.crib=g.typed(g.read(machine,'IGetToolcrib'),'ICWToolcrib4')
             self.save_app=g.typed(self.ctx.app,'ICWApp')
-    def batch(self,*extra):
+    def batch(self,*extra,max_native_calls=PROFILE_BATCH_CALLS):
         def binding():
             self.events()
             require(_member(self.native['doc'],'GetDocType')==1 and _member(self.native['machine'],'MachType')==1,
@@ -220,7 +287,7 @@ class NativeBackend(group.NativeBackend):
             evidence_pins=self.loaded['pins'],verify_evidence=self.ctx.files,
             verify_owned_process=self.ctx.owned,check_events=self.events,
             retained_objects=(self.native['doc'],self.native['machine'],self.crib)+tuple(extra),
-            verify_retained_binding=binding,max_native_calls=5000)
+            verify_retained_binding=binding,max_native_calls=max_native_calls)
     def fields(self):
         with self.ctx.guard() as g:
             result=read_taper(self.new_tool,self.native['doc'],g.read,g.typed,{},profiles=False)
@@ -233,11 +300,15 @@ class NativeBackend(group.NativeBackend):
             target=self.new_tool if name in TOOL_FIELDS else g.typed(self.new_tool,'ICWTaperTool')
             return g.read(target,name)
     def catalogue(self):
-        batch=self.batch()
+        diagnostic=dict(phase='reading',complete=False)
+        self.report.setdefault('scalar_catalogue_reads',[]).append(diagnostic);self.persist()
+        batch=self.batch(max_native_calls=CATALOGUE_BATCH_CALLS)
         try:
             with batch:value=capture_local_tools(self.crib,self.native['doc'],batch.read,batch.typed)
-            batch.require_complete();return value
-        finally:self.report.setdefault('catalogue_batches',[]).append(batch.summary());self.persist()
+            batch.require_complete();diagnostic.update(rows=deepcopy(value),complete=True,phase='finished');self.persist();return value
+        finally:
+            diagnostic['batch']=batch.summary()
+            self.report.setdefault('catalogue_batches',[]).append(batch.summary());self.persist()
     def candidate(self,label):
         require(self.new_tool is not None and self.new_id is not None,'Identified new tool required')
         self.report['candidate_profile_capture_count']=self.report.get('candidate_profile_capture_count',0)+1
@@ -253,36 +324,60 @@ class NativeBackend(group.NativeBackend):
     def snapshot(self,label):
         route=self.read_narrow(label)
         self.report['full_tool_snapshot_count']=self.report.get('full_tool_snapshot_count',0)+1
-        # This is an observation projection, not a claim that every CAM setting
-        # or CAD face was reread. Saved CAD/contours remain checkpoint evidence.
         projection=group.NativeBackend.save_projection(self,route)
         with self.ctx.guard() as g:
             units=read_document_cam_unit_scope(g.read(self.sw,'ActiveDoc'),self.ctx.app,sw_read=g.read,cam_read=g.read)
         require(group.exact(units,self.loaded['finish_payload']['unit_record'])
                 and units['metric_document_scope_observed'] is True,'Actual metric unit scope changed')
-        batch=self.batch();old={};holders={}
+        diagnostic=dict(label=label,route=deepcopy(projection),units=deepcopy(units),
+            catalogue_complete=False,tool_reads=[],partial_protected_tools={},batches=[])
+        self.report.setdefault('protected_tool_observations',[]).append(diagnostic);self.persist()
+        tools=self.catalogue()
+        diagnostic.update(catalogue=deepcopy(tools),catalogue_complete=True,
+            generic_prior_tools=[dict(native_id=v['native_id'],tool_type_raw=v['tool_type_raw'])
+                for v in tools if v['native_id']!=self.new_id and v['tool_type_raw'] not in (1,14)])
+        self.persist()
+        require(0<len(tools)<=MAX_TOOLS,'Bounded complete catalogue required')
+        old=diagnostic['partial_protected_tools'];holders={};handles=[]
+        batch=self.batch(max_native_calls=CATALOGUE_BATCH_CALLS)
         try:
             with batch:
-                tools=capture_local_tools(self.crib,self.native['doc'],batch.read,batch.typed)
-                values=_items(batch.read(self.crib,'GetAllTools'),batch.typed,batch.read,128)
+                values=_items(batch.read(self.crib,'GetAllTools'),batch.typed,batch.read,MAX_TOOLS)
                 for raw in values:
                     tool=batch.typed(raw,'ICWTool');tid=_object_id(self.native['doc'],tool,batch.read)
-                    if tid==self.new_id:continue
-                    generic=next(x for x in tools if x['native_id']==tid)
-                    kind=generic['tool_type_raw']
-                    if kind==1:
-                        observed=dict(native_id=tid,is_mill_tool=True,native_read_complete=True,
-                            tool_type_raw=kind,cut_diameter_native=generic['CutDiameter'],protrusion_native=generic['Protrusion'])
-                        full=read_full_mill_tool(tool,generic=observed,read=batch.read,typed=batch.typed,diagnostic={})
-                        old[str(tid)]=full
-                    elif kind==14:
-                        old[str(tid)]=read_ud14_tool(tool,doc=self.native['doc'],read=batch.read,typed=batch.typed,diagnostic={})
-                        old[str(tid)]['holder'],_=read_holder(tool,batch.read,batch.typed)
-                    else:
-                        raise ValueError('Unsupported old tool type; stop before creation, extend reader first')
-                    holders[tid]=batch.typed(batch.read(tool,'IGetMillToolHolder'),'ICWMillToolHolder')
+                    handles.append((tid,tool))
+                require([v[0] for v in handles]==[v['native_id'] for v in tools],'Catalogue changed while acquiring handles')
             batch.require_complete()
-        finally:self.report.setdefault('tool_batches',[]).append(batch.summary());self.persist()
+        finally:
+            diagnostic['handle_batch']=batch.summary();self.persist()
+        prior=[v for v in handles if v[0]!=self.new_id]
+        budget=profile_read_budget(len(prior));diagnostic['budget']=budget;self.persist()
+        for offset in range(0,len(prior),TOOLS_PER_PROFILE_BATCH):
+            chunk=prior[offset:offset+TOOLS_PER_PROFILE_BATCH]
+            batch=self.batch(*(v[1] for v in chunk),max_native_calls=PROFILE_BATCH_CALLS)
+            try:
+                with batch:
+                    for tid,tool in chunk:
+                        generic=next(x for x in tools if x['native_id']==tid);kind=generic['tool_type_raw']
+                        item=dict(native_id=tid,tool_type_raw=kind,read_complete=False,diagnostic={})
+                        diagnostic['tool_reads'].append(item);self.persist()
+                        if kind==1:
+                            observed=dict(native_id=tid,is_mill_tool=True,native_read_complete=True,
+                                tool_type_raw=kind,cut_diameter_native=generic['CutDiameter'],protrusion_native=generic['Protrusion'])
+                            old[str(tid)]=read_full_mill_tool(tool,generic=observed,read=batch.read,typed=batch.typed,diagnostic=item['diagnostic'])
+                        elif kind==14:
+                            old[str(tid)]=read_ud14_tool(tool,doc=self.native['doc'],read=batch.read,typed=batch.typed,diagnostic=item['diagnostic'])
+                            old[str(tid)]['holder'],_=read_holder(tool,batch.read,batch.typed,diagnostic=item['diagnostic'])
+                        else:
+                            old[str(tid)]=read_generic_preserved_tool(tool,generic=generic,doc=self.native['doc'],
+                                read=batch.read,typed=batch.typed,diagnostic=item['diagnostic'])
+                        holders[tid]=batch.typed(batch.read(tool,'IGetMillToolHolder'),'ICWMillToolHolder')
+                        item['read_complete']=True;self.persist()
+                batch.require_complete()
+            finally:
+                diagnostic['batches'].append(batch.summary())
+                self.report.setdefault('tool_batches',[]).append(batch.summary());self.persist()
+        require(len(old)==len(prior),'Every prior tool must be observed')
         if self.new_id is None:self.old_holders=holders
         return dict(route=projection,protected_tools=old,tools=tools,units=units)
     def create(self,pending,returned):
@@ -681,6 +776,7 @@ def dispatch_request(request):
         typelib=str(Path(registration['addin_path']).parent/'camworks.tlb')
         report['bootstrap_validation']=deepcopy(loaded['bootstrap_validation'])
         return execute(sw,registration['clsid'],typelib,params=params,loaded=loaded,report=report,marker=marker)
+
 
 
 def main(argv=None):
