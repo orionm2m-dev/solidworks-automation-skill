@@ -8,24 +8,24 @@
 
 `index_path` — абсолютный путь, полученный из текущего проекта или его указателя. В примерах ниже заменить `ABS_INDEX_PATH` этим путём, а `OBSERVED_TOPIC_ID` — идентификатором из ответа. Путь проекта и ревизию в код инструмента или скилл не закреплять.
 
-Ниже приведены объекты `params` стандартного MCP `tools/call`.
+Ниже приведены поля `name` и `arguments` стандартного MCP `tools/call`. Параметры инструмента вложены в `arguments.params`.
 
 Обзор:
 
 ```json
-{"name":"solidworks_query_knowledge_index","arguments":{"index_path":"ABS_INDEX_PATH","action":"summary"}}
+{"name":"solidworks_query_knowledge_index","arguments":{"params":{"index_path":"ABS_INDEX_PATH","action":"summary"}}}
 ```
 
 Поиск уже исследованного ограничения:
 
 ```json
-{"name":"solidworks_query_knowledge_index","arguments":{"index_path":"ABS_INDEX_PATH","action":"search","query":"TURN thread depth","limit":5}}
+{"name":"solidworks_query_knowledge_index","arguments":{"params":{"index_path":"ABS_INDEX_PATH","action":"search","query":"TURN thread depth","limit":5}}}
 ```
 
 Нужная тема с подробностями и сверкой её источников:
 
 ```json
-{"name":"solidworks_query_knowledge_index","arguments":{"index_path":"ABS_INDEX_PATH","action":"get","topic_id":"OBSERVED_TOPIC_ID","detail":true,"verify_sources":true}}
+{"name":"solidworks_query_knowledge_index","arguments":{"params":{"index_path":"ABS_INDEX_PATH","action":"get","topic_id":"OBSERVED_TOPIC_ID","detail":true,"verify_sources":true}}}
 ```
 
 `search` требует `query`, `get` — `topic_id`; чужой selector для другого действия не передавать. `limit` — целое 1–20, по умолчанию 5. `detail` и `verify_sources` — логические значения, по умолчанию `false`. Не запрашивать полные подробности всех тем, если нужен один ответ.
