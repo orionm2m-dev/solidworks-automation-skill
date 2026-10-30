@@ -1086,11 +1086,11 @@ def terminate_process(process: subprocess.Popen[str]) -> None:
     if process.poll() is not None:
         return
     if os.name == "nt":
+        # taskkill 可能输出本地代码页；未使用的诊断保持字节，避免解码线程失败。
         subprocess.run(
             ["taskkill", "/PID", str(process.pid), "/T", "/F"],
             capture_output=True,
             check=False,
-            text=True,
         )
     else:
         process.terminate()
