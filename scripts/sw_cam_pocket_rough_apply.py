@@ -56,7 +56,9 @@ def expected_parameters(before):
     result=scalar_projection(before);r=result['143']
     r['rough']['entry'].update(GetEntryExitType=4,GetSpiralRadius=1.,GetSpiralPitch=.1)
     r['rough']['depth'].update(FirstDepthAmt=.3,SbsqDepthAmt=.3,GetStartDepth=[False,.3],GetSubsequentDepthAmount=[False,.3])
-    r['levels']['levels']['toolpath_parameters'].update(first_cut_Z_type_raw=2,start_Z_native=-13.4)
+    # Actual aggregate getter has a different raw representation than direct GetStartZ.
+    # This exact observed value is scoped to this recipe; no general unit conversion.
+    r['levels']['levels']['toolpath_parameters'].update(first_cut_Z_type_raw=2,start_Z_native=-0.0134)
     return result
 
 
@@ -129,9 +131,11 @@ def equivalent_projection(reference,observed):
 class Journal(tools.Journal):
     def marker_state(self):
         r=self.report
-        return dict(scope=SCOPE,receipt_path=str(self.receipt),source_path=r['source_path'],initial_source_sha256=r['initial_source_sha256'],
+        result=dict(scope=SCOPE,receipt_path=str(self.receipt),source_path=r['source_path'],initial_source_sha256=r['initial_source_sha256'],
             phase=r['phase'],recipe_sha256=r['recipe_pin']['sha256'],actions=deepcopy(r['actions']),readback_verified=r.get('readback_verified',False),
             saved_source_sha256=r.get('saved_source_sha256'),automatic_replay=False)
+        if r.get('continuation') is True:result['configured_receipt_sha256']=r['configured_receipt_pin']['sha256']
+        return result
 
 
 class NativeBackend(tools.NativeBackend):
@@ -317,6 +321,31 @@ def verify_capture(loaded,value,*,order,generated,saved_sha=None):
     return counts
 
 
+def generate_and_save(backend,journal,loaded):
+    r=journal.report
+    result=backend.generate(lambda:journal.pending('GenerateToolpath'));journal.returned('GenerateToolpath',result)
+    require(type(result) is int and result==0,'Strict single-operation GTP HRESULT0 required');backend.refresh_dirty()
+    generated=backend.capture_narrow('generated');r['generated']=generated
+    r['generated_record_counts']=verify_capture(loaded,generated,order=NEW_ORDER,generated=True)
+    r['actions']['GenerateToolpath']['readback_verified']=True;journal.persist()
+    expected=save_projection(generated);r['save_stage']={}
+    def capture(label):
+        if label=='before':backend.boundary();return deepcopy(expected)
+        final=backend.capture_full('saved');r['final']=final;r['actual_full_capture_count']=1
+        counts=verify_capture(loaded,final,order=NEW_ORDER,generated=True,saved_sha=r['saved_source_sha256'])
+        require(group.exact(counts,r['generated_record_counts']),'Saved rough count changed')
+        return equivalent_projection(expected,save_projection(final))
+    def save():
+        result=backend.save();journal.returned('SaveActiveDocument',result);return result
+    def saved_hash():
+        sha=backend.saved_hash(r['save_stage']);require(sha!=r['initial_source_sha256'],'Save must establish new bytes')
+        r['saved_source_sha256']=sha;journal.persist();return sha
+    run_one_existing_save(r['save_stage'],capture=capture,verify=lambda v:equivalent_projection(expected,v),guard=backend.boundary,
+        claim=lambda:journal.pending('SaveActiveDocument'),persist=journal.persist,save=save,saved_hash=saved_hash)
+    r['actions']['SaveActiveDocument']['readback_verified']=True;backend.finish()
+    r.update(status='review_required',phase='finished',readback_verified=True,model_saved=True)
+
+
 def run_backend(backend,journal,loaded):
     r=journal.report
     try:
@@ -361,27 +390,7 @@ def run_backend(backend,journal,loaded):
         verify_capture(loaded,configured,order=NEW_ORDER,generated=False)
         for name in ('AddStartPoint','SetStartPointList'):r['actions'][name].update(readback_verified=True,observed=deepcopy(configured['startpoints']))
         journal.persist()
-        result=backend.generate(lambda:journal.pending('GenerateToolpath'));journal.returned('GenerateToolpath',result)
-        require(type(result) is int and result==0,'Strict single-operation GTP HRESULT0 required');backend.refresh_dirty()
-        generated=backend.capture_narrow('generated');r['generated']=generated
-        r['generated_record_counts']=verify_capture(loaded,generated,order=NEW_ORDER,generated=True)
-        r['actions']['GenerateToolpath']['readback_verified']=True;journal.persist()
-        expected=save_projection(generated);r['save_stage']={}
-        def capture(label):
-            if label=='before':backend.boundary();return deepcopy(expected)
-            final=backend.capture_full('saved');r['final']=final;r['actual_full_capture_count']=1
-            counts=verify_capture(loaded,final,order=NEW_ORDER,generated=True,saved_sha=r['saved_source_sha256'])
-            require(group.exact(counts,r['generated_record_counts']),'Saved rough count changed')
-            return equivalent_projection(expected,save_projection(final))
-        def save():
-            result=backend.save();journal.returned('SaveActiveDocument',result);return result
-        def saved_hash():
-            sha=backend.saved_hash(r['save_stage']);require(sha!=r['initial_source_sha256'],'Save must establish new bytes')
-            r['saved_source_sha256']=sha;journal.persist();return sha
-        run_one_existing_save(r['save_stage'],capture=capture,verify=lambda v:equivalent_projection(expected,v),guard=backend.boundary,
-            claim=lambda:journal.pending('SaveActiveDocument'),persist=journal.persist,save=save,saved_hash=saved_hash)
-        r['actions']['SaveActiveDocument']['readback_verified']=True;backend.finish()
-        r.update(status='review_required',phase='finished',readback_verified=True,model_saved=True)
+        generate_and_save(backend,journal,loaded)
     except Exception as exc:r.update(status='uncertain' if r.get('mutation_attempted') else 'error',failed_phase=r['phase'],phase='finished',issue=_error(exc),readback_verified=False)
     finally:
         try:backend.close()
@@ -435,7 +444,7 @@ def audit_recipe(typelib,generated):
     return dict(all_resolved=True,native_calls=0,members=rows,point_getters=start.audit_interfaces(typelib,generated))
 
 
-def validate_request(request):
+def validate_apply_request(request):
     require(type(request) is dict and set(request)=={'action','params'} and request['action']=='apply_rough_pocket','Exact rough batch action required')
     p=request['params'];require(type(p) is dict and set(p)==PARAMS,'Exact rough batch fields required')
     base={k:v for k,v in p.items() if k in start.PARAMS};base['module_sha256']=_file_hash(start.__file__)
@@ -487,7 +496,9 @@ def validate_terminal(r):
     require(r['scope']==SCOPE and r['status']=='review_required' and r['phase']=='finished' and r['readback_verified'] is True
         and r['model_saved'] is True and r['phase_proofs_verified'] is True and r['actual_full_capture_count']==1,'Completed saved rough batch required')
     require(not any(k in r for k in ('issue','failed_phase','cleanup_issue','phase_proof_error')),'Uncertain batch cannot become authority')
-    require(all(r[k] is False for k in FORBIDDEN) and set(r['actions'])==set(ACTIONS),'Unexpected action inventory')
+    require(all(r[k] is False for k in FORBIDDEN),'Unexpected forbidden action')
+    actions=terminal_actions(r)
+    require(set(actions)==set(ACTIONS),'Unexpected action inventory')
     loaded=r['loaded_context_before']
     verify_route(loaded['state'],r['initial_headers'],order=OLD_ORDER)
     verify_parameters(loaded['pocket_parameters'],r['initial_parameters']['parameters'],configured=False)
@@ -495,11 +506,11 @@ def validate_terminal(r):
     for key,generated in (('configured',False),('generated',True),('final',True)):
         counts=verify_capture(loaded,r[key],order=NEW_ORDER,generated=generated,saved_sha=r['saved_source_sha256'] if key=='final' else None)
         if generated:require(group.exact(counts,r['generated_record_counts']),'Terminal generated count differs')
-    for label,a in r['actions'].items():
+    for label,a in actions.items():
         require(a['attempted'] is True and a['returned'] is True and a['pending'] is False and a['readback_verified'] is True,'Unverified action')
         if label in ('CreateStartPointInstance','CreatePosition'):require(a.get('returned_interface_pointer') is True and a.get('returned_nonnull') is True,'Non-null factory result required')
         require(a['native_return_type']=='int' and type(a['native_return_value']) is int and a['native_return_value']==0,'Exact integerHRESULT0 required')
-    for spec in FIELDS:require(group.exact(r['actions']['field:'+spec[0]]['observed'],spec[6]),'Scalar action readback differs')
+    for spec in FIELDS:require(group.exact(actions['field:'+spec[0]]['observed'],spec[6]),'Scalar action readback differs')
     require(r['save_stage']['save_readback_verified'] is True and r['save_stage']['saved_file_sha256']==r['saved_source_sha256'],'Saved source transition incomplete')
     require(r['source_transition']['strict_save_return']==0 and r['source_transition']['source_after_sha256']==r['saved_source_sha256']
         and r['source_transition']['source_before_sha256']==r['initial_source_sha256'],'Source transition differs')
@@ -507,8 +518,8 @@ def validate_terminal(r):
     return make_context(r)
 
 
-def prepare(p,loaded,audit):
-    receipt=common._local_receipt(p['receipt_path']);marker=marker_path(p['expected_document_path'],p['expected_source_sha256'])
+def prepare(p,loaded,audit,*,marker_override=None):
+    receipt=common._local_receipt(p['receipt_path']);marker=marker_override or marker_path(p['expected_document_path'],p['expected_source_sha256'])
     protected={common._key(v['path']) for v in loaded['pins']+loaded['offline_export_proof_pins']+loaded['bootstrap_export_pins']}
     protected.add(common._key(p['expected_document_path']))
     paths=[receipt,marker]+[Path(p['progress_path']).with_name(Path(p['progress_path']).stem+'.'+label+'.json') for label in ('initial','configured','generated','saved')]
@@ -527,7 +538,7 @@ def prepare(p,loaded,audit):
 def execute(sw,clsid,typelib,*,loaded,params,report,marker):
     journal=Journal(report,params['receipt_path'],marker);_write_receipt(params['receipt_path'],report,create=True)
     backend=NativeBackend(loaded,params,sw,clsid,typelib,report,journal.persist)
-    result=run_backend(backend,journal,loaded)
+    result=run_continuation(backend,journal,loaded) if report.get('continuation') is True else run_backend(backend,journal,loaded)
     try:
         common._check(loaded['offline_export_proof_pins']);common._check(loaded['bootstrap_export_pins']);result['phase_proofs_verified']=True
         if result.get('readback_verified') is True:
@@ -544,7 +555,8 @@ def load_completed(path,digest,*,process_id,expected_document_path,expected_sour
         and r['saved_source_sha256']==expected_source_sha256==_file_hash(expected_document_path),'Current saved source/runtime/process differs')
     common._check(r['live_pins']);common._check(r['offline_proof_pins']);common._check(r['bootstrap_export_pins'])
     context=validate_terminal(r);require(r['checkpoint_digest']==_digest(group.current_projection(context)),'Saved flat checkpoint digest differs')
-    marker=marker_path(r['source_path'],r['initial_source_sha256']);mark,markpin=read_pin(str(marker),r['marker_pin']['sha256'])
+    marker=continuation_marker_path(r['source_path'],r['initial_source_sha256'],r['configured_receipt_pin']['sha256']) if r.get('continuation') is True else marker_path(r['source_path'],r['initial_source_sha256'])
+    mark,markpin=read_pin(str(marker),r['marker_pin']['sha256'])
     require(group.exact(mark,Journal(r,path,marker).marker_state()),'Stable terminal once-marker differs')
     live=common._merge([v for v in r['live_pins'] if common._key(v['path'])!=common._key(r['parent_pin']['path'])],[pin])
     require(len(live)<=64,'Bounded completed runtime closure required')
@@ -552,10 +564,126 @@ def load_completed(path,digest,*,process_id,expected_document_path,expected_sour
     return context
 
 
+CONTINUATION_KEYS={'configured_receipt_path','configured_receipt_sha256','failed_module_archive_path','failed_module_archive_sha256','failed_marker_path','failed_marker_sha256'}
+INHERITED_ACTIONS=ACTIONS[:-2]
+
+
+def validate_request(request):
+    if request.get('action')!='continue_configured_rough':return validate_apply_request(request)
+    require(set(request)=={'action','params'} and set(request['params'])==PARAMS|CONTINUATION_KEYS,'Exact bounded continuation fields required')
+    p=request['params'];validate_apply_request(dict(action='apply_rough_pocket',params={k:p[k] for k in PARAMS}))
+    for name in ('configured_receipt','failed_module_archive','failed_marker'):
+        require(type(p[name+'_path']) is str and Path(p[name+'_path']).is_absolute(),'Absolute continuation evidence required')
+        require(type(p[name+'_sha256']) is str and start.nc.re.fullmatch('[0-9a-f]{64}',p[name+'_sha256']),'Exact continuation evidence hash required')
+    return deepcopy(p)
+
+
+def validate_configured_receipt(failed,*,module_archive_pin,marker_pin):
+    require(failed['scope']==SCOPE and failed['status']=='uncertain' and failed['phase']=='finished'
+        and failed['readback_verified'] is False and failed['model_saved'] is False
+        and failed['phase_proofs_verified'] is True and failed['actual_full_capture_count']==0,'Exact stopped configuration required')
+    require(not any(k in failed for k in ('cleanup_issue','phase_proof_error')),'Failed lifecycle cannot resume')
+    clean_events(failed)
+    issue=failed.get('issue',{});require(issue.get('type')=='ValueError' and any(v.get('function')=='verify_parameters' for v in issue.get('locations',[])), 'Expected aggregate representation mismatch required')
+    require(set(failed['actions'])==set(INHERITED_ACTIONS) and not any(k in failed for k in ('generated','final','save_stage','saved_source_sha256')),'No prior generation or save may exist')
+    require(module_archive_pin['sha256']==failed['module_pin']['sha256'],'Exact original writer archive required')
+    common._check([module_archive_pin,marker_pin]);old_module=failed['module_pin']
+    historical=[v for v in failed['live_pins'] if common._key(v['path'])!=common._key(old_module['path'])]
+    removed=[v for v in failed['live_pins'] if common._key(v['path'])==common._key(old_module['path'])]
+    require(len(removed)==1 and removed[0]['sha256']==old_module['sha256'],'Exactly one archived historical writer pin required')
+    common._check(historical);common._check(failed['offline_proof_pins']);common._check(failed['bootstrap_export_pins'])
+    old_marker,_=read_pin(marker_pin['path'],marker_pin['sha256'])
+    require(group.exact(old_marker,Journal(failed,failed['receipt_path'],Path(marker_pin['path'])).marker_state()),'Original immutable marker differs')
+    baseline=failed['loaded_context_before'];verify_route(baseline['state'],failed['initial_headers'],order=OLD_ORDER)
+    verify_parameters(baseline['pocket_parameters'],failed['initial_parameters']['parameters'],configured=False)
+    verify_points(failed['initial_parameters']['startpoints'],configured=False)
+    verify_capture(baseline,failed['configured'],order=NEW_ORDER,generated=False)
+    require(group.exact(failed['configured']['parameters']['143']['levels']['levels']['toolpath_parameters']['start_Z_native'],-.0134),'Exact observed aggregate start required')
+    for name,action in failed['actions'].items():
+        require(action.get('attempted') is True and action.get('returned') is True and action.get('pending') is False
+            and action.get('readback_verified') is True and action.get('native_return_type')=='int'
+            and type(action.get('native_return_value')) is int and action['native_return_value']==0,'Every inherited action must be fully verified')
+        if name in ('CreateStartPointInstance','CreatePosition'):
+            require(action.get('returned_interface_pointer') is True and action.get('returned_nonnull') is True,'Inherited factory must have exact non-null result')
+    for spec in FIELDS:require(group.exact(failed['actions']['field:'+spec[0]]['observed'],spec[6]),'Inherited direct scalar readback changed')
+    for name,order in (('Move143',MID_ORDER),('Move144',NEW_ORDER)):
+        require(failed['actions'][name]['observed_order']==order,'Inherited move readback changed')
+    require(all(failed[k] is False for k in FORBIDDEN),'Unexpected historical operation')
+    return failed
+
+
+def load_configured_evidence(p):
+    failed,pin=read_pin(p['configured_receipt_path'],p['configured_receipt_sha256'])
+    module_pin=common._pin(p['failed_module_archive_path']);marker_pin=common._pin(p['failed_marker_path'])
+    require(module_pin['sha256']==p['failed_module_archive_sha256'] and marker_pin['sha256']==p['failed_marker_sha256'],'Exact continuation archives required')
+    validate_configured_receipt(failed,module_archive_pin=module_pin,marker_pin=marker_pin)
+    return failed,pin,module_pin,marker_pin
+
+
+def continuation_marker_path(source,sha,configured_sha):
+    return common.local_evidence_root()/('pocket_rough_continue_'+_digest(dict(scope=SCOPE,source=common._key(source),source_sha256=sha,configured_receipt_sha256=configured_sha))+'.json')
+
+
+def prepare_continuation(p,baseline,audit):
+    failed,failedpin,modulepin,markerpin=load_configured_evidence(p)
+    require(failed['process_id']==p['process_id'] and common._key(failed['source_path'])==common._key(p['expected_document_path'])
+        and failed['initial_source_sha256']==p['expected_source_sha256'],'Exact same saved source and process required')
+    require(group.exact(group.current_projection(failed['loaded_context_before']),group.current_projection(baseline)), 'Saved original context differs')
+    require(group.exact(failed['loaded_context_before']['pocket_parameters'],baseline['pocket_parameters'])
+        and failed['recipe_pin']['sha256']==baseline['recipe_pin']['sha256'],'Original parameter/recipe evidence differs')
+    baseline=deepcopy(baseline)
+    baseline['offline_export_proof_pins']=common._merge(baseline['offline_export_proof_pins'],[failedpin,modulepin,markerpin])
+    marker=continuation_marker_path(p['expected_document_path'],p['expected_source_sha256'],failedpin['sha256'])
+    report,marker=prepare(p,baseline,audit,marker_override=marker)
+    report.update(continuation=True,configured_receipt_pin=failedpin,failed_module_archive_pin=modulepin,failed_marker_pin=markerpin,
+        inherited_actions=deepcopy(failed['actions']),inherited_action_count=15,new_action_count=0,
+        initial_headers=deepcopy(failed['initial_headers']),initial_parameters=deepcopy(failed['initial_parameters']),
+        reused_initial_parameter_capture=True,inherited_configured_state_sha256=_digest(failed['configured']))
+    runtime=deepcopy(baseline);runtime['state']=deepcopy(failed['configured']['state'])
+    runtime['current_context_sha256']=_digest(group.current_projection(runtime))
+    return runtime,report,marker
+
+
+def terminal_actions(r):
+    if r.get('continuation') is not True:
+        require('inherited_actions' not in r,'Unrecognized inherited actions');return r['actions']
+    require(set(r['actions'])==set(ACTIONS[-2:]) and r['inherited_action_count']==15 and r['new_action_count']==2,'Continuation can dispatch only GTP and Save')
+    failed,_=read_pin(r['configured_receipt_pin']['path'],r['configured_receipt_pin']['sha256'])
+    validate_configured_receipt(failed,module_archive_pin=r['failed_module_archive_pin'],marker_pin=r['failed_marker_pin'])
+    require(group.exact(r['inherited_actions'],failed['actions']) and r['inherited_configured_state_sha256']==_digest(failed['configured']),'Inherited evidence altered')
+    require(group.exact(r['initial_headers'],failed['initial_headers']) and group.exact(r['initial_parameters'],failed['initial_parameters']), 'Reused captures differ')
+    require(group.exact(r['direct_start_z_readback'],-13.4),'Fresh direct StartZ readback differs')
+    require_state_equivalent(failed['configured']['state'],r['reconciled_headers'])
+    equivalent_projection(save_projection(failed['configured']),save_projection(r['configured']))
+    return dict(r['inherited_actions'],**r['actions'])
+
+
+def run_continuation(backend,journal,runtime):
+    r=journal.report;baseline=r['loaded_context_before']
+    try:
+        backend.start();headers=backend.headers('configured_reconcile');r['reconciled_headers']=headers
+        failed,_=read_pin(r['configured_receipt_pin']['path'],r['configured_receipt_pin']['sha256'])
+        require_state_equivalent(failed['configured']['state'],headers)
+        configured=dict(state=deepcopy(headers),**backend.parameters('configured'));r['configured']=configured
+        verify_capture(baseline,configured,order=NEW_ORDER,generated=False)
+        equivalent_projection(save_projection(failed['configured']),save_projection(configured))
+        r['direct_start_z_readback']=backend.field(FIELDS[5]);require(group.exact(r['direct_start_z_readback'],-13.4),'Fresh direct StartZ differs')
+        journal.persist();generate_and_save(backend,journal,baseline)
+        r['new_action_count']=len(r['actions']);require(r['new_action_count']==2,'Only GTP and Save may be dispatched')
+    except Exception as exc:r.update(status='uncertain' if r.get('mutation_attempted') else 'error',failed_phase=r['phase'],phase='finished',issue=_error(exc),readback_verified=False)
+    finally:
+        try:backend.close()
+        except Exception as exc:r.update(status='uncertain',cleanup_issue=_error(exc),readback_verified=False)
+        journal.persist()
+    return r
+
+
 def dispatch_request(request,*,validate_only=False):
     p=validate_request(request);loaded=load_inputs(p)
     registration=common.discover_export_registration(loaded,p['addin_clsid']);typelib=str(Path(registration['addin_path']).parent/'camworks.tlb')
-    audit=audit_recipe(typelib,loaded['generated_pin']);report,marker=prepare(p,loaded,audit)
+    audit=audit_recipe(typelib,loaded['generated_pin'])
+    if request['action']=='continue_configured_rough':loaded,report,marker=prepare_continuation(p,loaded,audit)
+    else:report,marker=prepare(p,loaded,audit)
     if validate_only:return dict(status='validated_offline',native_called=False,setter_interface_audit=audit,live_pin_count=len(loaded['pins']),marker=str(marker))
     from scripts.sw_operation_guard import solidworks_operation_lock
     from scripts.sw_connect import connect_solidworks

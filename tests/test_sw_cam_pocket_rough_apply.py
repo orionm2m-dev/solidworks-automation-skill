@@ -29,7 +29,7 @@ def point(configured):
 class ProjectionTests(unittest.TestCase):
     def test_actual_raw_parameter_shape(self):
         actual=m.expected_parameters(FIXTURE['parameters'])
-        self.assertEqual(actual['143']['levels']['levels']['toolpath_parameters']['start_Z_native'],-13.4)
+        self.assertEqual(actual['143']['levels']['levels']['toolpath_parameters']['start_Z_native'],-.0134)
         self.assertEqual(actual['143']['rough']['depth']['GetStartDepth'],[False,.3])
         m.verify_parameters(FIXTURE['parameters'],actual,configured=True)
     def test_finish144_is_protected(self):
@@ -163,6 +163,41 @@ class WorkflowTests(unittest.TestCase):
             self.assertTrue(j.marker.exists())
             with self.assertRaises(ValueError):j.pending('CreateStartPointInstance')
             j.pending('AddStartPoint');self.assertTrue(json.loads(j.marker.read_text())['actions']['AddStartPoint']['pending'])
+
+class ContinuationTests(unittest.TestCase):
+    setup_run=WorkflowTests.setup_run
+    def prepare_continuation_fake(self,tmp):
+        loaded,r,j,b=self.setup_run(tmp)
+        actual=m.expected_parameters(FIXTURE['parameters'])
+        actual['143']['rough']['entry']['GetEntryStartPtX']=[.01,0.,0.]
+        configured=dict(state=changed_state(m.NEW_ORDER),parameters=actual,startpoints=point(True))
+        failed_path=Path(tmp)/'configured.json';failed_path.write_text(json.dumps({'configured':configured}))
+        r.update(loaded_context_before=loaded,continuation=True,configured_receipt_pin={'path':str(failed_path),'sha256':m._file_hash(failed_path)},new_action_count=0)
+        b.order=m.NEW_ORDER;b.headers=lambda label:deepcopy(configured['state'])
+        b.parameters=lambda label:dict(parameters=deepcopy(actual),startpoints=point(True))
+        b.field=lambda spec:-13.4
+        def narrow(label):return dict(state=changed_state(m.NEW_ORDER,b.generated),parameters=deepcopy(actual),startpoints=point(True))
+        b.capture_narrow=narrow
+        def forbidden(*a,**kw):raise AssertionError('No configured mutation may be replayed')
+        for name in ('set_field','create_point','create_position','set_point_coordinates','set_point_position','attach_point','move_after'):setattr(b,name,forbidden)
+        return loaded,r,j,b
+    def test_continuation_dispatches_only_gtp_save(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            loaded,r,j,b=self.prepare_continuation_fake(tmp);m.run_continuation(b,j,loaded)
+            self.assertTrue(r['readback_verified'],r.get('issue'));self.assertTrue(r['model_saved'])
+            self.assertEqual(set(r['actions']),{'GenerateToolpath','SaveActiveDocument'});self.assertEqual(r['new_action_count'],2)
+    def test_stale_aggregate_blocks_before_gtp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            loaded,r,j,b=self.prepare_continuation_fake(tmp);original=b.parameters
+            def changed(label):
+                value=original(label);value['parameters']['143']['levels']['levels']['toolpath_parameters']['start_Z_native']=-13.4;return value
+            b.parameters=changed;m.run_continuation(b,j,loaded)
+            self.assertFalse(r['readback_verified']);self.assertEqual(r['actions'],{})
+    def test_direct_startz_mismatch_blocks_before_gtp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            loaded,r,j,b=self.prepare_continuation_fake(tmp);b.field=lambda spec:-.0134;m.run_continuation(b,j,loaded)
+            self.assertFalse(r['readback_verified']);self.assertEqual(r['actions'],{})
+
 
 class AbiTests(unittest.TestCase):
     def test_wrong_dispid_and_flags_rejected(self):
