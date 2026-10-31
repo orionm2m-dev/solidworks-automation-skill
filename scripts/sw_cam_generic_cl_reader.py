@@ -68,7 +68,7 @@ def numbers(text,count=None,trailing=False):
 def bounds(points):
     return [[min(p[i] for p in points) for i in range(3)],[max(p[i] for p in points) for i in range(3)]] if points else None
 
-def validate_axial_helix_endpoint(circle,endpoint,axis):
+def validate_axial_helix_endpoint(circle,endpoint,axis,*,coordinate_quantum=None):
     """Observed descending +Z/CCW minor-arc dialect; no hidden-turn inference."""
     start=circle["start_raw"];center=circle["center_raw"];radius=circle["radius_raw"]
     require(max(abs(a-b) for a,b in zip(circle["normal_raw"],[0.,0.,1.]))<=1e-8
@@ -81,15 +81,40 @@ def validate_axial_helix_endpoint(circle,endpoint,axis):
     require(all(abs(math.hypot(*v)-radius)<=1e-5 for v in vectors),"Projected helix endpoint radius differs")
     a,b=vectors;angle=math.atan2(a[0]*b[1]-a[1]*b[0],a[0]*b[0]+a[1]*b[1])
     if angle<0:angle+=2*math.pi
-    require(1e-8<angle<=math.pi+1e-8,"Only observed positive CCW minor arcs supported")
+    quantized_antipodal = angle > math.pi + 1e-8
+    antipodal_residual = math.hypot(a[0]+b[0],a[1]+b[1])
+    if quantized_antipodal:
+        # Each rounded XY coordinate is within q/2 of its source value. Thus
+        # start+end-2*center has at most 2*q error per coordinate. This permits
+        # only the observed half-turn boundary, never an arbitrary major arc.
+        require(coordinate_quantum == 1e-6,"Major helix needs exact observed six-decimal coordinate serialization")
+        bound = 2*math.sqrt(2)*coordinate_quantum
+        require(antipodal_residual <= bound and all(abs(math.hypot(*v)-radius) <= (math.sqrt(2)+.5)*coordinate_quantum for v in vectors),
+            "Helix exceeds rounded antipodal coordinate bound")
+        angular_bound = 2*math.asin(min(1.,bound/(2*min(math.hypot(*v) for v in vectors))))
+        require(angle-math.pi <= angular_bound,"Helix exceeds rounded half-turn angle bound")
+    else:
+        require(1e-8<angle<=math.pi+1e-8,"Only observed positive CCW minor arcs supported")
     pitch=abs(dz)*2*math.pi/angle
-    return dict(motion_kind="axial_helix",angle_raw_rad=angle,axial_delta_raw=dz,
+    result = dict(motion_kind="axial_helix",angle_raw_rad=angle,axial_delta_raw=dz,
         pitch_raw_per_rev=pitch,slope_deg=math.degrees(math.atan2(abs(dz),radius*angle)),
         one_minor_arc_assumption=True,extra_turns_verified=False,
         direction_semantics_basis="Observed COUNTERCLOCKWISE token with +Z normal; positive single minor arc used, no hidden turns inferred",
         helical_envelope_bounds_raw=[[center[0]-radius,center[1]-radius,min(start[2],endpoint[2])],
             [center[0]+radius,center[1]+radius,max(start[2],endpoint[2])]],
         envelope_basis="Conservative full circumference over endpoint Z interval under observed monotone axial helix convention")
+    if quantized_antipodal:
+        result.update(one_minor_arc_assumption=False,rounded_antipodal_arc=True,
+            coordinate_quantum_raw=coordinate_quantum,antipodal_residual_raw=antipodal_residual,
+            antipodal_residual_bound_raw=bound,angle_excess_over_pi_raw=angle-math.pi,
+            angle_excess_bound_raw=angular_bound,coordinates_snapped=False,
+            direction_semantics_basis="Observed +Z CCW single near-antipodal arc within six-decimal rounding bounds; raw coordinates and angle retained, hidden turns not inferred")
+    return result
+
+
+def six_decimal_coordinates(text,count):
+    tokens=[part.strip() for part in text.split(',')]
+    return len(tokens)==count and all(re.fullmatch(r"[+-]?[0-9]+[.][0-9]{6}",part) for part in tokens)
 
 
 def parse_generic_cl_bytes(raw,*,encoding="cp1251",expected_record_counts=None, expected_block_record_counts=None):
@@ -107,6 +132,7 @@ def parse_generic_cl_bytes(raw,*,encoding="cp1251",expected_record_counts=None, 
     commands=[];motions=[];circles=[];blocks=[];unknown=[];invalid=[];structure=[];pending_circle=None;cutcom_records=[]
     cutcom=initial_cutcom_state()
     axis=None;cutter=None;feed=None;mode=None;attrib=[];rotations=[];current=None;units=[];finished=False
+    previous_coordinate_quantum=None;pending_coordinate_quantum=None
     for line_number,line in enumerate(lines,1):
         stripped=line.strip()
         if not stripped:continue
@@ -173,9 +199,11 @@ def parse_generic_cl_bytes(raw,*,encoding="cp1251",expected_record_counts=None, 
                     radius_raw=radius,direction_token=parts[-1],start_raw=motions[-1]["xyz"][:],
                     start_line=motions[-1]["line"],mode=mode,endpoint_raw=None,endpoint_line=None,
                     units_frame_interpreted=False,sweep_angle_interpreted=False)
+                pending_coordinate_quantum=1e-6 if previous_coordinate_quantum==1e-6 and six_decimal_coordinates(','.join(parts[:3]),3) and six_decimal_coordinates(parts[6],1) else None
                 circles.append(pending_circle);command["values_raw"]=values;command["direction_token"]=parts[-1]
             elif name=="GOTO":
                 xyz=numbers(value,3)
+                endpoint_coordinate_quantum=1e-6 if six_decimal_coordinates(value,3) else None
                 require(cutcom["status"]!="enabled_without_side","Motion before CUTCOM direction is not supported")
                 require(current is not None and mode in {"rapid","feed"} and axis is not None and cutter is not None,
                     "Motion requires one operation, declared axis/cutter and explicit mode")
@@ -191,7 +219,7 @@ def parse_generic_cl_bytes(raw,*,encoding="cp1251",expected_record_counts=None, 
                     if not planar and abs(xyz[2]-circle["start_raw"][2])>1e-5:
                         require(max(abs(a-b) for a,b in zip(motions[-2]["axis_raw"],[0.,0.,1.]))<=1e-8,
                             "Helix start tool axis must also be +Z")
-                        additions=validate_axial_helix_endpoint(circle,xyz,axis)
+                        additions=validate_axial_helix_endpoint(circle,xyz,axis,coordinate_quantum=1e-6 if pending_coordinate_quantum==endpoint_coordinate_quantum==1e-6 else None)
                         circle.update(additions,endpoint_raw=xyz[:],endpoint_line=line_number,
                             endpoint_validated=True,coincident_endpoints=False)
                         motions[-1]["motion_kind"]="axial_helix"
@@ -212,6 +240,7 @@ def parse_generic_cl_bytes(raw,*,encoding="cp1251",expected_record_counts=None, 
                     circle["cutcom_state"]=deepcopy(cutcom)
                     motions[-1]["circle_record_line"]=circle["line"]
                     pending_circle=None
+                previous_coordinate_quantum=endpoint_coordinate_quantum
             elif name=="FINI":
                 require(not sep and not value and current is None,"FINI after a closed block required");finished=True
         except ValueError as exc:invalid.append(dict(line=line_number,name=name,error=str(exc)))
@@ -231,7 +260,7 @@ def parse_generic_cl_bytes(raw,*,encoding="cp1251",expected_record_counts=None, 
     circle_bounds=[point for c in circles if c.get("endpoint_validated") for point in c.get("helical_envelope_bounds_raw",c.get("full_circle_locus_bounds_raw",[]))]
     envelope_points=[m["xyz"] for m in motions]+circle_bounds
     groups={name:[m["xyz"] for m in motions if m["mode"]==name] for name in ("rapid","feed")}
-    return dict(scope=SCOPE,status="review_required",parser_revision=2,parse_complete=complete,encoding_requested=encoding,
+    return dict(scope=SCOPE,status="review_required",parser_revision=3,parse_complete=complete,encoding_requested=encoding,
         cutcom_records=cutcom_records,cutcom_state_semantics="Observed ON/LEFT/RIGHT/OFF transitions only; no offset magnitude, controller mode or coordinate transformation inferred",
         cutter_compensation_effect_qualified=False,cutter_compensation_applied=False,
         unresolved_coincident_circle_lines=[c["line"] for c in circles if c.get("coincident_endpoints")],
