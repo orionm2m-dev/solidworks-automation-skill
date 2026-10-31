@@ -178,3 +178,13 @@ def test_rapid_tangent_contact_is_not_positive_clearance(context):
     moves[2]['mode']='rapid'
     r=m.review_block(p,0,context)
     assert any(x['kind']=='positive_rapid_clearance_not_proved' for x in r['issues'])
+
+def test_plunge_cutting_ability_is_separate_from_nominal_containment(context):
+    p=parse([block()])
+    p['motions'][1]['xyz']=[22.75,0.,20.]
+    p['motions'][1]['mode']='rapid'
+    p['motions'][2]['mode']='feed'
+    r=m.review_block(p,0,context)
+    assert r['nominal_geometric_containment_proved']
+    assert not r['continuous_containment_proved']
+    assert r['issues']==[dict(line=p['motions'][2]['line'],kind='axial_cutting_ability_unverified')]

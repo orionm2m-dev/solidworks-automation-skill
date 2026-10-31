@@ -207,6 +207,8 @@ def review_block(parsed, block, c):
     unresolved.append('incoming_inter_operation_path')
     return dict(scope=SCOPE,status='review_required',native_calls=0,
         segments=rows,continuous_containment_proved=not issues,
+        nominal_geometric_containment_proved=(all(x['containment_proved'] for x in rows)
+            and min_tip>=c['stock_floor_mm']-TOL and shank_gap>0 and holder_gap>0),
         issues=issues,unverified=sorted(set(unresolved)),
         candidate_coverage_intervals_radians=merged,candidate_full_360=full,
         full_360_verified=full and not any(x in unresolved for x in (
@@ -219,5 +221,3 @@ def review_block(parsed, block, c):
             'WIP tessellation is not proof of this chamfer.',
             'Circle safety uses a full locus; a failed bound is not proof of a real collision.',
             'Tool-body and holder bounds use positive axial separation; no inferred offset is added.'])
-
-
