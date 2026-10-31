@@ -1,6 +1,6 @@
 """Export a corrected saved Contour from its current flat checkpoint.
 
-Only the completed correction loader establishes authority. Historical T5 source
+Only the scoped completed-receipt loader establishes current authority. Historical T5 source
 bytes are not reopened as the current model. Existing CL/WIP export cores own
 native calls, guarded captures, durable once markers, and output verification.
 """
@@ -24,7 +24,8 @@ RETIRED_ROLES=frozenset({'sw_cam_chamfer_approach_correction.py','sw_cam_chamfer
 def load_checkpoint(path,digest,*,action,process_id,expected_document_path,expected_source_sha256):
     require(action in ('export_cl','export_wip'),'Only existing route exports allowed')
     correction=importlib.import_module('scripts.sw_cam_chamfer_approach_correction')
-    loaded=correction.load_completed(path,digest,process_id=process_id,
+    receipt_loader=importlib.import_module('scripts.sw_cam_chamfer_receipt')
+    loaded=receipt_loader.load_completed(path,digest,process_id=process_id,
         expected_document_path=expected_document_path,expected_source_sha256=expected_source_sha256)
     require(loaded['authority_kind']==AUTHORITY,'Completed corrected flat authority required')
     require(loaded['source_sha256']==loaded['state']['saved_file_sha256']==expected_source_sha256
@@ -42,7 +43,7 @@ def load_checkpoint(path,digest,*,action,process_id,expected_document_path,expec
     require(any(common._key(p['path'])==common._key(correction.__file__) for p in retired),
             'Exact completed correction implementation must be retired as offline proof')
     active=[p for p in loaded['pins'] if p not in retired]
-    names=['sw_cam_chamfer_exports','sw_cam_cl_inventory']
+    names=['sw_cam_chamfer_exports','sw_cam_cl_inventory','sw_cam_chamfer_receipt']
     if action=='export_cl':names+=['sw_cam_mill_generic_cl','sw_cam_thread_postprocess','sw_cam_operation_profile']
     else:names+=['sw_cam_chamfer_wip','sw_cam_completed_gtp_wip']
     added=[common._pin(__file__)]+[common._pin(importlib.import_module('scripts.'+n).__file__) for n in names]

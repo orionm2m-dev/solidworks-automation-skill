@@ -37,8 +37,12 @@ def current(case,monkeypatch):
         calls.append((path,digest,identity))
         assert identity['expected_source_sha256']!=old_hash
         return deepcopy(loaded)
-    correction=SimpleNamespace(__file__=str(correction_file),load_completed=load_completed)
+    def writer_loader(*args,**kwargs):raise AssertionError('Generic writer receipt loader must not execute')
+    correction=SimpleNamespace(__file__=str(correction_file),load_completed=writer_loader)
     monkeypatch.setitem(sys.modules,'scripts.sw_cam_chamfer_approach_correction',correction)
+    reader_file=case.root/'sw_cam_chamfer_receipt.py';reader_file.write_text('# scoped receipt reader proof')
+    reader=SimpleNamespace(__file__=str(reader_file),load_completed=load_completed)
+    monkeypatch.setitem(sys.modules,'scripts.sw_cam_chamfer_receipt',reader)
     def old_loader(*a,**k):raise AssertionError('Old T5 current-source loader must not execute')
     monkeypatch.setattr(m.cl,'load_checkpoint',old_loader)
     monkeypatch.setattr(m.wip,'load_checkpoint',old_loader)
@@ -59,6 +63,7 @@ def test_changed_source_loads_only_flat_current_authority(current,action):
     assert m.cl.operation_contract(loaded)[-1]['toolpath_record_counts']==[47]
     names={Path(p['path']).name for p in loaded['pins']}
     assert 'sw_cam_chamfer_corrected_exports.py' in names
+    assert 'sw_cam_chamfer_receipt.py' in names
     assert 'sw_cam_chamfer_approach_correction.py' not in names
     assert current.archive.read_bytes()!=current.case.source.read_bytes()
     if action=='export_wip':assert 'sw_cam_completed_gtp_wip.py' in names
