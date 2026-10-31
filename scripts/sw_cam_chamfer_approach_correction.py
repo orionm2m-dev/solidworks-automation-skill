@@ -14,6 +14,7 @@ from scripts.sw_cam_turn_tool import _digest
 from scripts.sw_cam_rough_firstcut import require
 from scripts.sw_cam_mill_selected_plan_evidence import read_pin, clean_events
 from scripts.sw_cam_ud14_save import run_one_existing_save
+from scripts.sw_cam_upper_cone_feature import require_state_equivalent
 
 common, group = exports.common, exports.group
 SCOPE = 'SAVED_CONTOUR_APPROACH_CORRECTION_V1'
@@ -112,7 +113,7 @@ def validate_plan(plan,loaded,baseline):
     return states
 
 
-def verify_route(reference,actual,operation_id,phase,*,saved_sha=None):
+def verify_route(reference,actual,operation_id,phase,*,saved_sha=None,diagnostic=None):
     require(phase in ('baseline','configured','generated'),'Exact route phase required')
     a,b=deepcopy(reference),deepcopy(actual)
     for state in (a,b):
@@ -138,12 +139,12 @@ def verify_route(reference,actual,operation_id,phase,*,saved_sha=None):
         require(actual['document']['needs_save'] is False and b['saved_file_sha256']==saved_sha,
                 'Saved clean document/hash required')
         b['saved_file_sha256']=a['saved_file_sha256']
-    require(group.exact(a,b),'Protected setup, feature, tool binding or route changed')
+    require_state_equivalent(a,b,diagnostic=diagnostic)
     return counts
 
 
-def verify_capture(loaded,before,value,*,phase,expected_approach,saved_sha=None):
-    counts=verify_route(before['state'],value['state'],loaded['configured_contour']['native_id'],phase,saved_sha=saved_sha)
+def verify_capture(loaded,before,value,*,phase,expected_approach,saved_sha=None,diagnostic=None):
+    counts=verify_route(before['state'],value['state'],loaded['configured_contour']['native_id'],phase,saved_sha=saved_sha,diagnostic=diagnostic)
     for key in ('settings','binding','units'):
         require(group.exact(before[key],value[key]),'Protected settings changed: '+key)
     # The actual Contour reader returns finish/level_state, not NC planes.
@@ -155,6 +156,15 @@ def verify_capture(loaded,before,value,*,phase,expected_approach,saved_sha=None)
         require(len(value['catalogue'])==18 and group.exact(value['catalogue'],before['catalogue'])
             and group.exact(value['selected_feature'],before['selected_feature']),'Catalogue/geometry changed')
     return counts
+
+
+def require_projection_equivalent(reference,observed,*,diagnostic=None):
+    """Allow only the established mass_raw fingerprint roundoff in state."""
+    require(type(reference) is dict and type(observed) is dict,'Exact observation projections required')
+    normalized=deepcopy(observed)
+    normalized['state']=require_state_equivalent(reference['state'],observed['state'],diagnostic=diagnostic)
+    require(group.exact(reference,normalized),'Observation differs outside body mass-property roundoff')
+    return normalized
 
 
 def save_projection(value):
@@ -176,15 +186,20 @@ def generate_save_finish(backend,journal,loaded,before,states):
     value=backend.generate(lambda:journal.pending('GenerateToolpath'));journal.returned('GenerateToolpath',value)
     require(type(value) is int and value==0,'Strict single-target GTP HRESULT0 required')
     backend.refresh_dirty();generated=backend.capture_narrow('generated');r['generated']=generated
-    r['generated_record_counts']=verify_capture(loaded,before,generated,phase='generated',expected_approach=states[-1])
+    r['generated_record_counts']=verify_capture(loaded,before,generated,phase='generated',expected_approach=states[-1],
+        diagnostic=r.setdefault('numeric_comparisons',{}).setdefault('generated',{}))
     r['actions']['GenerateToolpath']['readback_verified']=True;journal.persist()
     expected=save_projection(generated);r['save_stage']={}
     def capture(label):
         if label=='before':backend.boundary();return deepcopy(expected)
         final=backend.capture_full('saved');r['full_capture_count']+=1;r['actual_full_capture_count']+=1;r['final']=final
-        counts=verify_capture(loaded,before,final,phase='generated',expected_approach=states[-1],saved_sha=r['saved_source_sha256'])
+        counts=verify_capture(loaded,before,final,phase='generated',expected_approach=states[-1],saved_sha=r['saved_source_sha256'],
+            diagnostic=r.setdefault('numeric_comparisons',{}).setdefault('saved',{}))
         require(group.exact(counts,r['generated_record_counts']),'Save changed generated target count')
-        journal.persist();return save_projection(final)
+        projection=save_projection(final);r['raw_save_projection_after']=deepcopy(projection)
+        normalized=require_projection_equivalent(expected,projection,
+            diagnostic=r.setdefault('numeric_comparisons',{}).setdefault('save_projection',{}))
+        journal.persist();return normalized
     def save():
         value=backend.save();journal.returned('SaveActiveDocument',value);return value
     def saved_hash():
@@ -192,7 +207,7 @@ def generate_save_finish(backend,journal,loaded,before,states):
         require(digest!=r['initial_source_sha256'],'Save did not establish changed source bytes')
         r['saved_source_sha256']=digest;journal.persist();return digest
     run_one_existing_save(r['save_stage'],capture=capture,
-        verify=lambda v:require(group.exact(v,expected),'Save changed accepted route/settings'),
+        verify=lambda v:require_projection_equivalent(expected,v),
         guard=backend.boundary,claim=lambda:journal.pending('SaveActiveDocument'),persist=journal.persist,
         save=save,saved_hash=saved_hash)
     r['actions']['SaveActiveDocument']['readback_verified']=True
@@ -218,7 +233,8 @@ def run_backend(backend,journal,loaded):
             require(group.exact(actual,change['after']),'Immediate native readback differs')
             r['actions'][label].update(readback_verified=True,observed=deepcopy(actual));journal.persist()
         configured=backend.capture_narrow('configured');r['configured']=configured;r['phase']='verify_configured'
-        verify_capture(loaded,before,configured,phase='configured',expected_approach=states[-1]);journal.persist()
+        verify_capture(loaded,before,configured,phase='configured',expected_approach=states[-1],
+            diagnostic=r.setdefault('numeric_comparisons',{}).setdefault('configured',{}));journal.persist()
         generate_save_finish(backend,journal,loaded,before,states)
     except Exception as exc:
         r.update(status='uncertain' if r.get('mutation_attempted') else 'error',failed_phase=r['phase'],
@@ -427,8 +443,10 @@ def validate_terminal(r):
         and transition['source_before_sha256']==r['initial_source_sha256']
         and transition['source_after_sha256']==sha and sha!=r['initial_source_sha256']
         and transition['strict_save_return']==0,'Strict saved source transition required')
-    require(group.exact(save['before'],save_projection(r['generated']))
-        and group.exact(save['after'],save_projection(r['final'])),'Save projection differs')
+    expected_save=save_projection(r['generated']);raw_final=save_projection(r['final'])
+    normalized_final=require_projection_equivalent(expected_save,raw_final)
+    require(group.exact(save['before'],expected_save) and group.exact(save['after'],normalized_final)
+        and group.exact(r['raw_save_projection_after'],raw_final),'Save raw/normalized projection differs')
     require(r['actual_full_capture_count']==(1 if r.get('continuation') else 2),
             'Exact new full capture count required')
     if r.get('continuation'):validate_continuation_report(r)
@@ -518,8 +536,8 @@ def validate_continuation_report(r):
         and set(r['actions'])=={'GenerateToolpath','SaveActiveDocument'},'Setters must be inherited, never replayed')
     require(group.exact(r['before'],failed['before'])
         and group.exact(r['inherited_configured'],failed['configured'])
-        and group.exact(r['configured'],failed['configured'])
-        and group.exact(r['reconciled'],failed['configured']), 'Fresh configured reconciliation differs')
+        and group.exact(r['configured'],r['reconciled']), 'Fresh configured reconciliation differs')
+    require_projection_equivalent(failed['configured'],r['configured'])
     require(r['reused_full_capture_count']==1 and r['actual_full_capture_count']==1
         and r['full_capture_count']==2,'Exact reused/new read counts required')
     require(group.exact(group.current_projection(r['loaded_context_before']),
@@ -533,8 +551,10 @@ def run_continuation(backend,journal,loaded):
         automatic_retry=False,automatic_replay=False,status='running',phase='reconcile_configured',actions={})
     try:
         backend.start();actual=backend.capture_reconcile('continuation_reconcile');r['reconciled']=actual
-        verify_capture(r['loaded_context_before'],before,actual,phase='configured',expected_approach=states[-1])
-        require(group.exact(actual,r['inherited_configured']),'Current configured state differs; no dispatch')
+        verify_capture(r['loaded_context_before'],before,actual,phase='configured',expected_approach=states[-1],
+            diagnostic=r.setdefault('numeric_comparisons',{}).setdefault('reconcile',{}))
+        require_projection_equivalent(r['inherited_configured'],actual,
+            diagnostic=r.setdefault('numeric_comparisons',{}).setdefault('reconcile_projection',{}))
         r['configured']=actual;journal.persist()
         generate_save_finish(backend,journal,r['loaded_context_before'],before,states)
     except Exception as exc:

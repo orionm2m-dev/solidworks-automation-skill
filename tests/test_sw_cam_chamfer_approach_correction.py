@@ -42,7 +42,7 @@ def fixture():
             assigned_tool={'native_id':269 if oid==271 else 249},linked_feature_ids=[264 if oid==271 else oid]))
     state=dict(operation_count=8,operations=ops,features=[{'id':i} for i in range(21)],
         document={'needs_save':False,'path':'unit-test-source'},saved_file_sha256=source,
-        operation_setups=[{'id':93}])
+        operation_setups=[{'id':93}],sw_reference={'solids':[{'mass_raw':[1.]*12,'box_m':[0.,0.,0.,1.,1.,1.]}]})
     loaded=dict(source_sha256=source,configured_contour=dict(native_id=271,feature_native_id=264,tool_native_id=269),
         state=state,approach_plan=plan)
     before=dict(state=deepcopy(state),approach=deepcopy(baseline),settings={'protected':'FACE'},
@@ -310,3 +310,84 @@ def test_validate_only_rejects_stale_native_context_before_registration(monkeypa
     monkeypatch.setattr(m.common,'discover_export_registration',forbidden)
     with pytest.raises(ValueError,match='Immutable current parent changed'):
         m.dispatch_request({'action':'continue_configured_contour_approach'},validate_only=True)
+
+
+def v2_actual():
+    return json.loads((STAGE/'testdata/approach_reconciled_v2_actual.json').read_text(encoding='utf8'))
+
+
+def test_actual_v2_mass_roundoff_is_logged_and_raw_observations_unchanged():
+    v=v2_actual();raw=deepcopy(v);diagnostic={}
+    m.verify_capture(v['loaded'],v['before'],v['reconciled'],phase='configured',
+        expected_approach=v['expected'],diagnostic=diagnostic)
+    assert v==raw
+    assert diagnostic['state_equivalent'] is True
+    assert diagnostic['relative_tolerance']==1e-12 and diagnostic['absolute_tolerance']==0.
+    assert len(diagnostic['accepted_numeric_deltas'])==8
+    assert all('/mass_raw/' in d['path'] for d in diagnostic['accepted_numeric_deltas'])
+    m.require_projection_equivalent(v['configured'],v['reconciled'])
+    m.require_projection_equivalent(m.save_projection(v['configured']),m.save_projection(v['reconciled']))
+
+
+@pytest.mark.parametrize('fault',['mass_excess','box','tool','count','depth','nan','wrong_type','array_size'])
+def test_actual_v2_roundoff_policy_cannot_mask_protected_changes(fault):
+    v=v2_actual();a=v['reconciled']
+    if fault=='mass_excess':a['state']['sw_reference']['solids'][0]['mass_raw'][0]*=1.+1e-8
+    elif fault=='box':a['state']['sw_reference']['solids'][0]['box_m'][0]+=.001
+    elif fault=='tool':a['state']['operations'][0]['assigned_tool']['native_id']+=1
+    elif fault=='count':a['state']['operations'][4]['toolpath_record_counts'][0]+=1
+    elif fault=='depth':a['selected_defaults']['finish']['GetChamferLength']+=.001
+    elif fault=='nan':a['state']['sw_reference']['solids'][0]['mass_raw'][0]=float('nan')
+    elif fault=='wrong_type':a['state']['sw_reference']['solids'][0]['mass_raw'][0]=1
+    else:a['state']['sw_reference']['solids'][0]['mass_raw'].append(0.)
+    with pytest.raises(ValueError):
+        m.verify_capture(v['loaded'],v['before'],a,phase='configured',expected_approach=v['expected'])
+
+
+def test_zero_mass_property_does_not_get_absolute_tolerance():
+    _,before=fixture();after=deepcopy(before)
+    before['state']['sw_reference']['solids'][0]['mass_raw'][0]=0.
+    after['state']['sw_reference']['solids'][0]['mass_raw'][0]=1e-30
+    with pytest.raises(ValueError):m.require_projection_equivalent(before,after)
+
+
+def test_terminal_save_accepts_only_logged_mass_roundoff(monkeypatch):
+    original=Backend.capture_full
+    def capture(self,label):
+        if label=='saved':self.value['state']['sw_reference']['solids'][0]['mass_raw'][0]+=1e-13
+        return original(self,label)
+    monkeypatch.setattr(Backend,'capture_full',capture)
+    r=terminal_fixture(monkeypatch)
+    assert r['readback_verified'] and r['numeric_comparisons']['saved']['accepted_numeric_deltas']
+    assert r['numeric_comparisons']['save_projection']['accepted_numeric_deltas']
+    cp=m.validate_terminal(r)
+    assert cp['context']['state']['sw_reference']['solids'][0]['mass_raw'][0]==1.+1e-13
+    assert r['before']['state']['sw_reference']['solids'][0]['mass_raw'][0]==1.
+
+def test_actual_v2_pair_through_generate_save_and_terminal(monkeypatch):
+    v=v2_actual();loaded,_=fixture();before=deepcopy(v['before'])
+    loaded.update(state=deepcopy(before['state']),source_sha256=before['state']['saved_file_sha256'],
+        configured_contour=deepcopy(v['loaded']['configured_contour']))
+    plan=loaded['approach_plan'];plan.update(source_sha256=loaded['source_sha256'],
+        baseline=deepcopy(before['approach']),expected=deepcopy(v['expected']))
+    for c in plan['changes']:
+        c['before']=deepcopy(m.at(plan['baseline'],m.field_path(c)))
+        c['after']=deepcopy(m.at(plan['expected'],m.field_path(c)))
+    j=Journal();j.report['initial_source_sha256']=loaded['source_sha256']
+    b=Backend(loaded,before,j);normal_capture=b.capture_full;normal_hash=b.saved_hash
+    def capture(label):
+        if label=='saved':b.value['state']['sw_reference']=deepcopy(v['reconciled']['state']['sw_reference'])
+        return normal_capture(label)
+    def saved_hash(stage):
+        value=normal_hash(stage);j.report['source_transition']['source_before_sha256']=loaded['source_sha256'];return value
+    b.capture_full=capture;b.saved_hash=saved_hash
+    monkeypatch.setattr(m.exports,'verify_observed',lambda l,o:None)
+    r=m.run_backend(b,j,loaded)
+    assert r['readback_verified'] and b.calls.count('gtp')==b.calls.count('save')==1
+    context={k:{} for k in m.group.CURRENT_KEYS};context.update(deepcopy(loaded))
+    r.update(scope=m.SCOPE,phase_proofs_verified=True,plan=deepcopy(plan),loaded_context_before=context,
+        setter_interface_audit={'all_resolved':True,'native_calls':0},
+        messages={'subscribed':True,'disconnected':True,'active':False},**{k:False for k in m.FORBIDDEN})
+    cp=m.validate_terminal(r)
+    assert cp['context']['state']['sw_reference']==v['reconciled']['state']['sw_reference']
+    assert len(r['numeric_comparisons']['saved']['accepted_numeric_deltas'])==8
