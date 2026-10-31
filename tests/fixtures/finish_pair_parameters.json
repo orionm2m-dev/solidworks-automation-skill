@@ -1,0 +1,1095 @@
+{
+  "143": {
+    "levels": {
+      "levels": {
+        "machining_depth_native": 4.800000000000001,
+        "override_machining_depth": false,
+        "toolpath_parameters": {
+          "use_setup_definition_for_top_Z": false,
+          "use_minimum_Z": false,
+          "adjust_feature_height": false,
+          "first_cut_Z_type_raw": 2,
+          "use_setup_definition_for_bottom_Z": false,
+          "minimum_Z_native": 0.0,
+          "start_Z_native": -0.0134
+        }
+      },
+      "setup": {
+        "transform_present": true,
+        "transform_matrix_decoded": false,
+        "origin_native": [
+          5.494979471443173e-10,
+          -2.718450464733735e-10,
+          26.0
+        ],
+        "axis_native": [
+          -0.0,
+          -0.0,
+          -1.0
+        ],
+        "axis_magnitude": 1.0,
+        "axis_normalized_for_report_only": [
+          -0.0,
+          -0.0,
+          -1.0
+        ],
+        "native_axis_modified": false
+      }
+    },
+    "rough": {
+      "scope": "ROUGH_ENTRY_DEPTH_ALLOWANCE_RAW_READER_V1",
+      "read_only": true,
+      "entry": {
+        "GetEntryExitType": {
+          "raw": 4,
+          "storage_type": "LONG",
+          "enum_binding_verified": false,
+          "confirmed_enum_name": null,
+          "reason": "Method declares LONG; no named enum binding is documented."
+        },
+        "GetEntryHoleAttr": {
+          "raw": "Drill",
+          "storage_type": "BSTR"
+        },
+        "GetRampAngle": {
+          "raw": 3.0,
+          "quantity_from_member_name": "angle",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetSpiralRadius": {
+          "raw": 1.0,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetSpiralPitch": {
+          "raw": 0.1,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetHoleCentreEntry": {
+          "raw": true,
+          "storage_type": "VARIANT_BOOL",
+          "interpretation": "Raw flag only; no additional mode semantics inferred."
+        },
+        "GetEntryLengthAngle": {
+          "raw": false,
+          "storage_type": "VARIANT_BOOL",
+          "interpretation": "Raw flag only; no additional mode semantics inferred."
+        },
+        "GetEntryLength": {
+          "raw": 0.0,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetEntryAngle": {
+          "raw": 0.0,
+          "quantity_from_member_name": "angle",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetAutoCorrectEntryLengthAngle": {
+          "raw": false,
+          "storage_type": "VARIANT_BOOL",
+          "interpretation": "Raw flag only; no additional mode semantics inferred."
+        },
+        "GetEntryStartPtX": {
+          "raw": [
+            0.01,
+            0.0,
+            0.0
+          ],
+          "storage_type": "VARIANT",
+          "observed_variant_kind": "tuple_sequence",
+          "observed_python_shape": {
+            "python_type": "tuple",
+            "length": 3,
+            "items": [
+              {
+                "python_type": "float"
+              },
+              {
+                "python_type": "float"
+              },
+              {
+                "python_type": "float"
+              }
+            ]
+          },
+          "original_variant_tag_verified": false,
+          "array_element_semantics_verified": false,
+          "multiple_out_interpretation": false,
+          "coordinate_frame_verified": false,
+          "coordinate_interpreted": false,
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "reason": "One VARIANT retval is declared. comtypes may unpack its SAFEARRAY as tuples; exact native tag and element semantics are not observed. No tuple arity, frame/unit, expression or coordinate interpretation."
+        },
+        "GetEntryStartPtY": {
+          "raw": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "storage_type": "VARIANT",
+          "observed_variant_kind": "tuple_sequence",
+          "observed_python_shape": {
+            "python_type": "tuple",
+            "length": 3,
+            "items": [
+              {
+                "python_type": "float"
+              },
+              {
+                "python_type": "float"
+              },
+              {
+                "python_type": "float"
+              }
+            ]
+          },
+          "original_variant_tag_verified": false,
+          "array_element_semantics_verified": false,
+          "multiple_out_interpretation": false,
+          "coordinate_frame_verified": false,
+          "coordinate_interpreted": false,
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "reason": "One VARIANT retval is declared. comtypes may unpack its SAFEARRAY as tuples; exact native tag and element semantics are not observed. No tuple arity, frame/unit, expression or coordinate interpretation."
+        }
+      },
+      "depth": {
+        "DepthMethod": {
+          "raw": 0,
+          "storage_type": "LONG",
+          "enum_binding_verified": false,
+          "confirmed_enum_name": null,
+          "reason": "Method declares LONG; no named enum binding is documented."
+        },
+        "DepthAllow": {
+          "raw": 0.0,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "FirstDepthAmt": {
+          "raw": 0.3,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "SbsqDepthAmt": {
+          "raw": 0.3,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "FinCutAmt": {
+          "raw": 0.25,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetStartDepth": {
+          "raw": [
+            false,
+            0.3
+          ],
+          "is_percent": false,
+          "value_native": 0.3,
+          "storage_types": [
+            "VARIANT_BOOL",
+            "DOUBLE"
+          ],
+          "value_mode": "percent_flag_clear",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "percent_reference_basis_verified": false,
+          "percent_scale_conversion_performed": false,
+          "reason": "Keep the explicit native percent flag and value together; reference basis and unit conversion are not established."
+        },
+        "GetSubsequentDepthAmount": {
+          "raw": [
+            false,
+            0.3
+          ],
+          "is_percent": false,
+          "value_native": 0.3,
+          "storage_types": [
+            "VARIANT_BOOL",
+            "DOUBLE"
+          ],
+          "value_mode": "percent_flag_clear",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "percent_reference_basis_verified": false,
+          "percent_scale_conversion_performed": false,
+          "reason": "Keep the explicit native percent flag and value together; reference basis and unit conversion are not established."
+        }
+      },
+      "boundary": {
+        "PocketMethod": {
+          "raw": 1,
+          "storage_type": "LONG",
+          "enum_binding_verified": false,
+          "confirmed_enum_name": null,
+          "reason": "Method declares LONG; no named enum binding is documented."
+        },
+        "SideAllow": {
+          "raw": 0.25,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetStepOver": {
+          "raw": [
+            true,
+            40.0
+          ],
+          "is_percent": true,
+          "value_native": 40.0,
+          "storage_types": [
+            "VARIANT_BOOL",
+            "DOUBLE"
+          ],
+          "value_mode": "percent_flag_set",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "percent_reference_basis_verified": false,
+          "percent_scale_conversion_performed": false,
+          "reason": "Keep the explicit native percent flag and value together; reference basis and unit conversion are not established."
+        },
+        "GetZAllowance": {
+          "raw": 0.0,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetContainType": {
+          "raw": 0,
+          "storage_type": "LONG",
+          "enum_binding_verified": false,
+          "confirmed_enum_name": null,
+          "reason": "Method declares LONG; no named enum binding is documented."
+        },
+        "GetContainAllowance": {
+          "raw": 2.0,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetXYClearance": {
+          "raw": 2.0,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetToolDiameterPercent": {
+          "raw": 75.0,
+          "quantity_from_member_name": "percent_scalar",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        }
+      },
+      "nc_flags": {
+        "GetClrPlaneUseSetupStatus": {
+          "raw": false,
+          "storage_type": "VARIANT_BOOL",
+          "interpretation": "Raw flag only; no additional mode semantics inferred."
+        },
+        "GetRpdPlaneUseSetupStatus": {
+          "raw": false,
+          "storage_type": "VARIANT_BOOL",
+          "interpretation": "Raw flag only; no additional mode semantics inferred."
+        },
+        "GetRetractType": {
+          "raw": 0,
+          "storage_type": "LONG",
+          "enum_binding_verified": false,
+          "confirmed_enum_name": null,
+          "reason": "Method declares LONG; no named enum binding is documented."
+        }
+      },
+      "native_units_verified": false,
+      "coordinate_frame_verified": false,
+      "enum_bindings_verified": false,
+      "engineering_parameters_qualified": false,
+      "caller_target_binding_required": true,
+      "caller_guarded_readback_required": true,
+      "document_lookup_performed": false,
+      "mutation_attempted": false,
+      "rapid_clearance_values_read": false,
+      "production_qualified": false,
+      "may_continue": false,
+      "gaps": [
+        {
+          "code": "NC_PLANE_POINTER_BINDING_NOT_QUALIFIED",
+          "interface": "ICWNCParam",
+          "members": [
+            "GetRpdPlnPrms",
+            "GetClrPlanePrms"
+          ],
+          "method_contract": "HRESULT(DOUBLE*, LONG*); SDK flags [none], TLB flags [].",
+          "invocation_attempted": false,
+          "values_observed": false,
+          "reason": "Explicit pointer ownership, initialization, output direction and HRESULT behavior are not established by an existing qualified reader. No guessed tuple or native invocation."
+        },
+        {
+          "code": "ENUM_BINDINGS_UNDOCUMENTED",
+          "members": [
+            "GetEntryExitType",
+            "DepthMethod",
+            "PocketMethod",
+            "GetContainType",
+            "GetRetractType"
+          ],
+          "reason": "Strict LONG values retained. Similar enum names do not prove method-to-enum correspondence."
+        },
+        {
+          "code": "NUMERIC_UNITS_AND_COORDINATE_FRAME_UNDOCUMENTED",
+          "reason": "Raw scalar/VARIANT values and percentage flags retained. No degree/radian, millimetre/inch, percent-basis or coordinate-frame conversion."
+        }
+      ],
+      "parameter_reads_complete": true,
+      "native_getter_calls": 31,
+      "interface_queries": 3
+    },
+    "nc": {
+      "feed_planes": {
+        "values": {
+          "FeedPlaneType": 0,
+          "FeedPlaneDistance": 1.0,
+          "GetUseCurrentMachiningDepthForFeedPlane": false,
+          "GetClrPlaneUseSetupStatus": false
+        },
+        "numeric_units_verified": false,
+        "enum_binding_verified": false,
+        "conversion_performed": false,
+        "pointer_plane_getters_called": false,
+        "model_updated": false,
+        "production_qualified": false
+      },
+      "clearance_rapid": {
+        "setup_use": {
+          "GetClrPlaneUseSetupStatus": false,
+          "GetRpdPlaneUseSetupStatus": false
+        },
+        "local_planes": {
+          "GetClrPlanePrms": {
+            "distance_native": 2.5,
+            "basis_raw": 0,
+            "hresult": 0,
+            "unit_binding_verified": false,
+            "enum_binding_verified": false,
+            "conversion_performed": false
+          },
+          "GetRpdPlnPrms": {
+            "distance_native": 25.0,
+            "basis_raw": 3,
+            "hresult": 0,
+            "unit_binding_verified": false,
+            "enum_binding_verified": false,
+            "conversion_performed": false
+          }
+        },
+        "setup_planes": {
+          "ClearancePlaneType": 0,
+          "ClearancePlaneDistance": 5.0,
+          "RapidPlaneType": 3,
+          "RapidPlaneDistance": 25.0
+        },
+        "effective_selection": {
+          "clearance": "operation",
+          "rapid": "operation"
+        },
+        "effective_world_plane_computed": false
+      },
+      "feeds_compensation": {
+        "GetSpndlSpeed": 790.719954466879,
+        "GetTlpComp": 1,
+        "GetCNCComp": 0,
+        "GetRetractType": 0,
+        "XYFeed": 56.23600316168443
+      },
+      "z_feed": {
+        "value_native": 25.0,
+        "percentage": true,
+        "physical_feed_units_verified": false,
+        "percentage_basis_verified": false
+      },
+      "unread_feed_fields": [
+        "Per-link feed and cutting ratings not qualified by this scalar observation"
+      ]
+    }
+  },
+  "144": {
+    "levels": {
+      "levels": {
+        "machining_depth_native": 4.800000000000001,
+        "override_machining_depth": false,
+        "toolpath_parameters": {
+          "use_setup_definition_for_top_Z": false,
+          "use_minimum_Z": false,
+          "adjust_feature_height": false,
+          "first_cut_Z_type_raw": 1,
+          "use_setup_definition_for_bottom_Z": false,
+          "minimum_Z_native": 0.0,
+          "start_Z_native": 0.0
+        }
+      },
+      "setup": {
+        "transform_present": true,
+        "transform_matrix_decoded": false,
+        "origin_native": [
+          5.494979471443173e-10,
+          -2.718450464733735e-10,
+          26.0
+        ],
+        "axis_native": [
+          -0.0,
+          -0.0,
+          -1.0
+        ],
+        "axis_magnitude": 1.0,
+        "axis_normalized_for_report_only": [
+          -0.0,
+          -0.0,
+          -1.0
+        ],
+        "native_axis_modified": false
+      }
+    },
+    "finish": {
+      "SideAllow": {
+        "recorded": true,
+        "raw": 0.0,
+        "python_shape": {
+          "python_type": "float"
+        },
+        "original_variant_tag_verified": false
+      },
+      "SideCutAmt": {
+        "recorded": true,
+        "raw": 5.0,
+        "python_shape": {
+          "python_type": "float"
+        },
+        "original_variant_tag_verified": false
+      },
+      "FinalSideCutAmt": {
+        "recorded": true,
+        "raw": 0.0,
+        "python_shape": {
+          "python_type": "float"
+        },
+        "original_variant_tag_verified": false
+      },
+      "SpringPass": {
+        "recorded": true,
+        "raw": 0,
+        "python_shape": {
+          "python_type": "int"
+        },
+        "original_variant_tag_verified": false
+      },
+      "DepthMethod": {
+        "recorded": true,
+        "raw": 0,
+        "python_shape": {
+          "python_type": "int"
+        },
+        "original_variant_tag_verified": false
+      },
+      "Ramp": {
+        "recorded": true,
+        "raw": 0,
+        "python_shape": {
+          "python_type": "int"
+        },
+        "original_variant_tag_verified": false
+      },
+      "DepthAllow": {
+        "recorded": true,
+        "raw": 0.0,
+        "python_shape": {
+          "python_type": "float"
+        },
+        "original_variant_tag_verified": false
+      },
+      "FirstDepthCut": {
+        "recorded": true,
+        "raw": 10.0,
+        "python_shape": {
+          "python_type": "float"
+        },
+        "original_variant_tag_verified": false
+      },
+      "MaxDepthCut": {
+        "recorded": true,
+        "raw": 10.0,
+        "python_shape": {
+          "python_type": "float"
+        },
+        "original_variant_tag_verified": false
+      },
+      "FinalDepthCut": {
+        "recorded": true,
+        "raw": 0.0,
+        "python_shape": {
+          "python_type": "float"
+        },
+        "original_variant_tag_verified": false
+      },
+      "DepthAngle": {
+        "recorded": true,
+        "raw": 3.0,
+        "python_shape": {
+          "python_type": "float"
+        },
+        "original_variant_tag_verified": false
+      },
+      "CleanUpPassOpt": {
+        "recorded": true,
+        "raw": false,
+        "python_shape": {
+          "python_type": "bool"
+        },
+        "original_variant_tag_verified": false
+      },
+      "CutMethod": {
+        "recorded": true,
+        "raw": 0,
+        "python_shape": {
+          "python_type": "int"
+        },
+        "original_variant_tag_verified": false
+      },
+      "BottomFinOpt": {
+        "recorded": true,
+        "raw": false,
+        "python_shape": {
+          "python_type": "bool"
+        },
+        "original_variant_tag_verified": false
+      },
+      "PerimeterPassType": {
+        "recorded": true,
+        "raw": 1,
+        "python_shape": {
+          "python_type": "int"
+        },
+        "original_variant_tag_verified": false
+      },
+      "BottomFinMethod": {
+        "recorded": true,
+        "raw": 1,
+        "python_shape": {
+          "python_type": "int"
+        },
+        "original_variant_tag_verified": false
+      },
+      "OverridePrevAllow": {
+        "recorded": true,
+        "raw": false,
+        "python_shape": {
+          "python_type": "bool"
+        },
+        "original_variant_tag_verified": false
+      },
+      "GetPreviousAllowance": {
+        "recorded": true,
+        "raw": 0.5,
+        "python_shape": {
+          "python_type": "float"
+        },
+        "original_variant_tag_verified": false
+      },
+      "GetZAllowance": {
+        "recorded": true,
+        "raw": 0.0,
+        "python_shape": {
+          "python_type": "float"
+        },
+        "original_variant_tag_verified": false
+      },
+      "GetContainType": {
+        "recorded": true,
+        "raw": 0,
+        "python_shape": {
+          "python_type": "int"
+        },
+        "original_variant_tag_verified": false
+      },
+      "GetContainAllowance": {
+        "recorded": true,
+        "raw": 3.0,
+        "python_shape": {
+          "python_type": "float"
+        },
+        "original_variant_tag_verified": false
+      },
+      "GetTypeOfFirstCutZ": {
+        "recorded": true,
+        "raw": 1,
+        "python_shape": {
+          "python_type": "int"
+        },
+        "original_variant_tag_verified": false
+      },
+      "GetIsChamferMachining": {
+        "recorded": true,
+        "raw": false,
+        "python_shape": {
+          "python_type": "bool"
+        },
+        "original_variant_tag_verified": false
+      },
+      "GetChamferLength": {
+        "recorded": true,
+        "raw": 0.4,
+        "python_shape": {
+          "python_type": "float"
+        },
+        "original_variant_tag_verified": false
+      }
+    },
+    "leads": {
+      "lead_in": {
+        "LeadType": {
+          "recorded": true,
+          "raw": 1,
+          "python_shape": {
+            "python_type": "int"
+          },
+          "original_variant_tag_verified": false
+        },
+        "LeadAngle": {
+          "recorded": true,
+          "raw": 0.0,
+          "python_shape": {
+            "python_type": "float"
+          },
+          "original_variant_tag_verified": false
+        },
+        "ArcAngle": {
+          "recorded": true,
+          "raw": 45.0,
+          "python_shape": {
+            "python_type": "float"
+          },
+          "original_variant_tag_verified": false
+        },
+        "SidePassType": {
+          "recorded": true,
+          "raw": 0,
+          "python_shape": {
+            "python_type": "int"
+          },
+          "original_variant_tag_verified": false
+        },
+        "CutDepthType": {
+          "recorded": true,
+          "raw": 0,
+          "python_shape": {
+            "python_type": "int"
+          },
+          "original_variant_tag_verified": false
+        },
+        "StartAngle": {
+          "recorded": true,
+          "raw": 0.0,
+          "python_shape": {
+            "python_type": "float"
+          },
+          "original_variant_tag_verified": false
+        },
+        "GetArcRadius2": {
+          "recorded": true,
+          "raw": [
+            10.0,
+            true,
+            0.0
+          ],
+          "python_shape": {
+            "python_type": "tuple",
+            "length": 3,
+            "items": [
+              {
+                "python_type": "float"
+              },
+              {
+                "python_type": "bool"
+              },
+              {
+                "python_type": "float"
+              }
+            ]
+          },
+          "original_variant_tag_verified": false,
+          "decoded": {
+            "value_raw": 10.0,
+            "percent": true,
+            "incremental_raw": 0.0
+          }
+        },
+        "GetLeadOverlap2": {
+          "recorded": true,
+          "raw": [
+            10.0,
+            true,
+            0.0
+          ],
+          "python_shape": {
+            "python_type": "tuple",
+            "length": 3,
+            "items": [
+              {
+                "python_type": "float"
+              },
+              {
+                "python_type": "bool"
+              },
+              {
+                "python_type": "float"
+              }
+            ]
+          },
+          "original_variant_tag_verified": false,
+          "decoded": {
+            "value_raw": 10.0,
+            "percent": true,
+            "incremental_raw": 0.0
+          }
+        },
+        "GetLeadAmt2": {
+          "recorded": true,
+          "raw": [
+            52.0,
+            true,
+            0.0
+          ],
+          "python_shape": {
+            "python_type": "tuple",
+            "length": 3,
+            "items": [
+              {
+                "python_type": "float"
+              },
+              {
+                "python_type": "bool"
+              },
+              {
+                "python_type": "float"
+              }
+            ]
+          },
+          "original_variant_tag_verified": false,
+          "decoded": {
+            "value_raw": 52.0,
+            "percent": true,
+            "incremental_raw": 0.0
+          }
+        },
+        "GetIsSameLeadinout": {
+          "recorded": true,
+          "raw": false,
+          "python_shape": {
+            "python_type": "bool"
+          },
+          "original_variant_tag_verified": false
+        },
+        "GetFeedRate": {
+          "recorded": true,
+          "raw": [
+            100.0,
+            true
+          ],
+          "python_shape": {
+            "python_type": "tuple",
+            "length": 2,
+            "items": [
+              {
+                "python_type": "float"
+              },
+              {
+                "python_type": "bool"
+              }
+            ]
+          },
+          "original_variant_tag_verified": false,
+          "decoded": {
+            "value_raw": 100.0,
+            "percent": true
+          }
+        }
+      },
+      "lead_out": {
+        "LeadType": {
+          "recorded": true,
+          "raw": 1,
+          "python_shape": {
+            "python_type": "int"
+          },
+          "original_variant_tag_verified": false
+        },
+        "LeadAngle": {
+          "recorded": true,
+          "raw": 0.0,
+          "python_shape": {
+            "python_type": "float"
+          },
+          "original_variant_tag_verified": false
+        },
+        "ArcAngle": {
+          "recorded": true,
+          "raw": 45.0,
+          "python_shape": {
+            "python_type": "float"
+          },
+          "original_variant_tag_verified": false
+        },
+        "SidePassType": {
+          "recorded": true,
+          "raw": 0,
+          "python_shape": {
+            "python_type": "int"
+          },
+          "original_variant_tag_verified": false
+        },
+        "CutDepthType": {
+          "recorded": true,
+          "raw": 0,
+          "python_shape": {
+            "python_type": "int"
+          },
+          "original_variant_tag_verified": false
+        },
+        "StartAngle": {
+          "recorded": true,
+          "raw": 0.0,
+          "python_shape": {
+            "python_type": "float"
+          },
+          "original_variant_tag_verified": false
+        },
+        "GetArcRadius2": {
+          "recorded": true,
+          "raw": [
+            10.0,
+            true,
+            0.0
+          ],
+          "python_shape": {
+            "python_type": "tuple",
+            "length": 3,
+            "items": [
+              {
+                "python_type": "float"
+              },
+              {
+                "python_type": "bool"
+              },
+              {
+                "python_type": "float"
+              }
+            ]
+          },
+          "original_variant_tag_verified": false,
+          "decoded": {
+            "value_raw": 10.0,
+            "percent": true,
+            "incremental_raw": 0.0
+          }
+        },
+        "GetLeadOverlap2": {
+          "recorded": true,
+          "raw": [
+            10.0,
+            true,
+            0.0
+          ],
+          "python_shape": {
+            "python_type": "tuple",
+            "length": 3,
+            "items": [
+              {
+                "python_type": "float"
+              },
+              {
+                "python_type": "bool"
+              },
+              {
+                "python_type": "float"
+              }
+            ]
+          },
+          "original_variant_tag_verified": false,
+          "decoded": {
+            "value_raw": 10.0,
+            "percent": true,
+            "incremental_raw": 0.0
+          }
+        },
+        "GetLeadAmt2": {
+          "recorded": true,
+          "raw": [
+            52.0,
+            true,
+            0.0
+          ],
+          "python_shape": {
+            "python_type": "tuple",
+            "length": 3,
+            "items": [
+              {
+                "python_type": "float"
+              },
+              {
+                "python_type": "bool"
+              },
+              {
+                "python_type": "float"
+              }
+            ]
+          },
+          "original_variant_tag_verified": false,
+          "decoded": {
+            "value_raw": 52.0,
+            "percent": true,
+            "incremental_raw": 0.0
+          }
+        },
+        "GetIsSameLeadinout": {
+          "recorded": true,
+          "raw": true,
+          "python_shape": {
+            "python_type": "bool"
+          },
+          "original_variant_tag_verified": false
+        },
+        "GetFeedRate": {
+          "recorded": true,
+          "raw": [
+            100.0,
+            true
+          ],
+          "python_shape": {
+            "python_type": "tuple",
+            "length": 2,
+            "items": [
+              {
+                "python_type": "float"
+              },
+              {
+                "python_type": "bool"
+              }
+            ]
+          },
+          "original_variant_tag_verified": false,
+          "decoded": {
+            "value_raw": 100.0,
+            "percent": true
+          }
+        }
+      }
+    },
+    "nc": {
+      "feed_planes": {
+        "values": {
+          "FeedPlaneType": 0,
+          "FeedPlaneDistance": 1.0,
+          "GetUseCurrentMachiningDepthForFeedPlane": false,
+          "GetClrPlaneUseSetupStatus": false
+        },
+        "numeric_units_verified": false,
+        "enum_binding_verified": false,
+        "conversion_performed": false,
+        "pointer_plane_getters_called": false,
+        "model_updated": false,
+        "production_qualified": false
+      },
+      "clearance_rapid": {
+        "setup_use": {
+          "GetClrPlaneUseSetupStatus": false,
+          "GetRpdPlaneUseSetupStatus": false
+        },
+        "local_planes": {
+          "GetClrPlanePrms": {
+            "distance_native": 3.0,
+            "basis_raw": 0,
+            "hresult": 0,
+            "unit_binding_verified": false,
+            "enum_binding_verified": false,
+            "conversion_performed": false
+          },
+          "GetRpdPlnPrms": {
+            "distance_native": 25.0,
+            "basis_raw": 3,
+            "hresult": 0,
+            "unit_binding_verified": false,
+            "enum_binding_verified": false,
+            "conversion_performed": false
+          }
+        },
+        "setup_planes": {
+          "ClearancePlaneType": 0,
+          "ClearancePlaneDistance": 5.0,
+          "RapidPlaneType": 3,
+          "RapidPlaneDistance": 25.0
+        },
+        "effective_selection": {
+          "clearance": "operation",
+          "rapid": "operation"
+        },
+        "effective_world_plane_computed": false
+      },
+      "feeds_compensation": {
+        "GetSpndlSpeed": 790.7199544668789,
+        "GetTlpComp": 1,
+        "GetCNCComp": 1,
+        "GetRetractType": 0,
+        "XYFeed": 56.23600316168442
+      },
+      "z_feed": {
+        "value_native": 25.0,
+        "percentage": true,
+        "physical_feed_units_verified": false,
+        "percentage_basis_verified": false
+      },
+      "unread_feed_fields": [
+        "Per-link feed and cutting ratings not qualified by this scalar observation"
+      ]
+    }
+  }
+}
