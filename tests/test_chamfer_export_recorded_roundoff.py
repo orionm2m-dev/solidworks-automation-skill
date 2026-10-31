@@ -1,4 +1,4 @@
-"""Actual recorded body-mass roundoff through unchanged CL/WIP export cores."""
+"""Recorded body-mass roundoff in synthetic contexts through CL/WIP cores."""
 from copy import deepcopy
 import importlib.util
 import json
@@ -18,27 +18,39 @@ def module(name,path):
 
 cl_tests=module('recorded_mass_cl_fixtures',ROOT/'tests/test_chamfer_exports.py')
 wip_tests=module('recorded_mass_wip_fixtures',ROOT/'tests/test_chamfer_wip.py')
-RECORDED=json.loads((ROOT/'tests/testdata/chamfer_mass_roundoff_v2.json').read_text(encoding='utf-8'))
+RECORDED=json.loads((STAGE/'tests/testdata/body_mass_roundoff_v2.json').read_text(encoding='utf-8'))['mass_raw']
 
-def actual_observation():
-    # Full actual prior observation plus the newly captured actual route.
-    observed=deepcopy(RECORDED['before'])
-    observed.update(deepcopy(RECORDED['reconciled']))
+def recorded_loaded(tmp_path,monkeypatch):
+    # Reuse the existing synthetic route; retain only recorded numeric doubles.
+    loaded=cl_tests.case.__wrapped__(tmp_path,monkeypatch).loaded
+    loaded['state']['sw_reference']['solids'][0]['mass_raw']=deepcopy(RECORDED['saved_reference'])
+    return loaded
+
+
+def actual_observation(loaded):
+    observed=dict(state=deepcopy(loaded['state']),
+        catalogue=exports.validate_catalogue_authority(loaded),
+        selected_defaults=deepcopy(loaded['configured_contour']['defaults']),
+        selected_feature=deepcopy(loaded['cone_observation']['feature']),
+        settings=deepcopy(loaded['settings']),units=deepcopy(loaded['finish_payload']['unit_record']),
+        binding=deepcopy(next(v['assigned_tool'] for v in loaded['state']['operations'] if v['native_id']==267)))
+    observed['state']['sw_reference']['solids'][0]['mass_raw']=deepcopy(RECORDED['reconciled'])
     return observed
 
-def test_actual_recorded_projection_normalizes_only_mass_and_preserves_raw():
-    loaded=deepcopy(RECORDED['loaded']);observed=actual_observation()
+
+def test_actual_recorded_projection_normalizes_only_mass_and_preserves_raw(tmp_path,monkeypatch):
+    loaded=recorded_loaded(tmp_path,monkeypatch);observed=actual_observation(loaded)
     raw=deepcopy(observed)
     normalized,diagnostic=exports.verify_observed(loaded,observed)
     assert normalized==loaded['state'] and observed==raw
     assert diagnostic['relative_tolerance']==1e-12 and diagnostic['absolute_tolerance']==0.
-    # Saved R114 versus V2 has ten deltas; prior fresh-before versus V2 has eight.
+    # Saved-reference versus later capture has ten deltas; the fresh pair has eight.
     assert len(diagnostic['accepted_numeric_deltas'])==10
     assert max(v['relative_delta'] for v in diagnostic['accepted_numeric_deltas'])<1e-12
 
 @pytest.mark.parametrize('kind',['outside_mass','beyond_bound','nonfinite','wrong_shape','protected_count'])
-def test_actual_recorded_projection_rejects_non_roundoff_changes(kind):
-    loaded=deepcopy(RECORDED['loaded']);observed=actual_observation()
+def test_actual_recorded_projection_rejects_non_roundoff_changes(kind,tmp_path,monkeypatch):
+    loaded=recorded_loaded(tmp_path,monkeypatch);observed=actual_observation(loaded)
     body=observed['state']['sw_reference']['solids'][0]
     if kind=='outside_mass':body['box_m'][0]+=1e-5
     elif kind=='beyond_bound':body['mass_raw'][0]*=1.+1e-11
@@ -48,12 +60,14 @@ def test_actual_recorded_projection_rejects_non_roundoff_changes(kind):
     with pytest.raises(ValueError):exports.verify_observed(loaded,observed)
 
 def inject_recorded_pair(f):
-    reference=deepcopy(RECORDED['before']['state']['sw_reference'])
-    actual=deepcopy(RECORDED['reconciled']['state']['sw_reference'])
+    reference=deepcopy(f.loaded['state']['sw_reference'])
+    reference['solids'][0]['mass_raw']=deepcopy(RECORDED['before'])
+    actual=deepcopy(reference)
+    actual['solids'][0]['mass_raw']=deepcopy(RECORDED['reconciled'])
     f.loaded['state']['sw_reference']=reference
     f.loaded['current_context_sha256']=exports._digest(exports.group.current_projection(f.loaded))
     def drift(label,observed):
-        # Both native-read values are from the failed real V2 receipt.
+        # Both mass arrays preserve the recorded native floating-point values.
         observed['state']['sw_reference']=deepcopy(actual if len(f.control.labels)%2 else reference)
     f.control.drift=drift
     return reference,actual

@@ -4,11 +4,14 @@ from pathlib import Path
 import importlib.util
 import json
 import math
+import os
+import sys
 import pytest
 
 STAGE=Path(__file__).resolve().parent
-MODULE=STAGE/'sw_cam_chamfer_approach_correction.py'
-if not MODULE.is_file():MODULE=STAGE.parent/'scripts/sw_cam_chamfer_approach_correction.py'
+ROOT=Path(os.environ.get('SOLIDWORKS_SKILL_ROOT',STAGE.parent))
+sys.path.insert(0,str(ROOT))
+MODULE=ROOT/'scripts/sw_cam_chamfer_approach_correction.py'
 spec=importlib.util.spec_from_file_location('bounded_approach',MODULE)
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 
@@ -230,14 +233,14 @@ def test_terminal_rejects_incomplete_or_unapproved_result(monkeypatch,fault):
 
 
 def test_actual_native_schema_regression_has_no_nc_in_selected_defaults():
-    v=json.loads((STAGE/'testdata/approach_configured_actual.json').read_text(encoding='utf8'))
+    v=json.loads((ROOT/'tests/testdata/approach_configured_actual.json').read_text(encoding='utf8'))
     assert 'nc' not in v['before']['selected_defaults']
     assert v['before']['selected_defaults']==v['configured']['selected_defaults']
     m.verify_capture(v['loaded'],v['before'],v['configured'],phase='configured',expected_approach=v['expected'])
 
 
 def test_actual_native_schema_still_protects_chamfer_depth():
-    v=json.loads((STAGE/'testdata/approach_configured_actual.json').read_text(encoding='utf8'))
+    v=json.loads((ROOT/'tests/testdata/approach_configured_actual.json').read_text(encoding='utf8'))
     v['configured']['selected_defaults']['finish']['GetChamferLength']=.3
     with pytest.raises(ValueError):
         m.verify_capture(v['loaded'],v['before'],v['configured'],phase='configured',expected_approach=v['expected'])
@@ -292,7 +295,7 @@ def test_continuation_terminal_separates_inherited_and_new_actions(monkeypatch):
     with pytest.raises(ValueError):m.validate_terminal(r)
 
 def test_validate_only_rejects_stale_native_context_before_registration(monkeypatch):
-    v=json.loads((STAGE/'testdata/approach_configured_actual.json').read_text(encoding='utf8'))
+    v=json.loads((ROOT/'tests/testdata/approach_configured_actual.json').read_text(encoding='utf8'))
     context={k:{} for k in m.group.CURRENT_KEYS}
     context.update(deepcopy(v['loaded']))
     context['state']=deepcopy(v['before']['state'])
@@ -313,7 +316,17 @@ def test_validate_only_rejects_stale_native_context_before_registration(monkeypa
 
 
 def v2_actual():
-    return json.loads((STAGE/'testdata/approach_reconciled_v2_actual.json').read_text(encoding='utf8'))
+    # Only the mass-property observations are recorded; the route is synthetic.
+    values=json.loads((STAGE/'testdata/body_mass_roundoff_v2.json').read_text(encoding='utf8'))['mass_raw']
+    loaded,before=fixture()
+    before['state']['sw_reference']['solids'][0]['mass_raw']=deepcopy(values['before'])
+    configured=deepcopy(before)
+    for key in ('catalogue','selected_feature'):configured.pop(key)
+    configured['approach']=deepcopy(loaded['approach_plan']['expected'])
+    reconciled=deepcopy(configured)
+    reconciled['state']['sw_reference']['solids'][0]['mass_raw']=deepcopy(values['reconciled'])
+    return dict(loaded=loaded,before=before,configured=configured,reconciled=reconciled,
+                expected=deepcopy(loaded['approach_plan']['expected']))
 
 
 def test_actual_v2_mass_roundoff_is_logged_and_raw_observations_unchanged():
