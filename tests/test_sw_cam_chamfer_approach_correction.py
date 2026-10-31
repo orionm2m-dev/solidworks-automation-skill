@@ -47,7 +47,7 @@ def fixture():
         state=state,approach_plan=plan)
     before=dict(state=deepcopy(state),approach=deepcopy(baseline),settings={'protected':'FACE'},
         binding={'native_id':249},units={'metric':True},
-        selected_defaults={'nc':{'GetClrPlaneUseSetupStatus':True,'XYFeed':500.},'finish':{'length':.2}},
+        selected_defaults={'finish':{'GetChamferLength':.2},'level_state':{'machining_depth_native':.5}},
         catalogue=[{'native_id':i} for i in range(18)],selected_feature={'id':264,'depth':.2})
     return loaded,before
 
@@ -88,8 +88,6 @@ class Backend:
         if self.fault=='bool_hresult':return False
         if self.fault!='readback':
             m.put(self.value['approach'],m.field_path(change),change['after'])
-            if change['key']=='clearance_use_setup':
-                self.value['selected_defaults']['nc']['GetClrPlaneUseSetupStatus']=change['after']
         self.value['state']['document']['needs_save']=True
         self.value['state']['operations'][-1].update(toolpath_generated=False,toolpath_record_counts=[])
         return None if m.SPECS[change['key']][4]=='property' else 0
@@ -124,7 +122,7 @@ def test_success_one_group_two_full_captures_one_gtp_save(monkeypatch):
     assert sum(x.startswith('full:') for x in b.calls)==2
     assert r['generated_record_counts']==[31]
     assert r['final']['approach']['leads']['lead_out']['GetIsSameLeadinout'] is False
-    assert r['final']['selected_defaults']['nc']['XYFeed']==500.
+    assert r['final']['approach']['leads']['lead_in']['GetFeedRate']==[100.,True]
 
 
 @pytest.mark.parametrize('fault',['setter_raises','bool_hresult','readback','old_operation'])
@@ -211,7 +209,8 @@ def test_terminal_flat_checkpoint_uses_saved_source_and_real_generated_count(mon
     assert cp['source_sha256']=='b'*64
     assert cp['context']['source_sha256']=='b'*64
     assert cp['context']['configured_contour']['record_counts']==[31]
-    assert cp['context']['configured_contour']['defaults']['nc']['GetClrPlaneUseSetupStatus'] is False
+    assert cp['context']['approach_settings']['nc']['GetClrPlaneUseSetupStatus'] is False
+    assert 'nc' not in cp['context']['configured_contour']['defaults']
     assert cp['context']['approach_settings']==r['final']['approach']
     assert cp['context']['operation_checkpoint']['final_observation']['tools']==r['final']['catalogue']
     assert cp['context']['authority_kind']=='saved_contour_approach_geometry_review_pending'
@@ -227,4 +226,67 @@ def test_terminal_rejects_incomplete_or_unapproved_result(monkeypatch,fault):
     elif fault=='accepted_geometry':r['geometry_acceptance_complete']=True
     elif fault=='phase_proofs':r['phase_proofs_verified']=False
     else:r['final']['approach']['leads']['lead_in']['GetFeedRate']=[99.,True]
+    with pytest.raises(ValueError):m.validate_terminal(r)
+
+
+def test_actual_native_schema_regression_has_no_nc_in_selected_defaults():
+    v=json.loads((STAGE/'testdata/approach_configured_actual.json').read_text(encoding='utf8'))
+    assert 'nc' not in v['before']['selected_defaults']
+    assert v['before']['selected_defaults']==v['configured']['selected_defaults']
+    m.verify_capture(v['loaded'],v['before'],v['configured'],phase='configured',expected_approach=v['expected'])
+
+
+def test_actual_native_schema_still_protects_chamfer_depth():
+    v=json.loads((STAGE/'testdata/approach_configured_actual.json').read_text(encoding='utf8'))
+    v['configured']['selected_defaults']['finish']['GetChamferLength']=.3
+    with pytest.raises(ValueError):
+        m.verify_capture(v['loaded'],v['before'],v['configured'],phase='configured',expected_approach=v['expected'])
+
+
+def continuation_fixture(monkeypatch,drift=False):
+    loaded,before=fixture();j=Journal();b=Backend(loaded,before,j)
+    configured=deepcopy(before)
+    configured['approach']=deepcopy(loaded['approach_plan']['expected'])
+    b.value=deepcopy(configured)
+    if drift:b.value['approach']['local_planes']['GetRpdPlnPrms'][0]=49.
+    b.capture_reconcile=lambda label: b.capture_narrow(label)
+    # Archived narrow configured projection has no repeated catalogue/geometry.
+    narrow=deepcopy(configured);narrow.pop('catalogue');narrow.pop('selected_feature')
+    j.report.update(before=deepcopy(before),inherited_configured=narrow,
+        loaded_context_before=deepcopy(loaded),plan=deepcopy(loaded['approach_plan']),continuation={'unit_test':True})
+    def forbidden(*args,**kwargs):raise AssertionError('SETTER REPLAY IS FORBIDDEN')
+    b.write_change=forbidden;b.read_change=forbidden
+    return m.run_continuation(b,j,loaded),b
+
+
+def test_continuation_reuses_baseline_without_any_setter_calls(monkeypatch):
+    r,b=continuation_fixture(monkeypatch)
+    assert r['status']=='review_required' and r['readback_verified']
+    assert b.calls.count('gtp')==b.calls.count('save')==1
+    assert [v for v in b.calls if v.startswith('full:')]==['full:saved']
+    assert r['reused_full_capture_count']==r['actual_full_capture_count']==1
+    assert r['full_capture_count']==2
+    assert set(r['actions'])=={'GenerateToolpath','SaveActiveDocument'}
+
+
+def test_continuation_drift_prevents_generation_and_save(monkeypatch):
+    r,b=continuation_fixture(monkeypatch,drift=True)
+    assert r['status']=='error' and not r['readback_verified']
+    assert 'gtp' not in b.calls and 'save' not in b.calls
+
+
+def test_continuation_terminal_separates_inherited_and_new_actions(monkeypatch):
+    r=terminal_fixture(monkeypatch)
+    inherited={k:v for k,v in r['actions'].items() if k.startswith('field:')}
+    failed=dict(actions=deepcopy(inherited),before=deepcopy(r['before']),
+        configured=deepcopy(r['configured']),loaded_context_before=deepcopy(r['loaded_context_before']))
+    r.update(continuation={'test':True},inherited_actions=inherited,
+        actions={k:v for k,v in r['actions'].items() if not k.startswith('field:')},
+        inherited_configured=deepcopy(r['configured']),reconciled=deepcopy(r['configured']),
+        reused_full_capture_count=1,actual_full_capture_count=1)
+    monkeypatch.setattr(m,'read_continuation_evidence',lambda c:failed)
+    cp=m.validate_terminal(r)
+    assert cp['context']['configured_contour']['record_counts']==[31]
+    assert len(r['inherited_actions'])==9 and len(r['actions'])==2
+    first=next(iter(inherited));r['actions'][first]=deepcopy(inherited[first])
     with pytest.raises(ValueError):m.validate_terminal(r)

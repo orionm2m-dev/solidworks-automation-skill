@@ -146,9 +146,10 @@ def verify_capture(loaded,before,value,*,phase,expected_approach,saved_sha=None)
     counts=verify_route(before['state'],value['state'],loaded['configured_contour']['native_id'],phase,saved_sha=saved_sha)
     for key in ('settings','binding','units'):
         require(group.exact(before[key],value[key]),'Protected settings changed: '+key)
-    wanted_defaults=deepcopy(before['selected_defaults'])
-    wanted_defaults['nc']['GetClrPlaneUseSetupStatus']=expected_approach['nc']['GetClrPlaneUseSetupStatus']
-    require(group.exact(wanted_defaults,value['selected_defaults']),'Protected Contour settings changed')
+    # The actual Contour reader returns finish/level_state, not NC planes.
+    # NC and lead changes are independently checked in the approach projection.
+    require(group.exact(before['selected_defaults'],value['selected_defaults']),
+            'Protected Contour settings changed')
     require(group.exact(value['approach'],expected_approach),'Unapproved NC/lead field changed')
     if 'catalogue' in value:
         require(len(value['catalogue'])==18 and group.exact(value['catalogue'],before['catalogue'])
@@ -165,15 +166,46 @@ class Journal(generation.Journal):
     def marker_state(self):
         value=super().marker_state();value['scope']=SCOPE
         value['recipe_sha256']=self.report['recipe_pin']['sha256']
+        if self.report.get('continuation'):
+            value['continuation_receipt_sha256']=self.report['continuation']['failed_receipt_pin']['sha256']
         return value
+
+
+def generate_save_finish(backend,journal,loaded,before,states):
+    r=journal.report
+    value=backend.generate(lambda:journal.pending('GenerateToolpath'));journal.returned('GenerateToolpath',value)
+    require(type(value) is int and value==0,'Strict single-target GTP HRESULT0 required')
+    backend.refresh_dirty();generated=backend.capture_narrow('generated');r['generated']=generated
+    r['generated_record_counts']=verify_capture(loaded,before,generated,phase='generated',expected_approach=states[-1])
+    r['actions']['GenerateToolpath']['readback_verified']=True;journal.persist()
+    expected=save_projection(generated);r['save_stage']={}
+    def capture(label):
+        if label=='before':backend.boundary();return deepcopy(expected)
+        final=backend.capture_full('saved');r['full_capture_count']+=1;r['actual_full_capture_count']+=1;r['final']=final
+        counts=verify_capture(loaded,before,final,phase='generated',expected_approach=states[-1],saved_sha=r['saved_source_sha256'])
+        require(group.exact(counts,r['generated_record_counts']),'Save changed generated target count')
+        journal.persist();return save_projection(final)
+    def save():
+        value=backend.save();journal.returned('SaveActiveDocument',value);return value
+    def saved_hash():
+        digest=backend.saved_hash(r['save_stage'])
+        require(digest!=r['initial_source_sha256'],'Save did not establish changed source bytes')
+        r['saved_source_sha256']=digest;journal.persist();return digest
+    run_one_existing_save(r['save_stage'],capture=capture,
+        verify=lambda v:require(group.exact(v,expected),'Save changed accepted route/settings'),
+        guard=backend.boundary,claim=lambda:journal.pending('SaveActiveDocument'),persist=journal.persist,
+        save=save,saved_hash=saved_hash)
+    r['actions']['SaveActiveDocument']['readback_verified']=True
+    backend.finish();require(r['full_capture_count']==2,'Exactly two full captures required')
+    r.update(status='review_required',phase='finished',readback_verified=True,model_saved=True)
 
 
 def run_backend(backend,journal,loaded):
     r=journal.report;plan=loaded['approach_plan'];states=planned_states(plan)
-    r.update(full_capture_count=0,mutation_attempted=False,readback_verified=False,model_saved=False,
+    r.update(full_capture_count=0,reused_full_capture_count=0,actual_full_capture_count=0,mutation_attempted=False,readback_verified=False,model_saved=False,
         automatic_retry=False,automatic_replay=False,phase='preflight',status='running',actions={})
     try:
-        backend.start();before=backend.capture_full('before');r['full_capture_count']+=1;r['before']=before
+        backend.start();before=backend.capture_full('before');r['full_capture_count']+=1;r['actual_full_capture_count']+=1;r['before']=before
         exports.verify_observed(loaded,before)
         validate_plan(plan,loaded,before['approach']);journal.persist()
         for change in plan['changes']:
@@ -185,33 +217,9 @@ def run_backend(backend,journal,loaded):
             backend.refresh_dirty();actual=backend.read_change(change)
             require(group.exact(actual,change['after']),'Immediate native readback differs')
             r['actions'][label].update(readback_verified=True,observed=deepcopy(actual));journal.persist()
-        configured=backend.capture_narrow('configured');r['configured']=configured
+        configured=backend.capture_narrow('configured');r['configured']=configured;r['phase']='verify_configured'
         verify_capture(loaded,before,configured,phase='configured',expected_approach=states[-1]);journal.persist()
-        value=backend.generate(lambda:journal.pending('GenerateToolpath'));journal.returned('GenerateToolpath',value)
-        require(type(value) is int and value==0,'Strict single-target GTP HRESULT0 required')
-        backend.refresh_dirty();generated=backend.capture_narrow('generated');r['generated']=generated
-        r['generated_record_counts']=verify_capture(loaded,before,generated,phase='generated',expected_approach=states[-1])
-        r['actions']['GenerateToolpath']['readback_verified']=True;journal.persist()
-        expected=save_projection(generated);r['save_stage']={}
-        def capture(label):
-            if label=='before':backend.boundary();return deepcopy(expected)
-            final=backend.capture_full('saved');r['full_capture_count']+=1;r['final']=final
-            counts=verify_capture(loaded,before,final,phase='generated',expected_approach=states[-1],saved_sha=r['saved_source_sha256'])
-            require(group.exact(counts,r['generated_record_counts']),'Save changed generated target count')
-            journal.persist();return save_projection(final)
-        def save():
-            value=backend.save();journal.returned('SaveActiveDocument',value);return value
-        def saved_hash():
-            digest=backend.saved_hash(r['save_stage'])
-            require(digest!=r['initial_source_sha256'],'Save did not establish changed source bytes')
-            r['saved_source_sha256']=digest;journal.persist();return digest
-        run_one_existing_save(r['save_stage'],capture=capture,
-            verify=lambda v:require(group.exact(v,expected),'Save changed accepted route/settings'),
-            guard=backend.boundary,claim=lambda:journal.pending('SaveActiveDocument'),persist=journal.persist,
-            save=save,saved_hash=saved_hash)
-        r['actions']['SaveActiveDocument']['readback_verified']=True
-        backend.finish();require(r['full_capture_count']==2,'Exactly two full captures required')
-        r.update(status='review_required',phase='finished',readback_verified=True,model_saved=True)
+        generate_save_finish(backend,journal,loaded,before,states)
     except Exception as exc:
         r.update(status='uncertain' if r.get('mutation_attempted') else 'error',failed_phase=r['phase'],
             phase='finished',issue=_error(exc),readback_verified=False)
@@ -277,6 +285,23 @@ class NativeBackend(generation.NativeBackend):
 
     def capture_full(self,label):
         value=exports.ReadBackend.capture_export(self,label)
+        value['approach']=self.read_approach(label)
+        return value
+
+    def close(self):
+        try:super().close()
+        finally:
+            if self.session is not None:self.report['messages']=self.session.summary()
+            self.persist()
+
+    def capture_reconcile(self,label):
+        # Rebind live headers without a duplicate full catalogue/feature capture.
+        self.boundary();diagnostic=dict(phase=label)
+        self.report.setdefault('header_observations',[]).append(diagnostic);self.persist()
+        state,native=self.capture._capture_headers(self.ctx,self.clsid,self.loaded['state'],21,diagnostic)
+        self.native,self.current_state=native,deepcopy(state)
+        value=dict(state=state,**self.read_settings(label))
+        value['selected_defaults']=self.operation_defaults(self.args['operation_native_id'],label)
         value['approach']=self.read_approach(label)
         return value
 
@@ -378,16 +403,18 @@ def validate_terminal(r):
         counts=verify_capture(loaded,r['before'],r[key],phase=phase,expected_approach=states[-1],
             saved_sha=r['saved_source_sha256'] if key=='final' else None)
         if phase=='generated':require(group.exact(counts,r['generated_record_counts']),'Target counts differ')
+    actions=dict(r.get('inherited_actions',{}),**r['actions'])
+    require(not set(r.get('inherited_actions',{})).intersection(r['actions']),'Inherited dispatch cannot repeat')
     expected={'GenerateToolpath','SaveActiveDocument'}
     for change in r['plan']['changes']:
         label='field:'+(change['side']+':' if change['side'] else '')+change['key'];expected.add(label)
-        action=r['actions'][label];prop=SPECS[change['key']][4]=='property'
+        action=actions[label];prop=SPECS[change['key']][4]=='property'
         require(group.exact(action['observed'],change['after']),'Action readback differs')
         require(action['native_return_type']=='NoneType' and action['native_return_value'] is None if prop else
             action['native_return_type']=='int' and type(action['native_return_value']) is int and action['native_return_value']==0,
             'Setter outcome differs')
-    require(set(r['actions'])==expected,'Exact action inventory required')
-    for label,action in r['actions'].items():
+    require(set(actions)==expected,'Exact effective action inventory required')
+    for label,action in actions.items():
         require(action['attempted'] is True and action['returned'] is True and action['pending'] is False
             and action['readback_verified'] is True,'Pending or incomplete action')
     for label in ('GenerateToolpath','SaveActiveDocument'):
@@ -402,9 +429,169 @@ def validate_terminal(r):
         and transition['strict_save_return']==0,'Strict saved source transition required')
     require(group.exact(save['before'],save_projection(r['generated']))
         and group.exact(save['after'],save_projection(r['final'])),'Save projection differs')
+    require(r['actual_full_capture_count']==(1 if r.get('continuation') else 2),
+            'Exact new full capture count required')
+    if r.get('continuation'):validate_continuation_report(r)
     clean_events(r)
     return make_checkpoint(r)
 
+
+def setter_actions(plan):
+    return {'field:'+(c['side']+':' if c['side'] else '')+c['key']:c for c in plan['changes']}
+
+
+def verify_setter_actions(actions,plan):
+    expected=setter_actions(plan)
+    require(set(actions)==set(expected),'Exactly completed historical setters required')
+    for label,change in expected.items():
+        a=actions[label];prop=SPECS[change['key']][4]=='property'
+        require(a['attempted'] is True and a['returned'] is True and a['pending'] is False
+            and a['readback_verified'] is True and group.exact(a['observed'],change['after']),
+            'Incomplete historical setter; never resume')
+        require(a['native_return_type']=='NoneType' and a['native_return_value'] is None if prop else
+            a['native_return_type']=='int' and type(a['native_return_value']) is int and a['native_return_value']==0,
+            'Historical setter outcome differs')
+
+
+def verify_failed_configuration(failed):
+    require(failed['scope']==SCOPE and failed['status']=='uncertain' and failed['phase']=='finished'
+        and failed['readback_verified'] is False and failed['model_saved'] is False
+        and failed['mutation_attempted'] is True and failed['full_capture_count']==1
+        and failed['phase_proofs_verified'] is True,'Exact pre-generation failed state required')
+    require(failed.get('issue',{}).get('type')=='KeyError'
+        and any(v.get('function')=='verify_capture' for v in failed['issue'].get('locations',[]))
+        and not any(k in failed for k in ('generated','final','save_stage','saved_source_sha256',
+            'source_transition','cleanup_issue','receipt_write_error','phase_proof_error')),
+        'Only completed configuration verifier failure can continue')
+    require(all(failed[k] is False for k in FORBIDDEN),'Failed attempt had an out-of-scope action')
+    verify_setter_actions(failed['actions'],failed['plan'])
+    loaded=failed['loaded_context_before'];states=planned_states(failed['plan'])
+    exports.verify_observed(loaded,failed['before'])
+    validate_plan(failed['plan'],loaded,failed['before']['approach'])
+    verify_capture(loaded,failed['before'],failed['configured'],phase='configured',expected_approach=states[-1])
+    require(failed['initial_source_sha256']==loaded['source_sha256']
+        and failed['setter_interface_audit']['all_resolved'] is True,'Failed baseline authority differs')
+    # The original exception path persisted the last active event snapshot;
+    # close() did not refresh it. Do not invent historical disconnection proof.
+    events=failed['messages']
+    require(events.get('subscribed') is True and type(events.get('active')) is bool
+        and type(events.get('disconnected')) is bool and not any(events.get(k) for k in
+        ('event_count','events','overflow','callback_errors','callback_error_count',
+         'subscription_error','disconnect_errors')),'Historical event errors prevent continuation')
+    return failed
+
+
+def continuation_marker_path(report):
+    c=report['continuation']
+    key=_digest(dict(scope=SCOPE,source=common._key(report['source_path']),
+        source_sha256=report['initial_source_sha256'],failed_receipt_sha256=c['failed_receipt_pin']['sha256']))
+    return common.local_evidence_root()/('contour_approach_continue_'+key+'.json')
+
+
+def read_continuation_evidence(c):
+    failed,_=read_pin(c['failed_receipt_pin']['path'],c['failed_receipt_pin']['sha256'])
+    old_module=failed['module_pin'];archive=c['failed_module_archive_pin']
+    require(archive['sha256']==old_module['sha256'] and common._key(archive['path'])!=common._key(old_module['path']),
+        'Exact distinct original module archive required')
+    common._check([archive,c['original_receipt_pin'],c['original_marker_pin']])
+    require(c['original_receipt_pin']['sha256']==c['failed_receipt_pin']['sha256']
+        and common._key(c['original_receipt_pin']['path'])==common._key(failed['receipt_path']),
+        'Original failed receipt changed')
+    marker,marker_pin=read_pin(c['failed_marker_pin']['path'],c['failed_marker_pin']['sha256'])
+    old_marker=marker_path(failed['source_path'],failed['initial_source_sha256'],failed['operation_native_id'])
+    require(c['original_marker_pin']['sha256']==marker_pin['sha256']
+        and common._key(c['original_marker_pin']['path'])==common._key(old_marker)
+        and group.exact(marker,Journal(failed,failed['receipt_path'],old_marker).marker_state()),
+        'Original failed once-marker changed')
+    # Only the superseded writer code may relocate; no other pin is refreshed.
+    matches=[v for v in failed['live_pins'] if common._key(v['path'])==common._key(old_module['path'])]
+    require(matches==[old_module],'One exact superseded writer pin required')
+    common._check([v for v in failed['live_pins'] if v not in matches])
+    common._check(failed['offline_proof_pins']);common._check(failed['bootstrap_export_pins'])
+    verify_failed_configuration(failed)
+    return failed
+
+
+def validate_continuation_report(r):
+    failed=read_continuation_evidence(r['continuation'])
+    require(group.exact(r['inherited_actions'],failed['actions'])
+        and set(r['actions'])=={'GenerateToolpath','SaveActiveDocument'},'Setters must be inherited, never replayed')
+    require(group.exact(r['before'],failed['before'])
+        and group.exact(r['inherited_configured'],failed['configured'])
+        and group.exact(r['configured'],failed['configured'])
+        and group.exact(r['reconciled'],failed['configured']), 'Fresh configured reconciliation differs')
+    require(r['reused_full_capture_count']==1 and r['actual_full_capture_count']==1
+        and r['full_capture_count']==2,'Exact reused/new read counts required')
+    require(group.exact(group.current_projection(r['loaded_context_before']),
+        group.current_projection(failed['loaded_context_before'])),'Historical baseline projection differs')
+
+
+def run_continuation(backend,journal,loaded):
+    r=journal.report;before=r['before'];states=planned_states(r['plan'])
+    r.update(full_capture_count=1,reused_full_capture_count=1,actual_full_capture_count=0,
+        mutation_attempted=False,readback_verified=False,model_saved=False,
+        automatic_retry=False,automatic_replay=False,status='running',phase='reconcile_configured',actions={})
+    try:
+        backend.start();actual=backend.capture_reconcile('continuation_reconcile');r['reconciled']=actual
+        verify_capture(r['loaded_context_before'],before,actual,phase='configured',expected_approach=states[-1])
+        require(group.exact(actual,r['inherited_configured']),'Current configured state differs; no dispatch')
+        r['configured']=actual;journal.persist()
+        generate_save_finish(backend,journal,r['loaded_context_before'],before,states)
+    except Exception as exc:
+        r.update(status='uncertain' if r.get('mutation_attempted') else 'error',failed_phase=r['phase'],
+            phase='finished',issue=_error(exc),readback_verified=False)
+    finally:
+        try:backend.close()
+        except Exception as exc:r.update(status='uncertain',readback_verified=False,cleanup_issue=_error(exc))
+        journal.persist()
+    return r
+
+
+RESUME_FIELDS={'failed_receipt_path','failed_receipt_sha256','failed_marker_path','failed_marker_sha256',
+    'failed_module_archive_path','failed_module_archive_sha256'}
+
+
+def load_continuation_inputs(p):
+    failed,receipt_pin=read_pin(p['failed_receipt_path'],p['failed_receipt_sha256'])
+    old_marker=marker_path(failed['source_path'],failed['initial_source_sha256'],failed['operation_native_id'])
+    c=dict(failed_receipt_pin=receipt_pin,failed_marker_pin=common._pin(p['failed_marker_path']),
+        failed_module_archive_pin=common._pin(p['failed_module_archive_path']),
+        original_receipt_pin=common._pin(failed['receipt_path']),original_marker_pin=common._pin(old_marker))
+    require(c['failed_marker_pin']['sha256']==p['failed_marker_sha256']
+        and c['failed_module_archive_pin']['sha256']==p['failed_module_archive_sha256'],'Continuation evidence pin differs')
+    read_continuation_evidence(c)
+    require(failed['process_id']==p['process_id'] and common._key(failed['source_path'])==common._key(p['expected_document_path'])
+        and failed['initial_source_sha256']==p['expected_source_sha256']==_file_hash(p['expected_document_path']),
+        'Existing unsaved source/process differs')
+    for prefix,field in (('checkpoint_receipt','parent_pin'),('recipe','recipe_pin'),('nc_observation','nc_observation_pin'),
+            ('clearance_observation','pointer_observation_pin')):
+        require(p[prefix+'_sha256']==failed[field]['sha256']
+            and common._key(p[prefix+'_path'])==common._key(failed[field]['path']),'Continuation parent inputs differ')
+    require(common._key(p['historical_source_path'])==common._key(failed['historical_source_pin']['path']),
+        'Historical source archive differs')
+    current=common._pin(__file__);old=failed['module_pin']
+    live=common._merge([v for v in failed['live_pins'] if v!=old],[current])
+    offline=common._merge(failed['offline_proof_pins'],list(c.values()))
+    common._check(live);common._check(offline);require(len(live)<=64,'Bounded continuation closure required')
+    original=deepcopy(failed['loaded_context_before'])
+    original.update(pins=live,offline_export_proof_pins=offline)
+    loaded=deepcopy(original)
+    loaded.update(state=deepcopy(failed['configured']['state']),continuation=c,
+        continuation_before_context=original,continuation_failed=failed,approach_plan=deepcopy(failed['plan']))
+    return loaded
+
+
+def prepare_continuation(p,loaded):
+    failed=loaded['continuation_failed']
+    marker=continuation_marker_path(dict(continuation=loaded['continuation'],source_path=failed['source_path'],
+        initial_source_sha256=failed['initial_source_sha256']))
+    report,marker=prepare(p,loaded,marker_override=marker)
+    report.update(continuation=deepcopy(loaded['continuation']),loaded_context_before=deepcopy(loaded['continuation_before_context']),
+        before=deepcopy(failed['before']),inherited_configured=deepcopy(failed['configured']),
+        inherited_actions=deepcopy(failed['actions']),
+        inherited_event_disconnect_verified=failed['messages']['disconnected'] is True
+            and failed['messages']['active'] is False,inherited_setter_interface_audit=deepcopy(failed['setter_interface_audit']))
+    return report,marker
 
 PARAMS = planes.PARAMS | {
  'nc_observation_path','nc_observation_sha256','clearance_observation_path','clearance_observation_sha256',
@@ -413,8 +600,9 @@ PARAMS = planes.PARAMS | {
 
 def validate_request(request):
     require(type(request) is dict and set(request)=={'action','params'} and
-        request['action']=='correct_saved_contour_approach','Exact grouped correction action required')
-    p=request['params'];require(type(p) is dict and set(p)==PARAMS,'Exact correction request fields required')
+        request['action'] in ('correct_saved_contour_approach','continue_configured_contour_approach'),'Exact grouped correction action required')
+    p=request['params'];fields=PARAMS|RESUME_FIELDS if request['action']=='continue_configured_contour_approach' else PARAMS
+    require(type(p) is dict and set(p)==fields,'Exact correction request fields required')
     base={k:v for k,v in p.items() if k in planes.PARAMS};base['module_sha256']=_file_hash(planes.__file__)
     planes.validate_request(dict(action='read_nc_planes_and_leads',params=base))
     require(p['module_sha256']==_file_hash(__file__),'Exact correction module required')
@@ -466,9 +654,9 @@ def load_inputs(p):
         correction_retired_pins=retired,approach_baseline=baseline)
 
 
-def prepare(p,loaded):
+def prepare(p,loaded,*,marker_override=None):
     target=loaded['configured_contour']
-    marker=marker_path(p['expected_document_path'],p['expected_source_sha256'],target['native_id'])
+    marker=marker_override or marker_path(p['expected_document_path'],p['expected_source_sha256'],target['native_id'])
     receipt=common._local_receipt(p['receipt_path'])
     protected={common._key(v['path']) for v in loaded['pins']+loaded['offline_export_proof_pins']}
     protected.add(common._key(p['expected_document_path']))
@@ -476,7 +664,7 @@ def prepare(p,loaded):
         common._key(marker)!=common._key(receipt) and
         not protected.intersection({common._key(marker),common._key(receipt)}),'Fresh distinct receipt and once-marker required')
     context=deepcopy({k:v for k,v in loaded.items() if k not in
-        ('approach_plan','approach_baseline','nc_observation')})
+        ('approach_plan','approach_baseline','nc_observation','continuation_failed','continuation_before_context')})
     report=dict(schema_version=1,scope=SCOPE,status='prepared',phase='prepared',actions={},
         process_id=p['process_id'],source_path=p['expected_document_path'],initial_source_sha256=p['expected_source_sha256'],
         receipt_path=str(receipt),operation_native_id=target['native_id'],feature_native_id=target['feature_native_id'],
@@ -497,7 +685,7 @@ def execute(sw,clsid,typelib,*,params,loaded,report,marker):
     journal=Journal(report,params['receipt_path'],marker)
     _write_receipt(params['receipt_path'],report,create=True)
     backend=NativeBackend(loaded,args,sw,clsid,typelib,report,journal.persist)
-    result=run_backend(backend,journal,loaded)
+    result=(run_continuation if loaded.get('continuation') else run_backend)(backend,journal,loaded)
     try:
         common._check(loaded['offline_export_proof_pins']);common._check(loaded['bootstrap_export_pins'])
         result['phase_proofs_verified']=True
@@ -525,7 +713,8 @@ def load_completed(path,digest,*,process_id,expected_document_path,expected_sour
     require(group.exact(recipe,r['plan']),'Completed recipe changed')
     cp=validate_terminal(r)
     require(group.exact(cp,r['checkpoint']) and _digest(cp)==r['checkpoint_sha256'],'Flat checkpoint differs')
-    marker=marker_path(r['source_path'],r['initial_source_sha256'],r['operation_native_id'])
+    marker=continuation_marker_path(r) if r.get('continuation') else marker_path(
+        r['source_path'],r['initial_source_sha256'],r['operation_native_id'])
     mark,marker_pin=read_pin(str(marker),r['marker_pin']['sha256'])
     require(common._key(marker)==common._key(r['marker_pin']['path'])
         and group.exact(mark,Journal(r,path,marker).marker_state()),'Stable terminal marker differs')
@@ -539,11 +728,13 @@ def load_completed(path,digest,*,process_id,expected_document_path,expected_sour
 
 
 def dispatch_request(request,*,validate_only=False):
-    p=validate_request(request);loaded=load_inputs(p)
+    p=validate_request(request);continuing=request['action']=='continue_configured_contour_approach'
+    loaded=load_continuation_inputs(p) if continuing else load_inputs(p)
     registration=common.discover_export_registration(loaded,p['addin_clsid'])
     typelib=str(Path(registration['addin_path']).parent/'camworks.tlb')
     audit=audit_setters(typelib,loaded['generated_pin'],loaded['approach_plan'])
-    report,marker=prepare(p,loaded);report['setter_interface_audit']=audit
+    report,marker=prepare_continuation(p,loaded) if continuing else prepare(p,loaded)
+    report['setter_interface_audit']=audit
     if validate_only:
         return dict(status='validated_offline',native_called=False,interface_audit=audit,
             changes=loaded['approach_plan']['changes'],live_pin_count=len(loaded['pins']))
