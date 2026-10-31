@@ -62,6 +62,20 @@ def expected_parameters(before):
     return result
 
 
+def normalize_two_nc_roundoffs(reference,observed,diagnostic=None):
+    import math
+    result=deepcopy(observed)
+    for name in ('XYFeed','GetSpndlSpeed'):
+        expected=reference['143']['nc']['feeds_compensation'][name]
+        actual=result['143']['nc']['feeds_compensation'][name]
+        require(type(expected) is float and type(actual) is float and math.isfinite(expected) and math.isfinite(actual),'Finite exact NC float types required')
+        ulp=max(math.ulp(expected),math.ulp(actual));delta=abs(actual-expected)
+        require(delta<=2*ulp,'NC feed/spindle changed beyond two ULP')
+        if diagnostic is not None:diagnostic.append(dict(operation=143,field=name,expected_raw=expected,observed_raw=actual,absolute_delta=delta,ulp=ulp,accepted_ulps=delta/ulp))
+        result['143']['nc']['feeds_compensation'][name]=expected
+    return result
+
+
 def verify_parameters(before,actual,*,configured):
     expected=expected_parameters(before) if configured else scalar_projection(before)
     observed=scalar_projection(actual)
@@ -72,7 +86,8 @@ def verify_parameters(before,actual,*,configured):
             require(name in observed['143']['rough']['entry'],'Missing derived point field')
             expected['143']['rough']['entry'][name]=deepcopy(observed['143']['rough']['entry'][name])
         require(type(observed['143']['rough']['entry']['GetHoleCentreEntry']) is bool,'Strict derived centre flag required')
-    require(group.exact(expected,observed),'Pocket parameters changed outside the seven fields and explicit point projections')
+    normalized=normalize_two_nc_roundoffs(expected,observed)
+    require(group.exact(expected,normalized),'Pocket parameters changed outside the seven fields and explicit point projections')
     return observed
 
 
@@ -124,6 +139,7 @@ def save_projection(value):
 
 def equivalent_projection(reference,observed):
     normalized=deepcopy(observed);normalized['state']=require_state_equivalent(reference['state'],observed['state'])
+    normalized['parameters']=normalize_two_nc_roundoffs(reference['parameters'],observed['parameters'])
     require(group.exact(reference,normalized),'Save changed route or configured parameters')
     return normalized
 
@@ -135,6 +151,7 @@ class Journal(tools.Journal):
             phase=r['phase'],recipe_sha256=r['recipe_pin']['sha256'],actions=deepcopy(r['actions']),readback_verified=r.get('readback_verified',False),
             saved_source_sha256=r.get('saved_source_sha256'),automatic_replay=False)
         if r.get('continuation') is True:result['configured_receipt_sha256']=r['configured_receipt_pin']['sha256']
+        if r.get('save_only') is True:result['generated_receipt_sha256']=r['generated_receipt_pin']['sha256']
         return result
 
 
@@ -328,6 +345,11 @@ def generate_and_save(backend,journal,loaded):
     generated=backend.capture_narrow('generated');r['generated']=generated
     r['generated_record_counts']=verify_capture(loaded,generated,order=NEW_ORDER,generated=True)
     r['actions']['GenerateToolpath']['readback_verified']=True;journal.persist()
+    save_generated(backend,journal,loaded,generated)
+
+
+def save_generated(backend,journal,loaded,generated):
+    r=journal.report
     expected=save_projection(generated);r['save_stage']={}
     def capture(label):
         if label=='before':backend.boundary();return deepcopy(expected)
@@ -507,7 +529,8 @@ def validate_terminal(r):
         counts=verify_capture(loaded,r[key],order=NEW_ORDER,generated=generated,saved_sha=r['saved_source_sha256'] if key=='final' else None)
         if generated:require(group.exact(counts,r['generated_record_counts']),'Terminal generated count differs')
     for label,a in actions.items():
-        require(a['attempted'] is True and a['returned'] is True and a['pending'] is False and a['readback_verified'] is True,'Unverified action')
+        verified=a.get('readback_verified') is True or (r.get('save_only') is True and label=='GenerateToolpath' and r.get('inherited_generate_readback_reconciled') is True)
+        require(a['attempted'] is True and a['returned'] is True and a['pending'] is False and verified,'Unverified action')
         if label in ('CreateStartPointInstance','CreatePosition'):require(a.get('returned_interface_pointer') is True and a.get('returned_nonnull') is True,'Non-null factory result required')
         require(a['native_return_type']=='int' and type(a['native_return_value']) is int and a['native_return_value']==0,'Exact integerHRESULT0 required')
     for spec in FIELDS:require(group.exact(actions['field:'+spec[0]]['observed'],spec[6]),'Scalar action readback differs')
@@ -538,7 +561,7 @@ def prepare(p,loaded,audit,*,marker_override=None):
 def execute(sw,clsid,typelib,*,loaded,params,report,marker):
     journal=Journal(report,params['receipt_path'],marker);_write_receipt(params['receipt_path'],report,create=True)
     backend=NativeBackend(loaded,params,sw,clsid,typelib,report,journal.persist)
-    result=run_continuation(backend,journal,loaded) if report.get('continuation') is True else run_backend(backend,journal,loaded)
+    result=run_save_only(backend,journal,loaded) if report.get('save_only') is True else run_continuation(backend,journal,loaded) if report.get('continuation') is True else run_backend(backend,journal,loaded)
     try:
         common._check(loaded['offline_export_proof_pins']);common._check(loaded['bootstrap_export_pins']);result['phase_proofs_verified']=True
         if result.get('readback_verified') is True:
@@ -555,7 +578,7 @@ def load_completed(path,digest,*,process_id,expected_document_path,expected_sour
         and r['saved_source_sha256']==expected_source_sha256==_file_hash(expected_document_path),'Current saved source/runtime/process differs')
     common._check(r['live_pins']);common._check(r['offline_proof_pins']);common._check(r['bootstrap_export_pins'])
     context=validate_terminal(r);require(r['checkpoint_digest']==_digest(group.current_projection(context)),'Saved flat checkpoint digest differs')
-    marker=continuation_marker_path(r['source_path'],r['initial_source_sha256'],r['configured_receipt_pin']['sha256']) if r.get('continuation') is True else marker_path(r['source_path'],r['initial_source_sha256'])
+    marker=continuation_marker_path(r['source_path'],r['initial_source_sha256'],(r['generated_receipt_pin'] if r.get('save_only') is True else r['configured_receipt_pin'])['sha256']) if r.get('continuation') is True else marker_path(r['source_path'],r['initial_source_sha256'])
     mark,markpin=read_pin(str(marker),r['marker_pin']['sha256'])
     require(group.exact(mark,Journal(r,path,marker).marker_state()),'Stable terminal once-marker differs')
     live=common._merge([v for v in r['live_pins'] if common._key(v['path'])!=common._key(r['parent_pin']['path'])],[pin])
@@ -569,7 +592,7 @@ INHERITED_ACTIONS=ACTIONS[:-2]
 
 
 def validate_request(request):
-    if request.get('action')!='continue_configured_rough':return validate_apply_request(request)
+    if request.get('action') not in ('continue_configured_rough','save_generated_rough'):return validate_apply_request(request)
     require(set(request)=={'action','params'} and set(request['params'])==PARAMS|CONTINUATION_KEYS,'Exact bounded continuation fields required')
     p=request['params'];validate_apply_request(dict(action='apply_rough_pocket',params={k:p[k] for k in PARAMS}))
     for name in ('configured_receipt','failed_module_archive','failed_marker'):
@@ -612,11 +635,12 @@ def validate_configured_receipt(failed,*,module_archive_pin,marker_pin):
     return failed
 
 
-def load_configured_evidence(p):
+def load_configured_evidence(p,*,generated=False):
     failed,pin=read_pin(p['configured_receipt_path'],p['configured_receipt_sha256'])
     module_pin=common._pin(p['failed_module_archive_path']);marker_pin=common._pin(p['failed_marker_path'])
     require(module_pin['sha256']==p['failed_module_archive_sha256'] and marker_pin['sha256']==p['failed_marker_sha256'],'Exact continuation archives required')
-    validate_configured_receipt(failed,module_archive_pin=module_pin,marker_pin=marker_pin)
+    validator=validate_generated_receipt if generated else validate_configured_receipt
+    validator(failed,module_archive_pin=module_pin,marker_pin=marker_pin)
     return failed,pin,module_pin,marker_pin
 
 
@@ -624,27 +648,35 @@ def continuation_marker_path(source,sha,configured_sha):
     return common.local_evidence_root()/('pocket_rough_continue_'+_digest(dict(scope=SCOPE,source=common._key(source),source_sha256=sha,configured_receipt_sha256=configured_sha))+'.json')
 
 
-def prepare_continuation(p,baseline,audit):
-    failed,failedpin,modulepin,markerpin=load_configured_evidence(p)
+def prepare_continuation(p,baseline,audit,*,save_only=False):
+    failed,failedpin,modulepin,markerpin=load_configured_evidence(p,generated=save_only)
     require(failed['process_id']==p['process_id'] and common._key(failed['source_path'])==common._key(p['expected_document_path'])
         and failed['initial_source_sha256']==p['expected_source_sha256'],'Exact same saved source and process required')
     require(group.exact(group.current_projection(failed['loaded_context_before']),group.current_projection(baseline)), 'Saved original context differs')
     require(group.exact(failed['loaded_context_before']['pocket_parameters'],baseline['pocket_parameters'])
         and failed['recipe_pin']['sha256']==baseline['recipe_pin']['sha256'],'Original parameter/recipe evidence differs')
     baseline=deepcopy(baseline)
-    baseline['offline_export_proof_pins']=common._merge(baseline['offline_export_proof_pins'],[failedpin,modulepin,markerpin])
+    baseline['offline_export_proof_pins']=common._merge(baseline['offline_export_proof_pins'],failed['offline_proof_pins'],[failedpin,modulepin,markerpin])
     marker=continuation_marker_path(p['expected_document_path'],p['expected_source_sha256'],failedpin['sha256'])
     report,marker=prepare(p,baseline,audit,marker_override=marker)
     report.update(continuation=True,configured_receipt_pin=failedpin,failed_module_archive_pin=modulepin,failed_marker_pin=markerpin,
         inherited_actions=deepcopy(failed['actions']),inherited_action_count=15,new_action_count=0,
         initial_headers=deepcopy(failed['initial_headers']),initial_parameters=deepcopy(failed['initial_parameters']),
         reused_initial_parameter_capture=True,inherited_configured_state_sha256=_digest(failed['configured']))
-    runtime=deepcopy(baseline);runtime['state']=deepcopy(failed['configured']['state'])
+    if save_only:
+        report.update(save_only=True,generated_receipt_pin=failedpin,generated_module_archive_pin=modulepin,generated_marker_pin=markerpin,
+            configured_receipt_pin=failed['configured_receipt_pin'],failed_module_archive_pin=failed['failed_module_archive_pin'],failed_marker_pin=failed['failed_marker_pin'],
+            inherited_actions=deepcopy(failed['inherited_actions']),inherited_generate_action=deepcopy(failed['actions']['GenerateToolpath']),
+            inherited_action_count=16,configured=deepcopy(failed['configured']),reconciled_headers=deepcopy(failed['reconciled_headers']),
+            inherited_configured_state_sha256=failed['inherited_configured_state_sha256'],inherited_generated_sha256=_digest(failed['generated']),
+            numeric_equality_policy={'operation':143,'fields':['XYFeed','GetSpndlSpeed'],'maximum_ulps':2,'raw_values_preserved':True})
+    runtime=deepcopy(baseline);runtime['state']=deepcopy(failed['generated' if save_only else 'configured']['state'])
     runtime['current_context_sha256']=_digest(group.current_projection(runtime))
     return runtime,report,marker
 
 
 def terminal_actions(r):
+    if r.get('save_only') is True:return terminal_save_actions(r)
     if r.get('continuation') is not True:
         require('inherited_actions' not in r,'Unrecognized inherited actions');return r['actions']
     require(set(r['actions'])==set(ACTIONS[-2:]) and r['inherited_action_count']==15 and r['new_action_count']==2,'Continuation can dispatch only GTP and Save')
@@ -678,11 +710,81 @@ def run_continuation(backend,journal,runtime):
     return r
 
 
+def validate_generated_receipt(failed,*,module_archive_pin,marker_pin):
+    require(failed['scope']==SCOPE and failed.get('continuation') is True and failed.get('save_only') is not True
+        and failed['status']=='uncertain' and failed['phase']=='finished' and failed['readback_verified'] is False
+        and failed['model_saved'] is False and failed['phase_proofs_verified'] is True,'Exact stopped generated continuation required')
+    require(not any(k in failed for k in ('cleanup_issue','phase_proof_error','final','save_stage','saved_source_sha256')),'No Save or uncertain cleanup may precede save-only continuation')
+    require(set(failed['actions'])=={'GenerateToolpath'},'Exactly one previous generation required')
+    action=failed['actions']['GenerateToolpath']
+    require(action['attempted'] is True and action['returned'] is True and action['pending'] is False
+        and action['native_return_type']=='int' and type(action['native_return_value']) is int and action['native_return_value']==0,'Inherited GTP did not return exact HRESULT0')
+    clean_events(failed);issue=failed.get('issue',{})
+    require(issue.get('type')=='ValueError' and any(v.get('function')=='verify_parameters' for v in issue.get('locations',[])), 'Exact post-generation parameter comparison stop required')
+    require(module_archive_pin['sha256']==failed['module_pin']['sha256'],'Exact generated writer archive required')
+    common._check([module_archive_pin,marker_pin]);old=failed['module_pin']
+    removed=[v for v in failed['live_pins'] if common._key(v['path'])==common._key(old['path'])]
+    require(len(removed)==1 and removed[0]['sha256']==old['sha256'],'Exactly one archived writer replacement required')
+    common._check([v for v in failed['live_pins'] if common._key(v['path'])!=common._key(old['path'])]);common._check(failed['offline_proof_pins']);common._check(failed['bootstrap_export_pins'])
+    marker,_=read_pin(marker_pin['path'],marker_pin['sha256'])
+    require(group.exact(marker,Journal(failed,failed['receipt_path'],Path(marker_pin['path'])).marker_state()),'Immutable generated marker differs')
+    original,_=read_pin(failed['configured_receipt_pin']['path'],failed['configured_receipt_pin']['sha256'])
+    validate_configured_receipt(original,module_archive_pin=failed['failed_module_archive_pin'],marker_pin=failed['failed_marker_pin'])
+    require(group.exact(failed['inherited_actions'],original['actions']) and failed['inherited_action_count']==15,'Original fifteen actions changed')
+    require(group.exact(failed['initial_headers'],original['initial_headers']) and group.exact(failed['initial_parameters'],original['initial_parameters']),'Original captures differ')
+    require_state_equivalent(original['configured']['state'],failed['reconciled_headers'])
+    equivalent_projection(save_projection(original['configured']),save_projection(failed['configured']))
+    require(group.exact(failed['direct_start_z_readback'],-13.4),'Historical direct StartZ differs')
+    counts=verify_capture(failed['loaded_context_before'],failed['generated'],order=NEW_ORDER,generated=True)
+    require(counts==[31196],'Exact observed generated143 record count required')
+    require(all(failed[k] is False for k in FORBIDDEN),'Historical forbidden action')
+    return counts
+
+
+def terminal_save_actions(r):
+    require(set(r['actions'])=={'SaveActiveDocument'} and r['new_action_count']==1 and r['inherited_action_count']==16,'Save-only continuation cannot dispatch generation/configuration')
+    failed,_=read_pin(r['generated_receipt_pin']['path'],r['generated_receipt_pin']['sha256'])
+    counts=validate_generated_receipt(failed,module_archive_pin=r['generated_module_archive_pin'],marker_pin=r['generated_marker_pin'])
+    require(group.exact(r['inherited_actions'],failed['inherited_actions'])
+        and group.exact(r['inherited_generate_action'],failed['actions']['GenerateToolpath']),'Inherited raw actions changed')
+    require(r['inherited_generated_sha256']==_digest(failed['generated']) and r['inherited_generate_readback_reconciled'] is True,'Generated evidence not reconciled')
+    require(group.exact(r['configured'],failed['configured']) and group.exact(r['initial_headers'],failed['initial_headers'])
+        and group.exact(r['initial_parameters'],failed['initial_parameters']),'Inherited snapshots changed')
+    require_state_equivalent(failed['generated']['state'],r['reconciled_generated_headers'])
+    equivalent_projection(save_projection(failed['generated']),save_projection(r['generated']))
+    require(group.exact(r['direct_start_z_readback'],-13.4) and r['generated_record_counts']==counts,'Fresh generated reconciliation differs')
+    return dict(r['inherited_actions'],GenerateToolpath=deepcopy(r['inherited_generate_action']),**r['actions'])
+
+
+def run_save_only(backend,journal,runtime):
+    r=journal.report;baseline=r['loaded_context_before']
+    try:
+        backend.start();headers=backend.headers('generated_reconcile');r['reconciled_generated_headers']=headers
+        failed,_=read_pin(r['generated_receipt_pin']['path'],r['generated_receipt_pin']['sha256'])
+        require_state_equivalent(failed['generated']['state'],headers)
+        generated=dict(state=deepcopy(headers),**backend.parameters('generated'));r['generated']=generated
+        counts=verify_capture(baseline,generated,order=NEW_ORDER,generated=True)
+        require(counts==[31196],'Previously generated143 path changed')
+        equivalent_projection(save_projection(failed['generated']),save_projection(generated))
+        r['numeric_comparisons']=[]
+        normalize_two_nc_roundoffs(scalar_projection(baseline['pocket_parameters']),scalar_projection(generated['parameters']),r['numeric_comparisons'])
+        r['direct_start_z_readback']=backend.field(FIELDS[5]);require(group.exact(r['direct_start_z_readback'],-13.4),'Fresh direct StartZ differs')
+        r.update(generated_record_counts=counts,inherited_generate_readback_reconciled=True);journal.persist()
+        save_generated(backend,journal,baseline,generated)
+        r['new_action_count']=len(r['actions']);require(r['new_action_count']==1,'Save-only action inventory changed')
+    except Exception as exc:r.update(status='uncertain' if r.get('mutation_attempted') else 'error',failed_phase=r['phase'],phase='finished',issue=_error(exc),readback_verified=False)
+    finally:
+        try:backend.close()
+        except Exception as exc:r.update(status='uncertain',cleanup_issue=_error(exc),readback_verified=False)
+        journal.persist()
+    return r
+
+
 def dispatch_request(request,*,validate_only=False):
     p=validate_request(request);loaded=load_inputs(p)
     registration=common.discover_export_registration(loaded,p['addin_clsid']);typelib=str(Path(registration['addin_path']).parent/'camworks.tlb')
     audit=audit_recipe(typelib,loaded['generated_pin'])
-    if request['action']=='continue_configured_rough':loaded,report,marker=prepare_continuation(p,loaded,audit)
+    if request['action'] in ('continue_configured_rough','save_generated_rough'):loaded,report,marker=prepare_continuation(p,loaded,audit,save_only=request['action']=='save_generated_rough')
     else:report,marker=prepare(p,loaded,audit)
     if validate_only:return dict(status='validated_offline',native_called=False,setter_interface_audit=audit,live_pin_count=len(loaded['pins']),marker=str(marker))
     from scripts.sw_operation_guard import solidworks_operation_lock

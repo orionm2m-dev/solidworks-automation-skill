@@ -199,6 +199,45 @@ class ContinuationTests(unittest.TestCase):
             self.assertFalse(r['readback_verified']);self.assertEqual(r['actions'],{})
 
 
+class NumericAndSaveTests(unittest.TestCase):
+    def test_two_fields_two_ulp_only_raw_preserved(self):
+        import math
+        reference=m.scalar_projection(FIXTURE['parameters']);observed=deepcopy(reference)
+        for name in ('XYFeed','GetSpndlSpeed'):
+            x=observed['143']['nc']['feeds_compensation'][name]
+            observed['143']['nc']['feeds_compensation'][name]=math.nextafter(math.nextafter(x,math.inf),math.inf)
+        raw=deepcopy(observed);detail=[]
+        self.assertEqual(m.normalize_two_nc_roundoffs(reference,observed,detail),reference)
+        self.assertEqual(observed,raw);self.assertTrue(all(v['accepted_ulps']==2 for v in detail))
+    def test_three_ulp_and_nonfinite_rejected(self):
+        import math
+        reference=m.scalar_projection(FIXTURE['parameters'])
+        for bad in (math.nan,math.inf,True,'56'):
+            observed=deepcopy(reference);observed['143']['nc']['feeds_compensation']['XYFeed']=bad
+            with self.assertRaises(ValueError):m.normalize_two_nc_roundoffs(reference,observed)
+        observed=deepcopy(reference);x=observed['143']['nc']['feeds_compensation']['XYFeed']
+        for _ in range(3):x=math.nextafter(x,math.inf)
+        observed['143']['nc']['feeds_compensation']['XYFeed']=x
+        with self.assertRaises(ValueError):m.normalize_two_nc_roundoffs(reference,observed)
+    def test_other_operation_float_has_no_tolerance(self):
+        import math
+        actual=m.expected_parameters(FIXTURE['parameters']);x=actual['144']['nc']['feeds_compensation']['XYFeed']
+        actual['144']['nc']['feeds_compensation']['XYFeed']=math.nextafter(x,math.inf)
+        with self.assertRaises(ValueError):m.verify_parameters(FIXTURE['parameters'],actual,configured=True)
+    def test_save_only_never_dispatches_gtp_or_configuration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            helper=ContinuationTests();loaded,r,j,b=helper.prepare_continuation_fake(tmp)
+            state=changed_state(m.NEW_ORDER,True);next(v for v in state['operations'] if v['native_id']==143)['toolpath_record_counts']=[31196]
+            generated=dict(state=state,**b.parameters('generated'))
+            path=Path(tmp)/'generated.json';path.write_text(json.dumps({'generated':generated}))
+            r.update(save_only=True,generated_receipt_pin={'path':str(path),'sha256':m._file_hash(path)})
+            b.headers=lambda label:deepcopy(state);b.capture_narrow=lambda label:deepcopy(generated)
+            def forbidden(*a,**kw):raise AssertionError('GTP replay forbidden')
+            b.generate=forbidden;m.run_save_only(b,j,loaded)
+            self.assertTrue(r['readback_verified'],r.get('issue'));self.assertEqual(set(r['actions']),{'SaveActiveDocument'})
+            self.assertEqual(r['generated_record_counts'],[31196]);self.assertTrue(r['inherited_generate_readback_reconciled'])
+
+
 class AbiTests(unittest.TestCase):
     def test_wrong_dispid_and_flags_rejected(self):
         from ctypes import HRESULT,c_double
