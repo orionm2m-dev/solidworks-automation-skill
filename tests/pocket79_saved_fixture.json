@@ -1,0 +1,199 @@
+{
+  "state": {
+    "features": [
+      {
+        "setup_native_id": 69,
+        "geometry": {
+          "native_id": 79,
+          "volume_type": 2,
+          "subtype_raw": 0,
+          "shape_raw": 2,
+          "suppressed": false,
+          "name": "Pocket1",
+          "axis_native": [
+            -0.0,
+            -0.0,
+            -1.0
+          ],
+          "depth_native": 4.800001,
+          "bounds_native": [
+            45.58747044045796,
+            45.574942324775115,
+            4.800001
+          ],
+          "start_native": [
+            0.0,
+            0.0,
+            12.3
+          ]
+        }
+      }
+    ],
+    "operations": [
+      {
+        "setup_index": 0,
+        "setup_native_id": 93,
+        "operation_index": 0,
+        "native_id": 143,
+        "mill_operation_type": 0,
+        "base_operation_type": 0,
+        "suppressed": false,
+        "toolpath_generated": false,
+        "linked_feature_ids": [
+          79
+        ],
+        "toolpath_record_counts": [],
+        "assigned_tool": {
+          "native_id": 145,
+          "is_mill_tool": true,
+          "native_read_complete": true,
+          "units_verified": false,
+          "holder_geometry_verified": false,
+          "tool_type_raw": 1,
+          "cut_diameter_native": 2.0,
+          "protrusion_native": 20.0
+        }
+      },
+      {
+        "setup_index": 0,
+        "setup_native_id": 93,
+        "operation_index": 1,
+        "native_id": 144,
+        "mill_operation_type": 1,
+        "base_operation_type": 0,
+        "suppressed": false,
+        "toolpath_generated": false,
+        "linked_feature_ids": [
+          79
+        ],
+        "toolpath_record_counts": [],
+        "assigned_tool": {
+          "native_id": 145,
+          "is_mill_tool": true,
+          "native_read_complete": true,
+          "units_verified": false,
+          "holder_geometry_verified": false,
+          "tool_type_raw": 1,
+          "cut_diameter_native": 2.0,
+          "protrusion_native": 20.0
+        }
+      },
+      {
+        "setup_index": 0,
+        "setup_native_id": 93,
+        "operation_index": 2,
+        "native_id": 195
+      },
+      {
+        "setup_index": 0,
+        "setup_native_id": 93,
+        "operation_index": 3,
+        "native_id": 196
+      },
+      {
+        "setup_index": 0,
+        "setup_native_id": 93,
+        "operation_index": 4,
+        "native_id": 267
+      },
+      {
+        "setup_index": 0,
+        "setup_native_id": 93,
+        "operation_index": 5,
+        "native_id": 247
+      },
+      {
+        "setup_index": 0,
+        "setup_native_id": 93,
+        "operation_index": 6,
+        "native_id": 248
+      },
+      {
+        "setup_index": 0,
+        "setup_native_id": 93,
+        "operation_index": 7,
+        "native_id": 271
+      }
+    ],
+    "operation_setups": [
+      {
+        "index": 0,
+        "native_id": 93,
+        "operation_count": 8
+      },
+      {
+        "index": 1,
+        "native_id": 94,
+        "operation_count": 0
+      },
+      {
+        "index": 2,
+        "native_id": 95,
+        "operation_count": 0
+      }
+    ]
+  },
+  "configured_contour": {
+    "native_id": 271
+  },
+  "names": [
+    "ProfileFace01",
+    "ProfileFace02",
+    "ProfileFace03",
+    "ProfileFace04",
+    "ProfileFace05",
+    "ProfileFace06"
+  ],
+  "headers": {
+    "native_id": 79,
+    "read_complete": true,
+    "representation": "ICWProfileFeature metadata",
+    "profile_headers_read_complete": true,
+    "profile_geometry_complete": false,
+    "contour_status": "not_requested",
+    "indexed_methods_called": false,
+    "native_behavior_qualified": false,
+    "units_verified": false,
+    "owner_setup_native_id": 69,
+    "suppressed": false,
+    "volume_type": 2,
+    "shape": 2,
+    "island_count": 5,
+    "sketch_count": 6,
+    "sketch_names_return_python_type": "tuple",
+    "sketch_names": {
+      "native_vartype": null,
+      "native_vartype_status": "not_exposed_by_marshaller",
+      "observed_name_count": 6,
+      "matches_sketch_count": true,
+      "count_relation_verified": false,
+      "observed_representation": "python_tuple",
+      "value": [
+        "ProfileFace01",
+        "ProfileFace02",
+        "ProfileFace03",
+        "ProfileFace04",
+        "ProfileFace05",
+        "ProfileFace06"
+      ]
+    },
+    "end_conditions": {
+      "GetEndCondition1": {
+        "depth_native": 4.800001,
+        "type_raw": 2,
+        "name": "",
+        "name_observed_representation": "python_str",
+        "is_reversed": true,
+        "units_verified": false
+      },
+      "GetEndCondition2": {
+        "depth_native": 0.0,
+        "type_raw": 2,
+        "name": "",
+        "name_observed_representation": "python_str",
+        "is_reversed": false,
+        "units_verified": false
+      }
+    }
+  }
+}
