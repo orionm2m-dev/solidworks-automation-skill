@@ -149,8 +149,8 @@ def read_levels(op,feature,*,read,typed,feature_dispatch):
         if interface:require(value is not None and bool(value),'Non-null level interface required')
         if validator:validator(value)
         return decoder(value) if decoder else value
-    def getter(obj,interface,name,*args,**kwargs):
-        return native_read(interface+'.'+name,lambda:read(obj,name,*args),**kwargs)
+    def getter(obj,interface_name,name,*args,**kwargs):
+        return native_read(interface_name+'.'+name,lambda:read(obj,name,*args),**kwargs)
     levels.read_mill_level_values(feature,op,native_read=native_read,typed=typed,getter=getter,report=out)
     return out
 

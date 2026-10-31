@@ -186,3 +186,42 @@ def test_nc_z_feed_preserves_percent_flag_without_deprecated_pointer(monkeypatch
     out=m.read_nc_settings(Ref(),Ref(),read=read,typed=lambda o,n:o,pointer_read=None,diagnostic={},persist=lambda:None)
     assert out['z_feed']['value_native']==z_value[0] and out['z_feed']['percentage'] is z_value[1]
     assert 'GetZFeedrate' not in calls
+
+
+def level_callbacks(*,null_toolpath=False):
+    calls=[];feature=Ref(79);op=Ref(143);dispatch=Ref(79,'IDispatch')
+    def typed(obj,name):return Ref(obj.ident,name,obj.values)
+    def read(obj,name,*args):
+        calls.append((obj.interface,name,args))
+        if name=='GetMachiningDepth':assert args==(dispatch,);return 4.800001
+        if name=='GetOverrideMachiningDepth':assert args==(dispatch,);return False
+        if name=='GetToolpathParam':return None if null_toolpath else Ref(1001)
+        if name=='GetToolpathParameters':return (True,False,True,1,False,7.499999,12.3)
+        if name=='GetSetupParameters':return Ref(1002),Ref(1003),Ref(1004)
+        if name=='GetCoordinates':return (0.0,0.0,26.0) if obj.interface=='ICWPosition' else (0.0,0.0,1.0)
+        raise AssertionError(name)
+    def feature_dispatch(obj):assert obj is feature;return dispatch
+    return op,feature,dict(read=read,typed=typed,feature_dispatch=feature_dispatch),calls
+
+
+def test_levels_adapter_executes_real_shared_helper_with_interface_and_validator_keywords():
+    # Exercise the imported production helper, including interface=True at
+    # GetToolpathParam and validator=_setup_interfaces at GetSetupParameters.
+    op,feature,callbacks,calls=level_callbacks()
+    out=m.read_levels(op,feature,**callbacks)
+    assert out['levels']['machining_depth_native']==4.800001
+    assert out['levels']['override_machining_depth'] is False
+    assert out['levels']['toolpath_parameters']==dict(use_setup_definition_for_top_Z=True,
+        use_minimum_Z=False,adjust_feature_height=True,first_cut_Z_type_raw=1,
+        use_setup_definition_for_bottom_Z=False,minimum_Z_native=7.499999,start_Z_native=12.3)
+    assert out['setup']['origin_native']==[0.0,0.0,26.0]
+    assert out['setup']['axis_native']==[0.0,0.0,1.0]
+    assert [row[1] for row in calls]==['GetMachiningDepth','GetOverrideMachiningDepth','GetToolpathParam',
+        'GetToolpathParameters','GetSetupParameters','GetCoordinates','GetCoordinates']
+
+
+def test_levels_adapter_real_helper_null_interface_stops_before_downstream_getter():
+    op,feature,callbacks,calls=level_callbacks(null_toolpath=True)
+    with pytest.raises(ValueError,match='Non-null level interface'):
+        m.read_levels(op,feature,**callbacks)
+    assert [row[1] for row in calls]==['GetMachiningDepth','GetOverrideMachiningDepth','GetToolpathParam']
