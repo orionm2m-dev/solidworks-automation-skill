@@ -21,7 +21,7 @@ from test_chamfer_exports import Session
 
 FINISH=('CUTTER/ 2,0,1,0,0,0,55,\nTLAXIS/ 0,0,1\nOPFEATSTART/F144\n'
        'RAPID/\nGOTO/ 0,15,3\nFEDRAT/ MMPM,24\nGOTO/ 0,15,-18.5\nRAPID/\nGOTO/ 0,15,3\nOPFEATEND/F144\nFINI\n').encode('ascii')
-BINDING=json.loads((Path(__file__).parent/'fixtures/pocket_finish_exports/observed_tool_binding.json').read_text(encoding='utf-8'))
+BINDING=json.loads((ROOT/'tests/fixtures/pocket_finish_exports/observed_tool_binding.json').read_text(encoding='utf-8'))
 BASE=PRIOR_FIVE
 NEW=BASE[:BASE.rindex(b'FINI')]+FINISH
 
@@ -210,7 +210,7 @@ def test_future_flat_loader_and_bounded_phase_retirement(case,monkeypatch,scope)
     inherited=deepcopy(case.loaded)
     module_name=m.PARENT_LOADERS[scope];writer_name=module_name.split('.')[-1]+'.py'
     retired_names=set(m.RETIRED)
-    if scope=='PARTIAL_POCKET_FINISH_CONTINUATION_V1':retired_names.add(writer_name)
+    if scope in ('PARTIAL_POCKET_FINISH_CONTINUATION_V1','REOPENED_POCKET_WALL_CONTINUATION_V1'):retired_names.add(writer_name)
     writer=case.root/writer_name;writer.write_text('completed writer fixture')
     checkpoint=case.root/'actual_completed_parent.json';checkpoint.write_text(json.dumps({'scope':scope}))
     inherited['parent_pin']=m.common._pin(checkpoint);inherited['pins']=[inherited['parent_pin']]

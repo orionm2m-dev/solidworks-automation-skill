@@ -31,6 +31,7 @@ PROTECTED_IDS = [267, 247, 248, 271, 143]
 PARENT_LOADERS={
     'SAVED_POCKET_FINISH_GENERATE_V1':'scripts.sw_cam_pocket_finish_apply',
     'PARTIAL_POCKET_FINISH_CONTINUATION_V1':'scripts.sw_cam_pocket_finish_continuation',
+    'REOPENED_POCKET_WALL_CONTINUATION_V1':'scripts.sw_cam_pocket_wall_continue',
 }
 
 RETIRED = {'sw_cam_pocket_finish_apply.py', 'sw_cam_pocket_rough_apply.py',
@@ -176,7 +177,7 @@ def load_checkpoint(path,digest,*,process_id,expected_document_path,expected_sou
             'Final saved pocket pair parameters and startpoints required')
     reference=protected_reference(protected_cl_recovery_path,protected_cl_recovery_sha256,loaded)
     retired_names=set(RETIRED)
-    if scope=='PARTIAL_POCKET_FINISH_CONTINUATION_V1':retired_names.add('sw_cam_pocket_finish_continuation.py')
+    if scope in ('PARTIAL_POCKET_FINISH_CONTINUATION_V1','REOPENED_POCKET_WALL_CONTINUATION_V1'):retired_names.add(Path(loader.__file__).name)
     retired=[p for p in loaded['pins'] if Path(p['path']).name in retired_names]
     require({Path(p['path']).name for p in retired}==retired_names and any(common._key(p['path']) == common._key(loader.__file__) for p in retired),
             'Completed finish writer must remain an explicit offline proof')
