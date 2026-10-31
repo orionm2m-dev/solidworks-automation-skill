@@ -1,0 +1,610 @@
+{
+  "geometry_read_complete": true,
+  "profile_complete": true,
+  "mill_tool": {
+    "type_raw": 1,
+    "subtype_raw": 3,
+    "effective_cutting_length_native": 3.0,
+    "shank_diameter_native": 4.0,
+    "overall_length_native": 55.0,
+    "end_radius_native": 0.0,
+    "flute_count_raw": 2,
+    "shoulder_length_native": 19.75,
+    "shank_type_raw": 2,
+    "shoulder_diameter_native": 1.95,
+    "shank_length_native": 24.16233542676
+  },
+  "holder": {
+    "holder_id_raw": 18,
+    "number": "C40-M12EM2",
+    "shape": "\u0424\u0430\u0441\u043e\u043d\u043d\u044b\u0435",
+    "type": "RIGID - STATIC",
+    "specification": "CAT-40",
+    "name": "C:/fixtures/holder.mh",
+    "top_diameter_native": 50.0,
+    "bottom_diameter_native": 25.0,
+    "overall_length_native": 100.0,
+    "bottom_length_native": 50.0,
+    "holder_protrusion_native": 26.000000000000004
+  },
+  "profiles": {
+    "tool": {
+      "status": "observed",
+      "declared_chain_count": 2,
+      "chains": [
+        {
+          "index": 0,
+          "curves": [
+            {
+              "index": 0,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "end_native": [
+                1.0,
+                0.0,
+                0.0
+              ]
+            },
+            {
+              "index": 1,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                1.0,
+                0.0,
+                0.0
+              ],
+              "end_native": [
+                1.0,
+                0.0,
+                3.0
+              ]
+            },
+            {
+              "index": 2,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                0.0,
+                0.0,
+                3.0
+              ],
+              "end_native": [
+                1.0,
+                0.0,
+                3.0
+              ]
+            },
+            {
+              "index": 3,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                1.0,
+                0.0,
+                3.0
+              ],
+              "end_native": [
+                1.0,
+                0.0,
+                19.75
+              ]
+            }
+          ],
+          "read_complete": true,
+          "declared_curve_count": 4
+        },
+        {
+          "index": 1,
+          "curves": [
+            {
+              "index": 0,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                1.0,
+                0.0,
+                19.75
+              ],
+              "end_native": [
+                0.975,
+                0.0,
+                19.75
+              ]
+            },
+            {
+              "index": 1,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                0.975,
+                0.0,
+                19.75
+              ],
+              "end_native": [
+                0.975,
+                0.0,
+                24.16233542676
+              ]
+            },
+            {
+              "index": 2,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                0.975,
+                0.0,
+                24.16233542676
+              ],
+              "end_native": [
+                2.0,
+                0.0,
+                24.16233542676
+              ]
+            },
+            {
+              "index": 3,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                2.0,
+                0.0,
+                24.16233542676
+              ],
+              "end_native": [
+                2.0,
+                0.0,
+                55.0
+              ]
+            }
+          ],
+          "read_complete": true,
+          "declared_curve_count": 4
+        }
+      ]
+    },
+    "shank": {
+      "status": "observed",
+      "declared_chain_count": 1,
+      "chains": [
+        {
+          "index": 0,
+          "curves": [
+            {
+              "index": 0,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                1.0,
+                0.0,
+                19.75
+              ],
+              "end_native": [
+                0.975,
+                0.0,
+                19.75
+              ]
+            },
+            {
+              "index": 1,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                0.975,
+                0.0,
+                19.75
+              ],
+              "end_native": [
+                0.975,
+                0.0,
+                24.16233542676
+              ]
+            },
+            {
+              "index": 2,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                0.975,
+                0.0,
+                24.16233542676
+              ],
+              "end_native": [
+                2.0,
+                0.0,
+                24.16233542676
+              ]
+            },
+            {
+              "index": 3,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                2.0,
+                0.0,
+                24.16233542676
+              ],
+              "end_native": [
+                2.0,
+                0.0,
+                55.0
+              ]
+            }
+          ],
+          "read_complete": true,
+          "declared_curve_count": 4
+        }
+      ]
+    },
+    "holder": {
+      "status": "observed",
+      "declared_chain_count": 1,
+      "chains": [
+        {
+          "index": 0,
+          "curves": [
+            {
+              "index": 0,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                0.0,
+                0.0,
+                26.000000000000004
+              ],
+              "end_native": [
+                11.43,
+                0.0,
+                25.958531660000002
+              ]
+            },
+            {
+              "index": 1,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                11.43,
+                0.0,
+                25.958531660000002
+              ],
+              "end_native": [
+                14.097,
+                0.0,
+                27.025552990000005
+              ]
+            },
+            {
+              "index": 2,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                14.097,
+                0.0,
+                27.025552990000005
+              ],
+              "end_native": [
+                14.097,
+                0.0,
+                36.98002685
+              ]
+            },
+            {
+              "index": 3,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                14.097,
+                0.0,
+                36.98002685
+              ],
+              "end_native": [
+                11.84631375,
+                0.0,
+                36.98002685
+              ]
+            },
+            {
+              "index": 4,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                11.84631375,
+                0.0,
+                36.98002685
+              ],
+              "end_native": [
+                11.84631375,
+                0.0,
+                91.40500000000002
+              ]
+            },
+            {
+              "index": 5,
+              "read_complete": true,
+              "curve_type": 1,
+              "start_native": [
+                11.84631375,
+                0.0,
+                91.40500000000002
+              ],
+              "end_native": [
+                13.11631375,
+                0.0,
+                92.67500000000001
+              ],
+              "mid_native": [
+                12.218288137893083,
+                0.0,
+                92.30302561210694
+              ],
+              "centre_native": [
+                13.11631375,
+                0.0,
+                91.40500000000002
+              ],
+              "radius_native": 1.2700000000000002,
+              "normal_native": [
+                0.0,
+                1.0,
+                0.0
+              ],
+              "sense_raw": 2
+            },
+            {
+              "index": 6,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                13.11631375,
+                0.0,
+                92.67500000000001
+              ],
+              "end_native": [
+                20.955,
+                0.0,
+                92.67500000000001
+              ]
+            },
+            {
+              "index": 7,
+              "read_complete": true,
+              "curve_type": 1,
+              "start_native": [
+                20.955,
+                0.0,
+                92.67500000000001
+              ],
+              "end_native": [
+                22.225,
+                0.0,
+                93.94500000000001
+              ],
+              "mid_native": [
+                21.85302561210691,
+                0.0,
+                93.0469743878931
+              ],
+              "centre_native": [
+                20.955,
+                0.0,
+                93.94500000000001
+              ],
+              "radius_native": 1.2699999999999934,
+              "normal_native": [
+                0.0,
+                1.0,
+                0.0
+              ],
+              "sense_raw": 1
+            },
+            {
+              "index": 8,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                22.225,
+                0.0,
+                93.94500000000001
+              ],
+              "end_native": [
+                22.225,
+                0.0,
+                107.28000000000002
+              ]
+            },
+            {
+              "index": 9,
+              "read_complete": true,
+              "curve_type": 1,
+              "start_native": [
+                22.225,
+                0.0,
+                107.28000000000002
+              ],
+              "end_native": [
+                23.495,
+                0.0,
+                108.55000000000001
+              ],
+              "mid_native": [
+                22.596974387893084,
+                0.0,
+                108.17802561210694
+              ],
+              "centre_native": [
+                23.495,
+                0.0,
+                107.28000000000002
+              ],
+              "radius_native": 1.2700000000000002,
+              "normal_native": [
+                0.0,
+                1.0,
+                0.0
+              ],
+              "sense_raw": 2
+            },
+            {
+              "index": 10,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                23.495,
+                0.0,
+                108.55000000000001
+              ],
+              "end_native": [
+                31.75,
+                0.0,
+                108.55000000000001
+              ]
+            },
+            {
+              "index": 11,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                31.75,
+                0.0,
+                108.55000000000001
+              ],
+              "end_native": [
+                31.75,
+                0.0,
+                112.36000000000001
+              ]
+            },
+            {
+              "index": 12,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                31.75,
+                0.0,
+                112.36000000000001
+              ],
+              "end_native": [
+                28.575,
+                0.0,
+                114.19308710000001
+              ]
+            },
+            {
+              "index": 13,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                28.575,
+                0.0,
+                114.19308710000001
+              ],
+              "end_native": [
+                28.575,
+                0.0,
+                118.78191290000001
+              ]
+            },
+            {
+              "index": 14,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                28.575,
+                0.0,
+                118.78191290000001
+              ],
+              "end_native": [
+                31.75,
+                0.0,
+                120.615
+              ]
+            },
+            {
+              "index": 15,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                31.75,
+                0.0,
+                120.615
+              ],
+              "end_native": [
+                31.75,
+                0.0,
+                124.42500000000001
+              ]
+            },
+            {
+              "index": 16,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                31.75,
+                0.0,
+                124.42500000000001
+              ],
+              "end_native": [
+                22.225,
+                0.0,
+                124.42500000000001
+              ]
+            },
+            {
+              "index": 17,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                22.225,
+                0.0,
+                124.42500000000001
+              ],
+              "end_native": [
+                22.225,
+                0.0,
+                127.6
+              ]
+            },
+            {
+              "index": 18,
+              "read_complete": true,
+              "curve_type": 0,
+              "start_native": [
+                22.225,
+                0.0,
+                127.6
+              ],
+              "end_native": [
+                0.0,
+                0.0,
+                127.6
+              ]
+            }
+          ],
+          "read_complete": true,
+          "declared_curve_count": 19
+        }
+      ]
+    }
+  },
+  "geometry_origin": "native_observed_unqualified",
+  "units_verified": false,
+  "physical_tool_identity_verified": false,
+  "holder_geometry_verified": false,
+  "holder_clearance_verified": false,
+  "closed_loops_verified": false,
+  "production_qualified": false,
+  "tool_native_id": 273,
+  "tool_type_raw": 1,
+  "cut_diameter_native": 2.0,
+  "tool_protrusion_native": 26.000000000000004,
+  "profile_budget": {
+    "curves": 31,
+    "chains": 4,
+    "islands": 0
+  }
+}
