@@ -1,0 +1,672 @@
+{
+  "parameters": {
+    "143": {
+      "levels": {
+        "levels": {
+          "machining_depth_native": 4.800000000000001,
+          "override_machining_depth": false,
+          "toolpath_parameters": {
+            "use_setup_definition_for_top_Z": false,
+            "use_minimum_Z": false,
+            "adjust_feature_height": false,
+            "first_cut_Z_type_raw": 1,
+            "use_setup_definition_for_bottom_Z": false,
+            "minimum_Z_native": 0.0,
+            "start_Z_native": 0.0
+          }
+        },
+        "setup": {
+          "transform_present": true,
+          "transform_matrix_decoded": false,
+          "origin_native": [
+            5.494979471443173e-10,
+            -2.718450464733735e-10,
+            26.0
+          ],
+          "axis_native": [
+            -0.0,
+            -0.0,
+            -1.0
+          ],
+          "axis_magnitude": 1.0,
+          "axis_normalized_for_report_only": [
+            -0.0,
+            -0.0,
+            -1.0
+          ],
+          "native_axis_modified": false
+        }
+      },
+      "rough": {
+        "entry": {
+          "GetEntryExitType": 0,
+          "GetEntryHoleAttr": "Drill",
+          "GetRampAngle": 3.0,
+          "GetSpiralRadius": 3.0,
+          "GetSpiralPitch": 3.0,
+          "GetHoleCentreEntry": true,
+          "GetEntryLengthAngle": false,
+          "GetEntryLength": 0.0,
+          "GetEntryAngle": 0.0,
+          "GetAutoCorrectEntryLengthAngle": false,
+          "GetEntryStartPtX": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "GetEntryStartPtY": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "depth": {
+          "DepthMethod": 0,
+          "DepthAllow": 0.0,
+          "FirstDepthAmt": 10.0,
+          "SbsqDepthAmt": 10.0,
+          "FinCutAmt": 0.25,
+          "GetStartDepth": [
+            false,
+            10.0
+          ],
+          "GetSubsequentDepthAmount": [
+            false,
+            10.0
+          ]
+        },
+        "boundary": {
+          "PocketMethod": 1,
+          "SideAllow": 0.25,
+          "GetStepOver": [
+            true,
+            40.0
+          ],
+          "GetZAllowance": 0.0,
+          "GetContainType": 0,
+          "GetContainAllowance": 2.0,
+          "GetXYClearance": 2.0,
+          "GetToolDiameterPercent": 75.0
+        },
+        "nc_flags": {
+          "GetClrPlaneUseSetupStatus": false,
+          "GetRpdPlaneUseSetupStatus": false,
+          "GetRetractType": 0
+        }
+      },
+      "nc": {
+        "feed_planes": {
+          "values": {
+            "FeedPlaneType": 0,
+            "FeedPlaneDistance": 1.0,
+            "GetUseCurrentMachiningDepthForFeedPlane": false,
+            "GetClrPlaneUseSetupStatus": false
+          },
+          "numeric_units_verified": false,
+          "enum_binding_verified": false,
+          "conversion_performed": false,
+          "pointer_plane_getters_called": false,
+          "model_updated": false,
+          "production_qualified": false
+        },
+        "clearance_rapid": {
+          "setup_use": {
+            "GetClrPlaneUseSetupStatus": false,
+            "GetRpdPlaneUseSetupStatus": false
+          },
+          "local_planes": {
+            "GetClrPlanePrms": {
+              "distance_native": 2.5,
+              "basis_raw": 0,
+              "hresult": 0,
+              "unit_binding_verified": false,
+              "enum_binding_verified": false,
+              "conversion_performed": false
+            },
+            "GetRpdPlnPrms": {
+              "distance_native": 25.0,
+              "basis_raw": 3,
+              "hresult": 0,
+              "unit_binding_verified": false,
+              "enum_binding_verified": false,
+              "conversion_performed": false
+            }
+          },
+          "setup_planes": {
+            "ClearancePlaneType": 0,
+            "ClearancePlaneDistance": 5.0,
+            "RapidPlaneType": 3,
+            "RapidPlaneDistance": 25.0
+          },
+          "effective_selection": {
+            "clearance": "operation",
+            "rapid": "operation"
+          },
+          "effective_world_plane_computed": false
+        },
+        "feeds_compensation": {
+          "GetSpndlSpeed": 790.7199544668789,
+          "GetTlpComp": 1,
+          "GetCNCComp": 0,
+          "GetRetractType": 0,
+          "XYFeed": 56.23600316168442
+        },
+        "z_feed": {
+          "value_native": 25.0,
+          "percentage": true,
+          "physical_feed_units_verified": false,
+          "percentage_basis_verified": false
+        },
+        "unread_feed_fields": [
+          "Per-link feed and cutting ratings not qualified by this scalar observation"
+        ]
+      }
+    },
+    "144": {
+      "levels": {
+        "levels": {
+          "machining_depth_native": 4.800000000000001,
+          "override_machining_depth": false,
+          "toolpath_parameters": {
+            "use_setup_definition_for_top_Z": false,
+            "use_minimum_Z": false,
+            "adjust_feature_height": false,
+            "first_cut_Z_type_raw": 1,
+            "use_setup_definition_for_bottom_Z": false,
+            "minimum_Z_native": 0.0,
+            "start_Z_native": 0.0
+          }
+        },
+        "setup": {
+          "transform_present": true,
+          "transform_matrix_decoded": false,
+          "origin_native": [
+            5.494979471443173e-10,
+            -2.718450464733735e-10,
+            26.0
+          ],
+          "axis_native": [
+            -0.0,
+            -0.0,
+            -1.0
+          ],
+          "axis_magnitude": 1.0,
+          "axis_normalized_for_report_only": [
+            -0.0,
+            -0.0,
+            -1.0
+          ],
+          "native_axis_modified": false
+        }
+      },
+      "finish": {
+        "SideAllow": 0.0,
+        "SideCutAmt": 5.0,
+        "FinalSideCutAmt": 0.0,
+        "SpringPass": 0,
+        "DepthMethod": 0,
+        "Ramp": 0,
+        "DepthAllow": 0.0,
+        "FirstDepthCut": 10.0,
+        "MaxDepthCut": 10.0,
+        "FinalDepthCut": 0.0,
+        "DepthAngle": 3.0,
+        "CleanUpPassOpt": false,
+        "CutMethod": 0,
+        "BottomFinOpt": false,
+        "PerimeterPassType": 1,
+        "BottomFinMethod": 1,
+        "OverridePrevAllow": false,
+        "GetPreviousAllowance": 0.5,
+        "GetZAllowance": 0.0,
+        "GetContainType": 0,
+        "GetContainAllowance": 3.0,
+        "GetTypeOfFirstCutZ": 1,
+        "GetIsChamferMachining": false,
+        "GetChamferLength": 0.4
+      },
+      "leads": {
+        "lead_in": {
+          "LeadType": 1,
+          "LeadAngle": 0.0,
+          "ArcAngle": 45.0,
+          "SidePassType": 0,
+          "CutDepthType": 0,
+          "StartAngle": 0.0,
+          "GetArcRadius2": [
+            10.0,
+            true,
+            0.0
+          ],
+          "GetLeadOverlap2": [
+            10.0,
+            true,
+            0.0
+          ],
+          "GetLeadAmt2": [
+            52.0,
+            true,
+            0.0
+          ],
+          "GetIsSameLeadinout": false,
+          "GetFeedRate": [
+            100.0,
+            true
+          ]
+        },
+        "lead_out": {
+          "LeadType": 1,
+          "LeadAngle": 0.0,
+          "ArcAngle": 45.0,
+          "SidePassType": 0,
+          "CutDepthType": 0,
+          "StartAngle": 0.0,
+          "GetArcRadius2": [
+            10.0,
+            true,
+            0.0
+          ],
+          "GetLeadOverlap2": [
+            10.0,
+            true,
+            0.0
+          ],
+          "GetLeadAmt2": [
+            52.0,
+            true,
+            0.0
+          ],
+          "GetIsSameLeadinout": true,
+          "GetFeedRate": [
+            100.0,
+            true
+          ]
+        }
+      },
+      "nc": {
+        "feed_planes": {
+          "values": {
+            "FeedPlaneType": 0,
+            "FeedPlaneDistance": 1.0,
+            "GetUseCurrentMachiningDepthForFeedPlane": false,
+            "GetClrPlaneUseSetupStatus": false
+          },
+          "numeric_units_verified": false,
+          "enum_binding_verified": false,
+          "conversion_performed": false,
+          "pointer_plane_getters_called": false,
+          "model_updated": false,
+          "production_qualified": false
+        },
+        "clearance_rapid": {
+          "setup_use": {
+            "GetClrPlaneUseSetupStatus": false,
+            "GetRpdPlaneUseSetupStatus": false
+          },
+          "local_planes": {
+            "GetClrPlanePrms": {
+              "distance_native": 3.0,
+              "basis_raw": 0,
+              "hresult": 0,
+              "unit_binding_verified": false,
+              "enum_binding_verified": false,
+              "conversion_performed": false
+            },
+            "GetRpdPlnPrms": {
+              "distance_native": 25.0,
+              "basis_raw": 3,
+              "hresult": 0,
+              "unit_binding_verified": false,
+              "enum_binding_verified": false,
+              "conversion_performed": false
+            }
+          },
+          "setup_planes": {
+            "ClearancePlaneType": 0,
+            "ClearancePlaneDistance": 5.0,
+            "RapidPlaneType": 3,
+            "RapidPlaneDistance": 25.0
+          },
+          "effective_selection": {
+            "clearance": "operation",
+            "rapid": "operation"
+          },
+          "effective_world_plane_computed": false
+        },
+        "feeds_compensation": {
+          "GetSpndlSpeed": 790.7199544668789,
+          "GetTlpComp": 1,
+          "GetCNCComp": 1,
+          "GetRetractType": 0,
+          "XYFeed": 56.23600316168442
+        },
+        "z_feed": {
+          "value_native": 25.0,
+          "percentage": true,
+          "physical_feed_units_verified": false,
+          "percentage_basis_verified": false
+        },
+        "unread_feed_fields": [
+          "Per-link feed and cutting ratings not qualified by this scalar observation"
+        ]
+      }
+    }
+  },
+  "state": {
+    "document": {
+      "path": "fixture.SLDPRT",
+      "type": 1,
+      "needs_save": false
+    },
+    "saved_file_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "operations": [
+      {
+        "native_id": 143,
+        "setup_native_id": 93,
+        "setup_index": 0,
+        "operation_index": 0,
+        "mill_operation_type": 0,
+        "linked_feature_ids": [
+          79
+        ],
+        "assigned_tool": {
+          "native_id": 145
+        },
+        "suppressed": false,
+        "toolpath_generated": false,
+        "toolpath_record_counts": []
+      },
+      {
+        "native_id": 144,
+        "setup_native_id": 93,
+        "setup_index": 0,
+        "operation_index": 1,
+        "mill_operation_type": 1,
+        "linked_feature_ids": [
+          79
+        ],
+        "assigned_tool": {
+          "native_id": 145
+        },
+        "suppressed": false,
+        "toolpath_generated": false,
+        "toolpath_record_counts": []
+      },
+      {
+        "native_id": 195,
+        "setup_native_id": 93,
+        "setup_index": 0,
+        "operation_index": 2,
+        "mill_operation_type": 1,
+        "linked_feature_ids": [
+          196
+        ],
+        "assigned_tool": {
+          "native_id": 197
+        },
+        "suppressed": false,
+        "toolpath_generated": false,
+        "toolpath_record_counts": []
+      },
+      {
+        "native_id": 196,
+        "setup_native_id": 93,
+        "setup_index": 0,
+        "operation_index": 3,
+        "mill_operation_type": 1,
+        "linked_feature_ids": [
+          197
+        ],
+        "assigned_tool": {
+          "native_id": 198
+        },
+        "suppressed": false,
+        "toolpath_generated": false,
+        "toolpath_record_counts": []
+      },
+      {
+        "native_id": 267,
+        "setup_native_id": 93,
+        "setup_index": 0,
+        "operation_index": 4,
+        "mill_operation_type": 1,
+        "linked_feature_ids": [
+          268
+        ],
+        "assigned_tool": {
+          "native_id": 269
+        },
+        "suppressed": false,
+        "toolpath_generated": true,
+        "toolpath_record_counts": [
+          760
+        ]
+      },
+      {
+        "native_id": 247,
+        "setup_native_id": 93,
+        "setup_index": 0,
+        "operation_index": 5,
+        "mill_operation_type": 1,
+        "linked_feature_ids": [
+          248
+        ],
+        "assigned_tool": {
+          "native_id": 249
+        },
+        "suppressed": false,
+        "toolpath_generated": true,
+        "toolpath_record_counts": [
+          191
+        ]
+      },
+      {
+        "native_id": 248,
+        "setup_native_id": 93,
+        "setup_index": 0,
+        "operation_index": 6,
+        "mill_operation_type": 1,
+        "linked_feature_ids": [
+          249
+        ],
+        "assigned_tool": {
+          "native_id": 250
+        },
+        "suppressed": false,
+        "toolpath_generated": true,
+        "toolpath_record_counts": [
+          74
+        ]
+      },
+      {
+        "native_id": 271,
+        "setup_native_id": 93,
+        "setup_index": 0,
+        "operation_index": 7,
+        "mill_operation_type": 1,
+        "linked_feature_ids": [
+          272
+        ],
+        "assigned_tool": {
+          "native_id": 273
+        },
+        "suppressed": false,
+        "toolpath_generated": true,
+        "toolpath_record_counts": [
+          29
+        ]
+      }
+    ],
+    "operation_count": 8,
+    "features": [
+      {
+        "geometry": {
+          "native_id": 0,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 1,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 2,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 3,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 4,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 5,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 6,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 7,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 8,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 9,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 10,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 11,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 12,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 13,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 14,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 15,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 16,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 17,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 18,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 19,
+          "fixture": true
+        }
+      },
+      {
+        "geometry": {
+          "native_id": 20,
+          "fixture": true
+        }
+      }
+    ],
+    "operation_setups": [
+      {
+        "index": 0,
+        "native_id": 93,
+        "operation_count": 8
+      },
+      {
+        "index": 1,
+        "native_id": 94,
+        "operation_count": 0
+      },
+      {
+        "index": 2,
+        "native_id": 95,
+        "operation_count": 0
+      }
+    ],
+    "operation_counts": [
+      8,
+      0,
+      0
+    ],
+    "sw_reference": {
+      "solids": [
+        {
+          "mass_raw": [
+            1.0,
+            1.1,
+            1.2,
+            1.3,
+            1.4,
+            1.5,
+            1.6,
+            1.7,
+            1.8,
+            1.9,
+            2.0,
+            2.1
+          ]
+        }
+      ]
+    }
+  }
+}
