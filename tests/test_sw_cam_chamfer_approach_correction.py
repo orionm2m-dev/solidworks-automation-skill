@@ -290,3 +290,23 @@ def test_continuation_terminal_separates_inherited_and_new_actions(monkeypatch):
     assert len(r['inherited_actions'])==9 and len(r['actions'])==2
     first=next(iter(inherited));r['actions'][first]=deepcopy(inherited[first])
     with pytest.raises(ValueError):m.validate_terminal(r)
+
+def test_validate_only_rejects_stale_native_context_before_registration(monkeypatch):
+    v=json.loads((STAGE/'testdata/approach_configured_actual.json').read_text(encoding='utf8'))
+    context={k:{} for k in m.group.CURRENT_KEYS}
+    context.update(deepcopy(v['loaded']))
+    context['state']=deepcopy(v['before']['state'])
+    context['pins']=[]
+    context['current_context_sha256']=m._digest(m.group.current_projection(context))
+    context['state']=deepcopy(v['configured']['state'])
+    # A repeated COM mass read can differ by one representable float.
+    mass=context['state']['sw_reference']['solids'][0]['mass_raw']
+    mass[3]=math.nextafter(mass[3],math.inf)
+    assert context['current_context_sha256']!=m._digest(m.group.current_projection(context))
+    monkeypatch.setattr(m,'validate_request',lambda r:{'_action':'continue_configured_contour_approach'})
+    monkeypatch.setattr(m,'load_continuation_inputs',lambda p:context)
+    def forbidden(*args,**kwargs):
+        raise AssertionError('Registration/application access before exact context validation')
+    monkeypatch.setattr(m.common,'discover_export_registration',forbidden)
+    with pytest.raises(ValueError,match='Immutable current parent changed'):
+        m.dispatch_request({'action':'continue_configured_contour_approach'},validate_only=True)

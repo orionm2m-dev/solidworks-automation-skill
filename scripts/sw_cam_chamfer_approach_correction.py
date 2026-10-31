@@ -578,6 +578,7 @@ def load_continuation_inputs(p):
     loaded=deepcopy(original)
     loaded.update(state=deepcopy(failed['configured']['state']),continuation=c,
         continuation_before_context=original,continuation_failed=failed,approach_plan=deepcopy(failed['plan']))
+    loaded['current_context_sha256'] = _digest(group.current_projection(loaded))
     return loaded
 
 
@@ -730,6 +731,9 @@ def load_completed(path,digest,*,process_id,expected_document_path,expected_sour
 def dispatch_request(request,*,validate_only=False):
     p=validate_request(request);continuing=request['action']=='continue_configured_contour_approach'
     loaded=load_continuation_inputs(p) if continuing else load_inputs(p)
+    # Exercise the same immutable-context boundary before any application connection.
+    from types import SimpleNamespace
+    group.GroupContext.files(SimpleNamespace(loaded=loaded))
     registration=common.discover_export_registration(loaded,p['addin_clsid'])
     typelib=str(Path(registration['addin_path']).parent/'camworks.tlb')
     audit=audit_setters(typelib,loaded['generated_pin'],loaded['approach_plan'])
