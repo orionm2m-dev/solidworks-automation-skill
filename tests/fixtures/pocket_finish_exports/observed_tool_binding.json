@@ -1,0 +1,19 @@
+{
+  "catalogue_row": {
+    "native_id": 273,
+    "tool_type_raw": 1,
+    "CutDiameter": 2.0,
+    "Protrusion": 26.000000000000004,
+    "StnNo": 19.0
+  },
+  "prior_assignment": {
+    "native_id": 145,
+    "is_mill_tool": true,
+    "native_read_complete": true,
+    "units_verified": false,
+    "holder_geometry_verified": false,
+    "tool_type_raw": 1,
+    "cut_diameter_native": 2.0,
+    "protrusion_native": 20.0
+  }
+}
