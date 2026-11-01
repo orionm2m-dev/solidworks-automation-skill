@@ -102,7 +102,7 @@ def _read_profile(raw, typelib_path, read, budget, result=None, *, collection_re
     return result
 
 
-def _read_tool(raw, raw_operation, typelib_path, read, result=None):
+def _read_tool(raw, raw_operation, typelib_path, read, result=None, *, include_drill=False):
     result = {} if result is None else result
     if raw is None or not bool(raw):
         result["present"] = False
@@ -117,6 +117,16 @@ def _read_tool(raw, raw_operation, typelib_path, read, result=None):
         return result
     turn = _typed(raw, "ICWTurnTool", typelib_path)
     result["turn_tool_type_raw"] = _integer(read(turn, "ToolType"))
+    if result["turn_tool_type_raw"] == 2 and include_drill:
+        # Observed TURN drill objects reject ICWDrillTool (E_NOINTERFACE).
+        # Do not repeat that QI or substitute insert/holder getters.
+        result.update(tool_kind="turn_drill", parameters_status="unavailable",
+                      reason="turn_drill_geometry_interface_observed_unsupported",
+                      unsupported_interface="ICWDrillTool",
+                      observed_hresult=-2147467262, interface_probe_attempted=False)
+        result["holder"] = {"requested": False, "available": False,
+                            "reason": "turn_drill_holder_not_inspected"}
+        return result
     if result["turn_tool_type_raw"] != 1:
         # TURN 机床也可分配钻头；不向非车刀请求刀片尺寸或夹持器。
         result.update(parameters_status="unavailable", reason="unsupported_turn_tool_type")
@@ -166,8 +176,26 @@ def _read_tool(raw, raw_operation, typelib_path, read, result=None):
     return result
 
 
+def _read_drill_operation(raw, typelib_path, read, result):
+    """Read the three declared TURN drill fields without inventing depth getters."""
+    result.update(requested=True, interface="ICWTurnDrillOp", fields_native={},
+                  read_complete=False, machining_depth_available=False,
+                  unavailable_fields=["machining_depth", "entry_plane", "tip_overtravel",
+                                      "through", "retract_plane", "retract_amount"],
+                  unavailable_reason="not_exposed_by_documented_turn_drill_interface")
+    drill = _typed(raw, "ICWTurnDrillOp", typelib_path)
+    result["fields_native"]["DrillCycleType"] = _integer(read(drill, "DrillCycleType"))
+    leftover = read(drill, "GenerateLeftOver")
+    if type(leftover) is not bool:
+        raise ValueError("GenerateLeftOver must be a native Boolean")
+    result["fields_native"]["GenerateLeftOver"] = leftover
+    result["fields_native"]["LEFTOVER_TYPE"] = _integer(read(drill, "LEFTOVER_TYPE"))
+    result.update(read_complete=True, enum_semantics_verified=False)
+
+
 def inspect_operation_profile(sw, clsid, typelib_path, *, setup_index, operation_index,
-                              expected_operation_type, include_tool=True):
+                              expected_operation_type, include_tool=True,
+                              include_operation_parameters=False):
     """读取已绑定会话的指定操作、关联轮廓及刀具；首个失败立即停止后续读取。
 
     参数为已验证插件与类型库、零基索引和预期操作类型。返回原始数值及前后
@@ -188,6 +216,10 @@ def inspect_operation_profile(sw, clsid, typelib_path, *, setup_index, operation
         if type(include_tool) is not bool:
             raise ValueError("include_tool must be a strict Boolean")
         report["include_tool"] = include_tool
+        if type(include_operation_parameters) is not bool:
+            raise ValueError("include_operation_parameters must be a strict Boolean")
+        if include_operation_parameters and (type(expected_operation_type) is not int or expected_operation_type != 9):
+            raise ValueError("Operation parameters are limited to TURN drill type 9")
         for name, value in (("setup_index", setup_index), ("operation_index", operation_index)):
             if type(value) is not int or not 0 <= value <= 511:
                 raise ValueError(f"{name} must be an integer in [0, 511]")
@@ -213,6 +245,9 @@ def inspect_operation_profile(sw, clsid, typelib_path, *, setup_index, operation
         if _integer(read(turning, "OpernType")) != expected_operation_type:
             raise ValueError("Selected operation type changed during inspection")
         report["selected_operation"] = dict(selected)
+        if include_operation_parameters:
+            report["operation_parameters"] = {}
+            _read_drill_operation(raw, typelib_path, read, report["operation_parameters"])
         linked = _collection(read(operation, "IGetAllFeatures"), typelib_path)
         if len(linked) > _MAX_FEATURES:
             raise ValueError("Linked feature count exceeds inspection limit")
@@ -228,7 +263,7 @@ def inspect_operation_profile(sw, clsid, typelib_path, *, setup_index, operation
             for segment in feature["segments"])
         report["tool"] = {}
         if include_tool:
-            _read_tool(read(operation, "IGetTool"), operation, typelib_path, read, report["tool"])
+            _read_tool(read(operation, "IGetTool"), operation, typelib_path, read, report["tool"], include_drill=True)
         else:
             report["tool"].update(requested=False, parameters_status="not_requested")
         stage = "inventory_after"

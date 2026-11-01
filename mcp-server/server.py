@@ -1402,6 +1402,15 @@ class SolidWorksCamJobStatusInput(BaseInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON)
 
 
+class SolidWorksCamTurnControllerReadInput(SolidWorksCamTargetInput):
+    """Read the bound TURN controller name without selecting a controller."""
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    include_parameters: bool = Field(default=False, strict=True)
+    expected_controller_name: Optional[str] = Field(default=None, min_length=1, max_length=1024, strict=True)
+
+
 class SolidWorksCamOperationInput(SolidWorksCamTargetInput):
     """只读检查明确指定的操作；授权值只代表该原生对象。"""
     setup_index: int = Field(ge=0, le=511, strict=True)
@@ -1549,6 +1558,7 @@ class SolidWorksCamVariableAllowanceQualificationInput(SolidWorksCamOperationPro
 class SolidWorksCamProfileReadInput(SolidWorksCamOperationProfileInput):
     """仅轮廓读取可显式跳过整个工具调用链；默认保持原行为。"""
     include_tool: bool = Field(default=True, strict=True)
+    include_operation_parameters: bool = Field(default=False, strict=True, description="Read declared TURN drill type9 fields; depth/entry/retract are not exposed.")
 
 
 class SolidWorksCamToolReferenceInput(BaseInput):
@@ -4955,6 +4965,23 @@ def solidworks_cam_stop_observation(params: SolidWorksCamStopObservationInput) -
         return _tool_error(exc, params.response_format)
 
 
+@mcp.tool(name="solidworks_cam_inspect_turn_controller", title="Read Native TURN Controller Name",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_inspect_turn_controller(params: SolidWorksCamTurnControllerReadInput) -> str:
+    """Read GetController once through ICWTurnMachine; do not change CAM or infer presets."""
+    def op():
+        if _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_turn_controller_read import inspect_turn_controller
+        sw, registration = _cam_target(params)
+        return inspect_turn_controller(sw, registration["clsid"],
+            str(Path(registration["addin_path"]).parent / "camworks.tlb"),
+            process_id=params.process_id, expected_document_path=params.expected_document_path,
+            expected_source_sha256=params.expected_source_sha256,
+            include_parameters=params.include_parameters, expected_controller_name=params.expected_controller_name)
+    return _run_locked(op, params.response_format)
+
+
 @mcp.tool(name="solidworks_cam_inspect_operation", title="Inspect Native CAM Operation Diagnostics",
           annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
 def solidworks_cam_inspect_operation(params: SolidWorksCamOperationInput) -> str:
@@ -4978,7 +5005,8 @@ def solidworks_cam_inspect_operation_profile(params: SolidWorksCamProfileReadInp
         return inspect_operation_profile(sw, registration["clsid"],
             str(Path(registration["addin_path"]).parent / "camworks.tlb"),
             setup_index=params.setup_index, operation_index=params.operation_index,
-            expected_operation_type=params.expected_operation_type, include_tool=params.include_tool)
+            expected_operation_type=params.expected_operation_type, include_tool=params.include_tool,
+            include_operation_parameters=params.include_operation_parameters)
     return _run_locked(op, params.response_format)
 
 

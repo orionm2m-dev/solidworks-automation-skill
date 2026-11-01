@@ -480,7 +480,7 @@ def test_profile_nested_item_event_stops_later_items_and_segment_getters(graph, 
     graph.line.GetTurnSegmentType.assert_not_called()
 
 
-@pytest.mark.parametrize("turn_type",[0,2,3,99])
+@pytest.mark.parametrize("turn_type",[0,3,99])
 def test_non_insert_turn_tool_never_reads_insert_dimensions_or_holder(graph,turn_type):
     graph.turn_tool.ToolType.return_value=turn_type
     graph.turn_tool.InsertType.side_effect=AssertionError("No insert getter on drill")

@@ -34,7 +34,7 @@ def test_registered_readonly_schema_and_exact_route(context, core):
     result = json.loads(server.solidworks_cam_inspect_operation_profile(params(context)))
     assert result == {"status": "ok", "may_continue": False}
     core.assert_called_once_with(context.sw, CLSID, str(context.dll.parent / "camworks.tlb"),
-                                setup_index=0, operation_index=6, expected_operation_type=3, include_tool=True)
+                                setup_index=0, operation_index=6, expected_operation_type=3, include_tool=True, include_operation_parameters=False)
     assert context.runners == [{"format": server.ResponseFormat.JSON, "automation": True}]
 
 
@@ -99,3 +99,16 @@ def test_include_tool_rejects_coercion(context,core,value):
 def test_profile_only_false_reaches_core(context,core):
     server.solidworks_cam_inspect_operation_profile(params(context,include_tool=False))
     assert core.call_args.kwargs["include_tool"] is False
+
+
+@pytest.mark.parametrize("value", [0, 1, "true", None])
+def test_operation_parameters_flag_rejects_coercion(context, core, value):
+    with pytest.raises(ValueError): params(context, include_operation_parameters=value)
+    core.assert_not_called()
+
+
+def test_turn_drill_operation_parameters_reach_existing_reader(context, core):
+    server.solidworks_cam_inspect_operation_profile(params(context,
+        expected_operation_type=9, include_operation_parameters=True))
+    assert core.call_args.kwargs["include_operation_parameters"] is True
+    assert core.call_args.kwargs["expected_operation_type"] == 9
