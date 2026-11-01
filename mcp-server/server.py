@@ -9689,5 +9689,27 @@ def solidworks_cam_read_finish_diagnostics(params: SolidWorksCamFinishDiagnostic
         return _tool_error(exc,params.response_format)
 
 
+class SolidWorksCamWallLeadPropagationInput(SolidWorksCamFinishDiagnosticsInput):
+    diagnostic_receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    diagnostic_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    plan_path: str = Field(min_length=1, max_length=4096, strict=True)
+    plan_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    progress_path: str = Field(min_length=1, max_length=4096, strict=True)
+
+
+@mcp.tool(name="solidworks_cam_apply_wall_leads_to_all",title="Apply Reviewed Wall Leads and Calculate Once",
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_apply_wall_leads_to_all(params: SolidWorksCamWallLeadPropagationInput) -> str:
+    """Apply one pinned propagation recipe; selected generation once and save only a real path."""
+    try:
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_wall_apply_all import dispatch_request
+        request=dict(action="apply_wall_leads_to_all",params=params.model_dump(exclude={"response_format"}))
+        return _result(dispatch_request(request),params.response_format)
+    except Exception as exc:
+        return _tool_error(exc,params.response_format)
+
+
 if __name__ == "__main__":
     main()
