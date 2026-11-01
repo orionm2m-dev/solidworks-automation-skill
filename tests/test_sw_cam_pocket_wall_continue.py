@@ -6,8 +6,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-ROOT=Path(r'C:/Users/Denis Fedorov/.codex/skills/solidworks-automation')
 STAGE=Path(__file__).resolve().parents[1]
+ROOT=STAGE
 def module(name,path):
     spec=importlib.util.spec_from_file_location(name,path);value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value);return value
 m=module('wall_staged',STAGE/'scripts/sw_cam_pocket_wall_continue.py')

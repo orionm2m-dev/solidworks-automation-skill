@@ -9662,5 +9662,32 @@ def solidworks_cam_create_upper_cone_feature(params: SolidWorksCamUpperConeFeatu
     return _run_locked(op,params.response_format)
 
 
+class SolidWorksCamFinishDiagnosticsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    process_id: int = Field(gt=0, strict=True)
+    expected_document_path: str = Field(min_length=1, max_length=4096, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    addin_clsid: str = Field(min_length=38, max_length=38, strict=True)
+    checkpoint_receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    checkpoint_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    module_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
+@mcp.tool(name="solidworks_cam_read_finish_diagnostics",title="Read Saved Finish Restrictions",
+    annotations={"readOnlyHint":True,"destructiveHint":False,"idempotentHint":True,"openWorldHint":False})
+def solidworks_cam_read_finish_diagnostics(params: SolidWorksCamFinishDiagnosticsInput) -> str:
+    """Compare saved finish restrictions and feature health; no generation or modification."""
+    try:
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_finish_diagnostic_read import dispatch_request
+        request=dict(action="read_finish_diagnostics",params=params.model_dump(exclude={"response_format"}))
+        return _result(dispatch_request(request),params.response_format)
+    except Exception as exc:
+        return _tool_error(exc,params.response_format)
+
+
 if __name__ == "__main__":
     main()
