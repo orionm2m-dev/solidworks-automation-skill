@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 
+MAX_CURRENT_ARTIFACTS=512
 MAX_STATUS_BYTES=4*1024*1024
 MAX_EVIDENCE_BYTES=8*1024*1024
 MAX_JSON_TOTAL_BYTES=32*1024*1024
@@ -78,7 +79,7 @@ def _validate(c):
     _keys(c,("schema_version","current_artifacts","milestones","failed_attempts","next_action"))
     if type(c["schema_version"]) is not int or c["schema_version"]!=1:raise ValueError("Only strict schema_version=1 supported")
     total=0
-    for group,limit in (("current_artifacts",256),("milestones",512),("failed_attempts",128)):
+    for group,limit in (("current_artifacts",MAX_CURRENT_ARTIFACTS),("milestones",512),("failed_attempts",128)):
         seen=set()
         for row in _list(c[group],limit):
             if type(row) is not dict:raise ValueError("Checkpoint row must be object")

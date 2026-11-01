@@ -181,3 +181,30 @@ def test_no_time_expiry_or_code_execution_from_labels(case):
     case.manifest["next_action"]["label"]="__import__('os').system('never execute')"
     result=case.run();assert result["continuation_ready_by_saved_evidence"]
     assert result["next_action"]["label"]==case.manifest["next_action"]["label"]
+
+
+@pytest.mark.parametrize("count", [257, 512])
+def test_large_checkpoint_verifies_every_artifact(case, count):
+    first=case.manifest["current_artifacts"][0]
+    case.manifest["current_artifacts"]=[dict(first,id="part" if i==0 else "artifact_"+str(i)) for i in range(count)]
+    result=case.run()
+    assert result["status"]=="ok" and result["continuation_ready_by_saved_evidence"]
+    assert len(result["current_artifacts"])==count
+    assert all(row["sha256_verified"] for row in result["current_artifacts"])
+
+
+def test_large_checkpoint_still_rejects_last_artifact_mismatch(case):
+    first=case.manifest["current_artifacts"][0]
+    case.manifest["current_artifacts"]=[dict(first,id="part" if i==0 else "artifact_"+str(i)) for i in range(260)]
+    case.manifest["current_artifacts"][-1]["sha256"]="0"*64
+    result=case.run()
+    assert not result["continuation_ready_by_saved_evidence"]
+    assert any(x["code"]=="sha256_mismatch" for x in result["findings"])
+
+
+def test_checkpoint_artifact_count_remains_bounded(case):
+    first=case.manifest["current_artifacts"][0]
+    case.manifest["current_artifacts"]=[dict(first,id="part" if i==0 else "artifact_"+str(i)) for i in range(513)]
+    result=case.run()
+    assert result["status"]=="error" and not result["continuation_ready_by_saved_evidence"]
+    assert result["findings"][0]["code"]=="invalid_checkpoint"
