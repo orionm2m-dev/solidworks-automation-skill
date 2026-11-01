@@ -7,27 +7,38 @@ from math import isfinite
 from scripts import sw_cam_guide_group_generation as generation
 from scripts.sw_cam_rough_firstcut import require
 from scripts.sw_cam import _member
+from scripts.sw_cam_face_interfaces import query_face_interface
 
 configuration,group=generation.configuration,generation.group
 PAIRS={(324,82),(328,83)}
 
 
 def audit(typelib,pin):
-    from ctypes import POINTER,c_int
+    from ctypes import POINTER,c_int,c_double
+    from ctypes.wintypes import VARIANT_BOOL
     from comtypes.automation import IDispatch
-    from scripts.sw_cam_comtypes import _interface_class,_INTERFACES
+    from scripts.sw_cam_face_interfaces import audit_interfaces
+    names=('ICWOperation','ICWToolpath','ICWMillOperation','ICWNCParam','ICWNCParam2','ICWTool','ICWDispatchCollection')
+    resolution=audit_interfaces(names,typelib,generated_pin=pin)
     specs=(('ICWMillOperation','IGetNCParam',7,(POINTER(POINTER(IDispatch)),),(10,)),
+        ('ICWMillOperation','GenerateToolpath',9,(),()),
+        ('ICWOperation','GetIsToolpathGenerated',28,(POINTER(VARIANT_BOOL),),(10,)),
+        ('ICWOperation','IGetEnumToolpaths',1,(POINTER(POINTER(IDispatch)),),(10,)),
+        ('ICWToolpath','_get_RecordCount',1,(POINTER(c_int),),(10,)),
         ('ICWNCParam','GetTlpComp',17,(POINTER(c_int),),(10,)),
         ('ICWNCParam','GetCNCComp',19,(POINTER(c_int),),(10,)),
-        ('ICWNCParam','SetCNCComp',20,(c_int,),(1,)))
+        ('ICWNCParam','SetCNCComp',20,(c_int,),(1,)),
+        ('ICWNCParam','GetSpndlSpeed',7,(POINTER(c_double),),(10,)),
+        ('ICWNCParam','GetRetractType',21,(POINTER(c_int),),(10,)),
+        ('ICWNCParam2','_get_XYFeed',23,(POINTER(c_double),),(10,)))
     rows=[]
     for owner,name,ident,args,flags in specs:
-        cls=generation.reader.pocket._verify_generated_class(_interface_class(owner,str(typelib)),_INTERFACES[owner],pin)
+        cls=generation.reader.pocket.cam_class(owner,typelib,pin)
         members=[v for v in cls._methods_ if v.name==name]
         require(len(members)==1,'Unique declared NC member required')
         configuration.finish.finish.prior.require_abi(members[0],ident,args,flags)
         rows.append(dict(interface=owner,member=name,dispid=ident))
-    return dict(native_called=False,numeric_enum_meaning_qualified=False,members=rows)
+    return dict(native_called=False,numeric_enum_meaning_qualified=False,members=rows,interface_resolution=resolution)
 
 
 def _owner(backend,guard,target,path_state):
@@ -45,7 +56,10 @@ def _owner(backend,guard,target,path_state):
         for x in generation._items(guard.read(op,'IGetEnumToolpaths'),guard.typed,guard.read,1)])
     require(type(actual['generated'])is bool and group.exact(actual,expected),'Selected path state changed before approved NC correction')
     nc=guard.read(guard.typed(raw,'ICWMillOperation'),'IGetNCParam')
-    return guard.typed(nc,'ICWNCParam'),guard.typed(nc,'ICWNCParam2')
+    owner=guard.typed(nc,'ICWNCParam')
+    owner2=guard._observe(lambda:query_face_interface(nc,'ICWNCParam2',backend.typelib_path,
+        generated_pin=backend.loaded['generated_pin']))
+    return owner,owner2
 
 
 def _values(guard,owner,owner2):

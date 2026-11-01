@@ -18,7 +18,11 @@ def setup(monkeypatch,*,generated=False,paths=None):
             trace.append(('SetCNCComp',value));state['GetCNCComp']=value;return 0
     nc=NC()
     class Guard:
-        def typed(self,value,name):trace.append(('QI',name));return value
+        def typed(self,value,name):
+            from scripts.sw_cam_comtypes import _INTERFACES
+            assert name in _INTERFACES, 'Unsupported shared interface: '+name
+            trace.append(('QI',name));return value
+        def _observe(self,fn):return fn()
         def read(self,value,name,*args):
             trace.append(('read',name))
             if name=='GetIsToolpathGenerated':return generated
@@ -29,7 +33,8 @@ def setup(monkeypatch,*,generated=False,paths=None):
         def dispatch_once(self,call,persist_pending):persist_pending();return call()
     @contextmanager
     def guard():yield Guard()
-    b=SimpleNamespace(doc=doc,boundary=lambda:trace.append('boundary'),target=lambda g,t:(raw,feature),ctx=SimpleNamespace(guard=guard))
+    b=SimpleNamespace(typelib_path='synthetic.tlb',loaded={'generated_pin':{'path':'synthetic.py','sha256':'f'*64}},doc=doc,boundary=lambda:trace.append('boundary'),target=lambda g,t:(raw,feature),ctx=SimpleNamespace(guard=guard))
+    monkeypatch.setattr(m,'query_face_interface',lambda raw,name,tlb,generated_pin:raw)
     monkeypatch.setattr(m.generation,'read_generic_tool',lambda *a:(deepcopy(tool),None))
     monkeypatch.setattr(m.generation,'_items',lambda values,*a:list(values))
     return b,target,state,trace,tool

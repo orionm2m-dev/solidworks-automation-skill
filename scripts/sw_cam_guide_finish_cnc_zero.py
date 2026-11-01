@@ -21,6 +21,8 @@ SCOPE='SAVED_GUIDE_TWO_FINISH_CNC_ZERO_CANDIDATE_V1'
 IDS=(324,328)
 PARAMS={'process_id','expected_document_path','expected_source_sha256','generated_receipt_path','generated_receipt_sha256',
     'warning_receipts','module_sha256','receipt_path','progress_path','generated_cl_path','saved_cl_path','acknowledgement'}
+CONTINUATION_PARAMS={'zero_attempt_receipt_path','zero_attempt_receipt_sha256'}
+MAX_CHECKPOINT_PINS=36
 
 
 def path_state(binding,oid):
@@ -68,7 +70,19 @@ def verify_snapshot(baseline,actual,changed,regenerated):
     require(group.exact(actual['parameters'],expected_parameters(baseline,changed)),'NC correction changed other full parameters')
 
 
+class CorrectionContext(generation.GenerationContext):
+    def files(self):
+        require(1<=len(self.loaded['checkpoint_pins'])<=MAX_CHECKPOINT_PINS,'Bounded correction checkpoint closure required')
+        generation.reopen.CheckpointContext.files(self)
+        old=self.loaded.get('zero_attempt_original_marker')
+        if old:require(not Path(old).exists() and not Path(old).is_symlink(),'Original zero-dispatch attempt acquired a marker')
+
+
 class NativeBackend(generation.NativeBackend):
+    def __init__(self,loaded,args,sw,clsid,typelib_path,report,persist):
+        super().__init__(loaded,args,sw,clsid,typelib_path,report,persist)
+        self.ctx=CorrectionContext(loaded,self.args,sw,typelib_path,None,self.events,{'document':loaded['guide_parameters']['document']})
+
     def set_candidate(self,target,expected,state,pending):
         return candidate.set_raw_zero_candidate(self,target,expected,pending,path_state=state)
 
@@ -93,7 +107,7 @@ class Journal(group.GroupJournal):
     def _marker_state(self):
         r=self.report
         return dict(scope=SCOPE,status=r['status'],phase=r['phase'],source_path=r['source_path'],source_sha256=r['source_sha256'],
-            receipt_path=str(self.receipt),generated_checkpoint_pin=r['generated_checkpoint_pin'],actions=deepcopy(r['actions']),
+            receipt_path=str(self.receipt),generated_checkpoint_pin=r['generated_checkpoint_pin'],zero_attempt_predecessor_pin=r.get('zero_attempt_predecessor_pin'),actions=deepcopy(r['actions']),
             native_dispatch_pending=r.get('native_dispatch_pending',False),automatic_replay=False)
 
 
@@ -186,9 +200,44 @@ def load_warnings(p,ownership):
     return pins
 
 
+def zero_attempt_contract(prior,p,loaded):
+    require(prior.get('scope')==SCOPE and prior.get('status')=='error' and prior.get('phase')=='finished'
+        and prior.get('failed_phase')=='SetCNCComp:324','Exact stopped first-setter attempt required')
+    require(not any(k in prior for k in ('cleanup_issue','receipt_write_error'))
+        and prior.get('cleanup_session_active')is False,'Confirmed disconnected cleanup required')
+    for key in ('mutation_attempted','native_call_attempted','native_call_returned','native_dispatch_pending','setter_attempted',
+        'GTP_attempted','save_attempted','model_saved','SetTool_attempted','operation_creation_attempted','readback_verified','continuation_ready'):
+        require(prior.get(key)is False,'Previous attempt not proven write-free: '+key)
+    require(prior.get('changed_operation_ids')==[] and prior.get('regenerated_operation_ids')==[]
+        and list(prior.get('actions',{}))==['SetCNCComp:324'],'Unexpected previous changes or action set')
+    require(prior['actions']['SetCNCComp:324']==dict(status='prepared',attempted=False,returned=False,readback_verified=False),
+        'Previous setter reached dispatch or returned')
+    issue=prior.get('issue',{})
+    require(issue.get('type')=='ValueError' and any(v.get('file')=='sw_cam_comtypes.py' and v.get('function')=='_interface_class'
+        for v in issue.get('locations',[])),'Exact unsupported-interface pre-dispatch failure required')
+    clean_events(prior)
+    require(group.exact(prior['ownership'],loaded['ownership']) and prior['request']['process_id']==p['process_id']
+        and prior['source_sha256']==p['expected_source_sha256']
+        and common._key(prior['source_path'])==common._key(p['expected_document_path'])
+        and group.exact(prior['generated_checkpoint_pin'],loaded['generated_checkpoint_pin']), 'Previous source, owner or generated checkpoint differs')
+    require(group.exact(prior['before'],loaded['guide_parameters']['expected_parameters'])
+        and group.exact(prior['before_cl'],loaded['generated']['saved_cl']), 'Previous full baseline or saved CL differs')
+    require(prior['module_pin']['sha256']==prior['request']['module_sha256']!=p['module_sha256'],
+        'A distinct corrected implementation is required')
+
+
+def load_zero_attempt(p,loaded):
+    prior,pin=read_pin(p['zero_attempt_receipt_path'],p['zero_attempt_receipt_sha256']);zero_attempt_contract(prior,p,loaded)
+    original,original_pin=read_pin(prior['request']['receipt_path'],pin['sha256'])
+    require(group.exact(original,prior),'Archived zero-attempt receipt differs from original')
+    marker=common.local_evidence_root()/('finish_cnc_zero_'+group._digest(dict(scope=SCOPE,pid=p['process_id'],source=common._key(p['expected_document_path']),sha=p['expected_source_sha256']))+'.json')
+    require(not marker.exists() and not marker.is_symlink(),'Original attempt has a pending marker; no continuation allowed')
+    return prior,pin,common._merge([pin,original_pin]),str(marker)
+
+
 def prepare_request(request):
     require(type(request)is dict and set(request)=={'action','params'} and request['action']=='qualify_guide_finish_cnc_zero','Exact candidate action required')
-    p=deepcopy(request['params']);require(type(p)is dict and set(p)==PARAMS,'Exact candidate parameter keys required')
+    p=deepcopy(request['params']);require(type(p)is dict and set(p)in(PARAMS,PARAMS|CONTINUATION_PARAMS),'Exact candidate parameter keys required')
     require(p['acknowledgement']=='qualify_raw_zero_preserve_offset_regenerate_only_selected_finish','Explicit controlled regeneration qualification required')
     require(type(p['process_id'])is int and 0<p['process_id']<2**31,'Strict owned PID required')
     for key,value in p.items():
@@ -205,17 +254,23 @@ def prepare_request(request):
     require(len(metadata)==1,'Exact generated metadata required')
     checkpoint=common._merge(previous['checkpoint_pins'],[previous[k]['output']for k in ('before_cl','generated_cl','saved_cl')],warnings,
         [pin]+[common._pin(v)for v in (__file__,saved_loader.__file__,candidate.__file__,finish_cl.__file__)])
-    require(len(checkpoint)<=32,'Bounded candidate checkpoint closure required')
+    require(len(checkpoint)<=MAX_CHECKPOINT_PINS,'Bounded candidate checkpoint closure required')
     loaded=dict(pins=pins,checkpoint_pins=checkpoint,configuration_pins=deepcopy(previous['checkpoint_pins']),
         bootstrap_export_pins=[common._pin(generation.reopen.installation.__file__)],generated_pin=metadata[0],
         ownership=deepcopy(previous['ownership']),guide_parameters=selected,generated=previous,generated_checkpoint_pin=pin,
         warning_receipt_pins=warnings)
+    if CONTINUATION_PARAMS<=set(p):
+        prior,priorpin,extra,oldmarker=load_zero_attempt(p,loaded)
+        checkpoint=common._merge(checkpoint,extra);require(len(checkpoint)<=MAX_CHECKPOINT_PINS,'Bounded correction continuation closure required')
+        loaded.update(checkpoint_pins=checkpoint,zero_attempt_predecessor_pin=priorpin,zero_attempt_original_marker=oldmarker)
     common._check(pins);common._check(checkpoint)
     registration=common.discover_export_registration(loaded,addin);typelib=str(Path(registration['addin_path']).parent/'camworks.tlb')
     require(common._pin(typelib)in pins,'Installed metadata differs');abi=dict(generation=generation.audit(typelib,metadata[0]),candidate=candidate.audit(typelib,metadata[0]))
     p['expected_configuration']=selected['configuration']['sw_configuration_name']
     receipt=common._local_receipt(p['receipt_path']);progress=Path(p['progress_path'])
     marker=common.local_evidence_root()/('finish_cnc_zero_'+group._digest(dict(scope=SCOPE,pid=p['process_id'],source=common._key(p['expected_document_path']),sha=p['expected_source_sha256']))+'.json')
+    if 'zero_attempt_predecessor_pin'in loaded:
+        marker=marker.with_name(marker.stem+'_after_'+loaded['zero_attempt_predecessor_pin']['sha256']+'.json')
     exports=[cl._fresh_path(p[k])for k in ('generated_cl_path','saved_cl_path')]
     require(exports[0].parent!=exports[1].parent,'Separate fresh export directories required')
     outputs=[receipt,progress,marker]+exports;protected={common._key(v['path'])for v in pins+checkpoint}|{common._key(p['expected_document_path'])}
@@ -234,6 +289,7 @@ def dispatch_request(request,*,validate_only=False):
         sw,_=generation.reopen.sw_connect.connect_solidworks(process_id=p['process_id'],launch_new_instance=False,wait_seconds=1)
         report=dict(scope=SCOPE,request=p,module_pin=common._pin(__file__),source_path=p['expected_document_path'],source_sha256=p['expected_source_sha256'],
             ownership=loaded['ownership'],generated_checkpoint_pin=loaded['generated_checkpoint_pin'],warning_receipt_pins=loaded['warning_receipt_pins'],
+            zero_attempt_predecessor_pin=loaded.get('zero_attempt_predecessor_pin'),
             live_pins=deepcopy(loaded['pins']),checkpoint_pins=deepcopy(loaded['checkpoint_pins']),interface_audit=abi,
             recipe=deepcopy(loaded['guide_parameters']['targets']),qualification_limit='Raw zero meaning requires actual CL evidence; geometry and manufacturing remain unqualified',
             before_cl_reuse_basis='Immediate owned saved continuation, no intervening CAM/user changes; counts alone are not a CL identity proof')
