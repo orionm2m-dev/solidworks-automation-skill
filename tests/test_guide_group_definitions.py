@@ -183,3 +183,26 @@ def test_mcp_model_and_owned_pid_binding(tmp_path):
         with pytest.raises(ValueError):cls(**dict(p,**{key:value}))
     ns.update(_selected_process_id=999,_run_locked=lambda op,*a,**kw:op())
     with pytest.raises(ValueError):ns['solidworks_cam_insert_shallow_guide_definitions'](cls(**p))
+
+
+def test_native_backend_constructs_real_inherited_group_batch_without_any_native_call(tmp_path):
+    from types import SimpleNamespace
+    from scripts.sw_cam_guide_group_reader import GroupReadBatch
+    source=tmp_path/'part.SLDPRT';source.write_bytes(b'source')
+    dependency=tmp_path/'dependency.py';dependency.write_text('pass')
+    doc=dict(path=str(source),title=source.name,type=1,needs_save=False)
+    def forbidden():raise AssertionError('Constructor must not enter native/guard callbacks')
+    class NativeTrap:
+        def __getattr__(self,name):raise AssertionError('Native access during constructor: '+name)
+    backend=m.NativeBackend.__new__(m.NativeBackend)
+    backend.sw=NativeTrap();backend.typelib_path=str(tmp_path/'camworks.tlb')
+    backend.args=dict(process_id=123,expected_source_sha256=m._file_hash(source))
+    backend.loaded=dict(generated_pin=dict(path=str(dependency),sha256=m._file_hash(dependency)),pins=[dict(path=str(dependency),sha256=m._file_hash(dependency))])
+    backend.ctx=SimpleNamespace(identity=lambda:deepcopy(doc),files=forbidden,owned=forbidden)
+    backend.events=forbidden;retained=NativeTrap();state=dict(member='',returned=False,read_index=0)
+    callback=lambda:None
+    batch=backend.make_read_batch(retained,forbidden,state,callback)
+    assert type(batch) is GroupReadBatch and batch.progress is callback and batch.progress_state is state
+    assert batch.generated_pin==backend.loaded['generated_pin'] and batch._retained==[retained]
+    assert not batch._entered and not batch._active and batch._budget==1200
+    assert len(batch._rows)==2

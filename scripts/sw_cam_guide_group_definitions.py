@@ -8,6 +8,7 @@ selects another target, retries, saves, or infers TechDB default IDs.
 from copy import deepcopy
 from pathlib import Path
 import re
+from time import monotonic
 from scripts import sw_cam_guide_group_reader as guide
 from scripts import sw_cam_fresh_finish_rebind as rebind
 from scripts.sw_cam_mill_selected_plan_evidence import read_pin
@@ -169,6 +170,13 @@ def read_own_nc(raw,*,read,typed):
 
 
 class NativeBackend(guide.NativeBackend):
+    def make_read_batch(self,doc,binding,state,progress):
+        return guide.GroupReadBatch(self.sw,self.typelib_path,generated_pin=self.loaded['generated_pin'],
+            process_id=self.args['process_id'],expected_document=self.ctx.identity(),source_sha256=self.args['expected_source_sha256'],
+            evidence_pins=self.loaded['pins'],verify_evidence=self.ctx.files,verify_owned_process=self.ctx.owned,
+            check_events=self.events,retained_objects=(doc,),verify_retained_binding=binding,max_native_calls=1200,
+            progress=progress,progress_state=state)
+
     def capture_binding(self,label,new_id=None):
         self.boundary()
         with self.ctx.guard() as g:doc=g.typed(g.read(self.ctx.app,'IGetActiveDoc'),'ICWDoc3')
@@ -176,11 +184,15 @@ class NativeBackend(guide.NativeBackend):
         require(exact(configuration,self.report['plan']['configuration']),'Protected CAM/SW configuration changed')
         def binding():
             require(exact(self.configuration(doc),configuration),'Configuration changed during readback')
-        batch=guide.GroupReadBatch(self.sw,self.typelib_path,generated_pin=self.loaded['generated_pin'],
-            process_id=self.args['process_id'],expected_document=self.ctx.identity(),source_sha256=self.args['expected_source_sha256'],
-            evidence_pins=self.loaded['pins'],verify_evidence=self.ctx.files,verify_owned_process=self.ctx.owned,
-            check_events=self.events,retained_objects=(doc,),verify_retained_binding=binding,max_native_calls=1200)
-        diagnostic=dict(label=label,new_operation_native_id=new_id);self.report.setdefault('captures',[]).append(diagnostic);self.persist()
+        state=dict(member='',returned=False,read_index=0)
+        diagnostic=dict(label=label,new_operation_native_id=new_id,progress=state)
+        self.report.setdefault('captures',[]).append(diagnostic);self.persist()
+        last_progress=monotonic()
+        def progress():
+            nonlocal last_progress
+            now=monotonic()
+            if now-last_progress>=2.0:self.persist();last_progress=now
+        batch=self.make_read_batch(doc,binding,state,progress)
         try:
             with batch:
                 value,handles=read_current_binding(doc,read=batch.read,typed=batch.typed)
