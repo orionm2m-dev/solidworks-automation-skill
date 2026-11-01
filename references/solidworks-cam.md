@@ -1737,3 +1737,50 @@ measurements. Skill code and shared references do not hardcode project paths.
 ## Owned informational warning acknowledgement
 
 `solidworks_cam_information_prompt` is a Windows UI recovery helper, not the CAM API. It acknowledges exactly one informational OK dialog after checking the process ID, creation time, executable, current document window title, complete warning text and single enabled OK control. It writes a pending receipt before one notification and verifies disappearance. It neither takes the held CAM lock nor calls COM, Save, Cancel or focus commands. The dialog warning remains evidence even when the CAM event subscriber records no message; acknowledgement does not qualify the generated path. Two owned lead-compensation warnings were acknowledged successfully on SOLIDWORKS 2026; other dialog types are rejected.
+
+## Saved guide finish correction, reopen and WIP (pilot)
+
+Three bounded tools continue a hash-pinned, generated and saved guide route. Use
+its existing receipts and profiles; do not recreate operations or repeat an
+uncertain action. Paths, process identity and case-specific operation IDs come
+from the request/checkpoint, not a hardcoded project directory.
+
+- `solidworks_cam_qualify_guide_finish_cnc_zero`: changes only the two explicitly
+  selected finish operations through `ICWNCParam.SetCNCComp(0)`, retains toolpath
+  compensation (`GetTlpComp() == 1`), regenerates those two paths, compares all
+  protected CL signatures, then performs one explicit Save and readback. The
+  observed absence of `CUTCOM` in the resulting finish CL is empirical evidence;
+  it is not an undocumented numeric-enum contract or cutting-condition approval.
+- `solidworks_cam_verify_corrected_guides_reopen`: consumes that completed Save
+  receipt, closes and reopens only the owned qualification document, reacquires
+  the CAM objects, and compares route parameters and complete saved CL signatures.
+  It does not Save, generate paths, change parameters, or exit the application.
+  The immediately preceding owned Save and explicit continuity checks are required;
+  the SOLIDWORKS dirty flag alone does not prove unchanged CAM state.
+- `solidworks_cam_export_corrected_guides_wip`: reuses the completed-route WIP
+  engine for one `ICWMachine5.CreateSTLOfWIPs2(directory, "wip.stl", "", 0, 0)`.
+  This exports the whole machine's WIP parts/setups, not a selection of guide
+  operations. Full before/after route checks and bounded output-file hashes must
+  match. No explicit GTP, GOP, AFR, Save, parameter setter or simulation call is
+  made. Keep all returned meshes; never automatically repeat an uncertain export.
+
+Offline tests cover source/receipt lineage, fresh once-only markers, stale and
+changed evidence, protected operations, readback, cleanup and output-path bounds.
+Interface audits resolve the actual installed TLB declarations and adapter
+catalogues, including inherited members. `ICWNCParam2` must use the established
+face-interface resolver; it is not registered in the shared generic CAM resolver.
+A permissive mock is insufficient evidence that a requested interface exists.
+A recorded pre-setter failure can continue only with strict evidence that no
+native mutation, generation or Save was attempted, clean event cleanup, unchanged
+source, and a distinct fresh marker. Preserve the failed receipt and old markers.
+
+Native verification on SOLIDWORKS 2026 covered a 13-operation route with ten
+existing generated paths: two finish paths were corrected to 104 CL records each,
+eight other CL signatures stayed unchanged, Save/readback and close/reopen passed.
+The subsequent single WIP export returned true; the complete before/after
+snapshots and saved source hash matched. Its binary STL contained 1,282 triangles
+with valid length and finite coordinates. These are bounded software and native
+workflow results, not approval of arbitrary operation pairs. Mesh accuracy,
+material-removal acceptance, temporal stock/neck clearance, fixture and machine
+collisions, tool grip, feeds/speeds, postprocessing and production release remain
+separate checks. A final WIP cannot prove the stock state before an earlier cut.
