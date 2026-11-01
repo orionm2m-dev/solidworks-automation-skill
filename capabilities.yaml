@@ -789,6 +789,36 @@
     "interactive",
     "reviewed"
   ]
+},
+{
+  "id": "cam_shallow_guide_selected_generation",
+  "label": "CAM 已保存导向槽四项定向生成与CL保护",
+  "level": "pilot",
+  "backends": [
+    "solidworks-com-pywin32"
+  ],
+  "verified_versions": [],
+  "dependencies": [
+    "SolidWorks",
+    "SOLIDWORKS CAM",
+    "pywin32",
+    "comtypes"
+  ],
+  "limitations": [
+    "只接受保存且重新打开验证通过的固定四项MILL操作与完整13项绑定及4组参数。",
+    "同一拥有者线程最多四次逐操作GenerateToolpath；不允许设置级/机床级生成、setter、SetTool或自动重放。",
+    "原有六条CL的完整命令/运动/圆弧签名必须保持；CL标签与新增原生操作ID映射仍需独立几何核对。",
+    "复用父CAM事件会话导出；三个独占本地目录分别保存生成前、生成后及Save后的CL。",
+    "全部四项结果和受保护状态通过后最多一次Save；生成状态重新打开后的持久化仍需另行验证。",
+    "后台未完成、CAM事件、异常返回、空轨迹或内容变化立即停止后续调用，不作自动重试。",
+    "53项离线测试及实际保存输入的文件预检通过；未登记本组合生成的原生成功。",
+    "几何、实际刀具/夹具碰撞、物理切削条件及生产资格均未确认。",
+    "使用说明：references/guide-operation-groups.md"
+  ],
+  "allowed_modes": [
+    "interactive",
+    "reviewed"
+  ]
 }
 ]
 }
