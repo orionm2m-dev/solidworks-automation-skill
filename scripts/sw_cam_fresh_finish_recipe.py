@@ -20,7 +20,7 @@ from scripts.sw_cam_mill_inventory import _items
 from scripts.sw_cam_mill_route_context import read_generic_tool
 from scripts.sw_cam_rough_firstcut import require
 common,group,insert=parent.common,parent.group,parent.insert
-SCOPE='SAVED_FRESH_FINISH_RECIPE_V1'
+SCOPE='SAVED_FRESH_FINISH_RECIPE_V2'
 # key, owner, getter, setter, mode; values are provided by the pinned recipe.
 FIELDS=(
  ('side_allowance','ICWFinishMillOp','SideAllow','SideAllow','property'),
@@ -39,16 +39,17 @@ FIELDS=(
  for key,getter,setter,mode in (
  ('angle','ArcAngle','ArcAngle','property'),('radius','GetArcRadius2','SetArcRadius2','pair'),
  ('straight','GetLeadAmt2','SetLeadAmt2','pair'),('overlap','GetLeadOverlap2','SetLeadOverlap2','pair')))
+SCOPE_FIELDS=(('gouge_check','ICWFinishMillOp3','GougeCheck','GougeCheck','property'),('lead_in_type','lead_in','LeadType','LeadType','property'),('lead_out_type','lead_out','LeadType','LeadType','property'))
 DEFAULT_FIELDS={'side_allowance':'SideAllow','final_side':'FinalSideCutAmt','spring_passes':'SpringPass',
  'first_depth':'FirstDepthCut','max_depth':'MaxDepthCut','final_depth':'FinalDepthCut','side_step':'SideCutAmt',
  'previous_allowance':'GetPreviousAllowance','override_previous':'OverridePrevAllow','perimeter':'PerimeterPassType'}
 PARAMS={'process_id','expected_document_path','expected_source_sha256','addin_clsid','checkpoint_receipt_path',
  'checkpoint_receipt_sha256','source_operation_native_id','operation_native_id','feature_native_id','tool_native_id',
- 'recipe_path','recipe_sha256','module_sha256','receipt_path'}
+ 'recipe_path','recipe_sha256','protected_receipt_path','protected_receipt_sha256','module_sha256','receipt_path'}
 FORBIDDEN=('tool_creation_attempted','tool_edit_attempted','feature_edit_attempted','operation_creation_attempted',
  'operation_delete_attempted','move_attempted','global_generation_attempted','GOP_attempted','automatic_replay',
- 'automatic_rollback','gouge_check_setter_attempted','bottom_finish_setter_attempted','geometry_acceptance_complete','production_qualified')
-ACTIONS={'SetTool','GenerateToolpath','SaveActiveDocument'}|{'field:'+s[0] for s in FIELDS}
+ 'automatic_rollback','bottom_finish_setter_attempted','geometry_acceptance_complete','production_qualified')
+ACTIONS={'SetTool','GenerateToolpath','SaveActiveDocument'}|{'field:'+s[0] for s in FIELDS}|{'scope:'+s[0] for s in SCOPE_FIELDS}
 
 
 def validate_request(request):
@@ -64,11 +65,12 @@ def validate_request(request):
 
 
 def validate_recipe(recipe,p):
-    require(set(recipe)=={'scope','binding','field_values','bottom_finish','gouge_check','save_empty_result','maximum_gtp_calls','production_feeds_qualified'}
-        and recipe['scope']=='FRESH_FINISH_WALL_RECIPE_V1','Exact bounded recipe required')
+    require(set(recipe)=={'scope','binding','field_values','scope_values','bottom_finish','gouge_check','save_empty_result','maximum_gtp_calls','production_feeds_qualified'}
+        and recipe['scope']=='FRESH_FINISH_WALL_RECIPE_V2','Exact bounded recipe required')
     require(recipe['binding']=={k:p[k] for k in ('source_operation_native_id','operation_native_id','feature_native_id','tool_native_id')},'Recipe binding differs')
     require(recipe['bottom_finish'] is False and recipe['gouge_check'] is True and recipe['save_empty_result'] is True
         and type(recipe['maximum_gtp_calls']) is int and recipe['maximum_gtp_calls']==1 and recipe['production_feeds_qualified'] is False,'Exact wall-only experiment required')
+    require(group.exact(recipe['scope_values'],{'gouge_check':True,'lead_in_type':1,'lead_out_type':1}),'Explicit gouge check and arc leads required')
     values=recipe['field_values'];require(set(values)=={s[0] for s in FIELDS},'Complete bounded field recipe required')
     for spec in FIELDS:
         key,_,_,_,mode=spec;value=values[key]
@@ -113,17 +115,45 @@ def executed_regressions(loaded):
         and sum(int(x.attrib.get('tests',0))-int(x.attrib.get('skipped',0)) for x in suites)>0,'At least one executed passing compatibility test required')
 
 
+def protected_evidence(loaded,p):
+    data,pin=read_pin(p['protected_receipt_path'],p['protected_receipt_sha256'])
+    require(data['scope']=='SAVED_FRESH_FINISH_PROTECTED_READ_V1' and data['status']=='observed' and data['readback_verified'] is True
+        and data['read_only'] is True and all(data[k] is False for k in ('mutation_attempted','GTP_attempted','save_attempted')),'Completed read-only protected observation required')
+    require(data['process_id']==p['process_id'] and data['operation_native_id']==p['operation_native_id'] and data['feature_native_id']==p['feature_native_id']
+        and common._key(data['source_path'])==common._key(p['expected_document_path']) and data['source_sha256']==p['expected_source_sha256']
+        and data['checkpoint_pin']['sha256']==loaded['parent_pin']['sha256'],'Protected observation binding differs')
+    require(group.exact(data['before'],data['after']) and data['batch']['read_scope_complete'] is True and data['batch']['invalid'] is False
+        and data['cleanup']['session_active'] is False and data['cleanup']['messages']['disconnected'] is True,'Completed stable protected observation required')
+    clean_events(data);common._check(data['runtime_pins'])
+    source,target=binding(loaded,p)
+    expected=dict(native_id=p['operation_native_id'],suppressed=False,generated=False,feature_ids=[p['feature_native_id']],tool_id=target['assigned_tool']['native_id'],record_counts=[],mill_type=1)
+    require(group.exact(data['before'],expected),'Protected observation selected route differs')
+    value=data['protected']
+    require(set(value)=={'gouge_check','single_depth','depth_process','rest_method','add_tool_radius','lead_types','compensation'}
+        and value['gouge_check'] is False and value['single_depth'] is False and type(value['depth_process']) is int
+        and type(value['rest_method']) is int and value['rest_method']==0 and type(value['add_tool_radius']) is bool
+        and value['lead_types']==[4,4] and type(value['compensation']) is list and len(value['compensation'])==2
+        and all(type(x) is int for x in value['compensation']),'Observed fresh arc-conversion baseline required')
+    return deepcopy(value),pin
+
+
+def expected_protected(initial):
+    result=deepcopy(initial);result.update(gouge_check=True,lead_types=[1,1]);return result
+
+
 def load_inputs(p):
     loaded=parent.load_completed(p['checkpoint_receipt_path'],p['checkpoint_receipt_sha256'],
         **{k:p[k] for k in ('process_id','expected_document_path','expected_source_sha256')})
     binding(loaded,p);executed_regressions(loaded)
     recipe,rpin=read_pin(p['recipe_path'],p['recipe_sha256']);validate_recipe(recipe,p)
+    observed,protected_pin=protected_evidence(loaded,p)
     from scripts import sw_cam_finish_defaults_progress as compact
-    retired=[x for x in loaded['pins'] if Path(x['path']).name=='sw_cam_finish_runtime_compatibility.py'
+    from scripts import sw_cam_fresh_finish_field_batch as field_batch
+    retired=[x for x in loaded['pins'] if Path(x['path']).name in ('sw_cam_finish_runtime_compatibility.py','sw_cam_chamfer_catalogue_preflight.py')
         or common._key(x['path'])==common._key(loaded.get('runtime_compatibility_pin',{}).get('path','/not-a-pin'))]
-    live=common._merge([x for x in loaded['pins'] if x not in retired],[common._pin(__file__),common._pin(compact.__file__)])
+    live=common._merge([x for x in loaded['pins'] if x not in retired],[common._pin(__file__),common._pin(compact.__file__),common._pin(field_batch.__file__)])
     require(len(live)<=64,'Bounded native closure required')
-    loaded.update(pins=live,offline_export_proof_pins=common._merge(loaded['offline_export_proof_pins'],retired,[rpin]),recipe=recipe,recipe_pin=rpin)
+    loaded.update(pins=live,offline_export_proof_pins=common._merge(loaded['offline_export_proof_pins'],retired,[rpin,protected_pin]),recipe=recipe,recipe_pin=rpin,protected_baseline=observed,protected_receipt_pin=protected_pin)
     common._check(live);common._check(loaded['offline_export_proof_pins']);return loaded
 
 
@@ -142,12 +172,14 @@ def verify_observation(loaded,p,baseline,observed,*,configured,generated):
         or (not generated and counts==[]),'Bounded actual target stream required')
     for key in ('assigned_tool','toolpath_generated','toolpath_record_counts'):target[key]=deepcopy(before[key])
     require(group.exact(a,b),'Prior route/settings or operation changed')
-    for key in ('tools','feature','source_defaults','source_restrictions','protected'):
+    for key in ('tools','feature','source_defaults','source_restrictions'):
         require(group.exact(baseline[key],observed[key]),'Protected observation changed: '+key)
     expected=expected_defaults(baseline['target_defaults'],loaded['recipe']['field_values']) if configured else baseline['target_defaults']
     require(group.exact(expected,observed['target_defaults']),'Unexpected target defaults/levels changed')
     require(group.exact(observed['fields'],loaded['recipe']['field_values'] if configured else baseline['fields']),'Target direct readback differs')
-    require(observed['protected']['gouge_check'] is True and observed['target_defaults']['finish']['BottomFinOpt'] is False,'Wall-only gouge guard required')
+    protected=expected_protected(baseline['protected']) if configured else baseline['protected']
+    require(group.exact(protected,observed['protected']),'Unexpected protected field change')
+    require(observed['target_defaults']['finish']['BottomFinOpt'] is False and (not configured or observed['protected']['gouge_check'] is True and observed['protected']['lead_types']==[1,1]),'Wall-only gouge/arc guard required')
     return deepcopy(counts)
 
 
@@ -158,6 +190,7 @@ def verify_before(loaded,p,value):
     source_pin=loaded['parent_pin'];prior,_=read_pin(source_pin['path'],source_pin['sha256'])
     require(group.exact(value['source_defaults'],prior['final_observation']['source_defaults'])
         and group.exact(value['source_restrictions'],prior['final_observation']['source_restrictions']),'Saved source recipe changed')
+    require(group.exact(value['protected'],loaded['protected_baseline']),'Fresh protected state differs from pinned diagnostic')
     verify_observation(loaded,p,value,value,configured=False,generated=False)
 
 
@@ -172,6 +205,7 @@ def status_contract(status,p,*,generated=None):
 
 def audit(typelib,generated):
     from ctypes import POINTER,c_int,c_double
+    from ctypes.wintypes import VARIANT_BOOL
     rows=lead_scope.audit(typelib,generated)['members']
     cls=finish.interface_class('ICWFinishMillOp',typelib,generated)
     for member,ident,scalar in (('SideAllow',1,c_double),('FinalSideCutAmt',3,c_double),
@@ -180,6 +214,12 @@ def audit(typelib,generated):
             found=[x for x in cls._methods_ if x.name==name];require(len(found)==1,'Exact property declaration required')
             finish.prior.require_abi(found[0],ident,args,flags);rows.append(dict(interface='ICWFinishMillOp',name=name,dispid=ident))
         require(hasattr(POINTER(cls),'_ICWFinishMillOp__com__set_'+member),'Raw HRESULT setter required')
+    for interface,member,ident,scalar in (('ICWFinishMillOp3','GougeCheck',130,VARIANT_BOOL),('ICWLeadInOut','LeadType',1,c_int)):
+        cls=finish.interface_class(interface,typelib,generated)
+        for name,args,flags in (('_get_'+member,(POINTER(scalar),),(10,)),('_set_'+member,(scalar,),(1,))):
+            found=[x for x in cls._methods_ if x.name==name];require(len(found)==1,'Exact scope property required')
+            finish.prior.require_abi(found[0],ident,args,flags);rows.append(dict(interface=interface,name=name,dispid=ident))
+        require(hasattr(POINTER(cls),'_'+interface+'__com__set_'+member),'Raw scope HRESULT setter required')
     return dict(all_resolved=True,native_calls=0,members=rows)
 
 
@@ -217,7 +257,7 @@ class NativeBackend(CompactDefaultsMixin,parent.NativeBackend):
             owner,feature,_=self.owner(g,spec);value=g.read(owner,spec[2],*([feature] if spec[4]=='feature' else []))
         return list(value) if type(value) is tuple else value
     def set_field(self,spec,value,pending):
-        require(spec in FIELDS,'Setter outside reviewed recipe')
+        require(spec in FIELDS+SCOPE_FIELDS,'Setter outside reviewed recipe')
         with self.ctx.guard() as g:
             owner,feature,name=self.owner(g,spec);mode=spec[4]
             if mode=='property':
@@ -235,9 +275,10 @@ class NativeBackend(CompactDefaultsMixin,parent.NativeBackend):
             value['lead_types']=[g.read(self.typed(g,g.read(op,member,feature),'ICWLeadInOut'),'LeadType') for member in ('IGetLeadin','IGetLeadout')]
             mill=g.typed(raw,'ICWMillOperation');nc=self.typed(g,g.read(mill,'IGetNCParam'),'ICWNCParam')
             value['compensation']=[g.read(nc,name) for name in ('GetTlpComp','GetCNCComp')]
-        require(value['gouge_check'] is True and value['single_depth'] is False and type(value['depth_process']) is int
-            and type(value['rest_method']) is int and value['rest_method']==0 and value['lead_types']==[1,1]
-            and all(type(x) is int for x in value['compensation']) and type(value['add_tool_radius']) is bool,'Known wall depth/lead/gouge scope required')
+        self.report.setdefault('protected_observations',[]).append(deepcopy(value));self.persist()
+        require(type(value['gouge_check']) is bool and type(value['single_depth']) is bool and type(value['depth_process']) is int
+            and type(value['rest_method']) is int and all(type(x) is int for x in value['lead_types']+value['compensation'])
+            and type(value['add_tool_radius']) is bool,'Exact protected scalar types required')
         return value
     def snapshot(self,label):
         value=insert.NativeBackend.snapshot(self,label)
@@ -245,7 +286,8 @@ class NativeBackend(CompactDefaultsMixin,parent.NativeBackend):
         value['source_defaults']=self.operation_defaults(source,label+'_source',fid)
         value['source_restrictions']=self.source_restrictions()
         value['target_defaults']=self.operation_defaults(target,label+'_target',fid)
-        value['fields']={s[0]:self.field(s) for s in FIELDS};value['protected']=self.protected();return value
+        from scripts.sw_cam_fresh_finish_field_batch import read_fields
+        value['fields']=read_fields(self,label);value['protected']=self.protected();return value
     def current_tool(self):
         with self.ctx.guard() as g:
             raw,_=self.target(g);value,_=read_generic_tool(raw,self.native['doc'],g.read,g.typed);return value
@@ -290,7 +332,7 @@ class Journal(insert.base.Journal):
 
 def marker_path(p):
     return common.local_evidence_root()/('fresh_finish_recipe_'+_digest(dict(scope=SCOPE,source=common._key(p['expected_document_path']),
-        source_sha256=p['expected_source_sha256'],operation=p['operation_native_id']))+'.json')
+        source_sha256=p['expected_source_sha256'],operation=p['operation_native_id'],protected_receipt_sha256=p['protected_receipt_sha256']))+'.json')
 
 
 def returned(backend,journal,label,value):
@@ -305,6 +347,12 @@ def run_backend(backend,journal,loaded,p):
         value=backend.assign(lambda:journal.pending('SetTool'));returned(backend,journal,'SetTool',value)
         actual=backend.current_tool();require(group.exact(actual,wanted_tool(loaded,p)),'Tool assignment readback differs')
         r['actions']['SetTool'].update(readback_verified=True,observed=actual);journal.persist()
+        for spec in SCOPE_FIELDS:
+            label='scope:'+spec[0];value=loaded['recipe']['scope_values'][spec[0]]
+            r.setdefault('scope_before',{})[spec[0]]=backend.field(spec);journal.persist()
+            result=backend.set_field(spec,value,lambda label=label:journal.pending(label));returned(backend,journal,label,result)
+            actual=backend.field(spec);r['actions'][label]['observed']=actual;journal.persist()
+            require(group.exact(actual,value),'Scope field readback differs');r['actions'][label]['readback_verified']=True;journal.persist()
         for spec in FIELDS:
             label='field:'+spec[0];value=loaded['recipe']['field_values'][spec[0]]
             r.setdefault('field_before',{})[spec[0]]=backend.field(spec);journal.persist()
@@ -339,6 +387,11 @@ def run_backend(backend,journal,loaded,p):
     finally:
         try:backend.close()
         except Exception as exc:r.update(status='uncertain',readback_verified=False,cleanup_issue=_error(exc))
+        session=getattr(backend,'session',None)
+        if session is not None:
+            r['messages']=session.summary();r['cleanup_session_active']=getattr(backend,'session_active',None)
+            try:backend.events(False)
+            except Exception as exc:r.update(status='uncertain',readback_verified=False,cleanup_issue=_error(exc))
         journal.persist()
     return r
 
@@ -357,6 +410,7 @@ def validate_terminal(r):
     require(r['generation_status']['record_counts']==r['generated_record_counts'] and group.exact(r['generated'],r['final']),'Save machining observation differs')
     for action in r['actions'].values():parent.parent.wall.history.verified_action(action)
     require(group.exact(r['actions']['SetTool']['observed'],wanted_tool(loaded,p)),'Recorded assignment differs')
+    for spec in SCOPE_FIELDS:require(group.exact(r['actions']['scope:'+spec[0]]['observed'],loaded['recipe']['scope_values'][spec[0]]),'Recorded scope choice differs')
     for spec in FIELDS:require(group.exact(r['actions']['field:'+spec[0]]['observed'],loaded['recipe']['field_values'][spec[0]]),'Recorded recipe differs')
     t=r['source_transition'];require(type(t['strict_save_return']) is int and t['strict_save_return']==0
         and t['source_before_sha256']==r['initial_source_sha256'] and t['source_after_sha256']==r['saved_source_sha256']
@@ -397,7 +451,7 @@ def dispatch_request(request,*,validate_only=False):
         and all(x.is_absolute() and x.parent.is_dir() and not x.exists() and not x.is_symlink() for x in paths),'Fresh distinct output paths required')
     reg=common.discover_export_registration(loaded,p['addin_clsid']);typelib=str(Path(reg['addin_path']).parent/'camworks.tlb')
     audited=audit(typelib,loaded['generated_pin'])
-    if validate_only:return dict(status='validated_offline',native_called=False,live_pin_count=len(loaded['pins']),setter_count=len(FIELDS),max_selected_gtp_calls=1,save_empty_result=True,setter_audit=audited)
+    if validate_only:return dict(status='validated_offline',native_called=False,live_pin_count=len(loaded['pins']),setter_count=len(FIELDS)+len(SCOPE_FIELDS),max_selected_gtp_calls=1,save_empty_result=True,setter_audit=audited)
     from scripts.sw_operation_guard import solidworks_operation_lock
     from scripts.sw_connect import connect_solidworks
     with solidworks_operation_lock(timeout_seconds=1,process_id=p['process_id']):
