@@ -1,0 +1,45 @@
+{
+  "scope": "TURN_CONFIGURATION_BINDING_READ_V1",
+  "status": "observed",
+  "phase": "finished",
+  "readback_verified": true,
+  "route_reference_matches": true,
+  "nc_parameters": [
+    {
+      "operation_native_id": 322,
+      "status": "error",
+      "stage": "IGetTurnNCParam",
+      "issue": {
+        "type": "COMError",
+        "hresult": -2147417851,
+        "actual_return_type": null,
+        "locations": [
+          {
+            "file": "sw_cam_configuration_binding.py",
+            "function": "read_nc",
+            "line": 137
+          },
+          {
+            "file": "sw_cam_configuration_binding.py",
+            "function": "read",
+            "line": 210
+          },
+          {
+            "file": "sw_cam.py",
+            "function": "_member",
+            "line": 28
+          }
+        ]
+      }
+    },
+    {
+      "operation_native_id": 129,
+      "status": "observed",
+      "stage": "finished",
+      "spindle_speed_native": 548.64,
+      "feed_rate_ipm_native": 1016.5010978924302
+    }
+  ],
+  "nc_parameters_complete": false,
+  "mutation_attempted": false
+}

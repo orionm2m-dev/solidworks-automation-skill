@@ -92,25 +92,54 @@ def _small_payload(value: Any) -> Any:
     return value
 
 
-def _inner_error(value: Any) -> str | None:
-    if isinstance(value, dict):
-        if value.get("isError") is True:
-            return "MCP isError=true"
-        if value.get("may_continue") is False:
-            return "Structured may_continue=false"
+def _result_documents(payload: dict[str, Any]):
+    """Unwrap MCP output envelopes only; do not scan diagnostic/history data."""
+    values = [payload.get("structuredContent")]
+    values.extend(item.get("parsed_json") for item in payload.get("content", [])
+                  if isinstance(item, dict) and item.get("type") == "text")
+    for value in values:
+        for _ in range(8):
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value)
+                except (ValueError, TypeError):
+                    break
+            elif isinstance(value, dict):
+                yield value
+                # This reader's current response has its own completion status.
+                # It is an explicit output envelope, unlike historical evidence.
+                if value.get("scope") == "TURN_INPROCESS_CLIENT_READ_V1" and isinstance(value.get("host_response"), dict):
+                    yield value["host_response"]
+                # FastMCP string results may have a structured {"result": ...}
+                # mirror. A business result's own nested data is not an envelope.
+                if set(value) == {"result"}:
+                    value = value["result"]
+                else:
+                    break
+            else:
+                break
+
+
+def _classify_result(payload: dict[str, Any]) -> dict[str, Any]:
+    outcome = {"status": "success", "may_continue": True}
+    if payload.get("isError") is True:
+        return dict(status="error", may_continue=False, reason="MCP isError=true")
+    for value in _result_documents(payload):
         status = value.get("status")
-        if isinstance(status, str) and status.lower() in {"error", "blocked", "failed"}:
-            return f"Structured status={status}"
-        for item in value.values():
-            error = _inner_error(item)
-            if error:
-                return error
-    elif isinstance(value, list):
-        for item in value:
-            error = _inner_error(item)
-            if error:
-                return error
-    return None
+        status = status.lower() if isinstance(status, str) else None
+        if value.get("isError") is True or status in {"error", "blocked", "failed", "timeout"}:
+            return dict(status="error", may_continue=False,
+                        reason="Structured isError=true" if value.get("isError") is True else f"Structured status={status}")
+        if value.get("error") or value.get("issue"):
+            return dict(status="error", may_continue=False, reason="Structured error/issue")
+        if status == "partial" or value.get("nc_parameters_complete") is False:
+            outcome.update(status="partial", may_continue=False, reason="Structured result is partial")
+        elif status == "review_required" and value.get("may_continue") is False and outcome["status"] == "success":
+            outcome.update(status="review_required", reason="Structured result requires review")
+        if value.get("may_continue") is False:
+            outcome["may_continue"] = False
+            outcome.setdefault("reason", "Structured may_continue=false")
+    return outcome
 
 
 def _result_payload(result: Any) -> dict[str, Any]:
@@ -183,19 +212,28 @@ async def _execute_requests(
                             request["name"], arguments=request.get("arguments", {})
                         )
                         payload = _result_payload(result)
-                        error = _inner_error(payload)
+                        outcome = _classify_result(payload)
                         report["results"].append({
                             "index": index,
                             "name": request["name"],
                             "result": _small_payload(payload),
+                            "outcome": outcome,
                         })
                         report.pop("current_request", None)
-                        if error:
+                        if outcome["status"] == "error":
                             report["status"] = "error"
-                            report["error"] = f"{request['name']}: {error}"
+                            report["error"] = f"{request['name']}: {outcome['reason']}"
+                        elif not outcome["may_continue"]:
+                            remaining = len(requests) - index - 1
+                            report.update(status=outcome["status"], may_continue=False,
+                                          remaining_request_count=remaining, stop_reason=outcome.get("reason"))
+                            if remaining and report["status"] == "success":
+                                report["status"] = "stopped"
                         _atomic_write(output, report)
-                        if error:
+                        if outcome["status"] == "error":
                             return 1
+                        if not outcome["may_continue"]:
+                            return 0 if report["status"] == "success" else 2
         report["status"] = "success"
     except TimeoutError:
         report["status"] = "timeout"
@@ -225,7 +263,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as error:
         print(f"MCP request failed: {_error_message(error)}", file=sys.stderr)
         return 1
-    print(f"MCP request {'completed' if code == 0 else 'failed'}; results: {args.output}")
+    label = "completed" if code == 0 else "stopped for review or partial result" if code == 2 else "failed"
+    print(f"MCP request {label}; results: {args.output}")
     return code
 
 

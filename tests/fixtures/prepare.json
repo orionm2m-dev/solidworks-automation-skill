@@ -1,0 +1,14 @@
+{
+  "status": "ok",
+  "action": "prepare",
+  "phase": "prepared",
+  "may_continue": false,
+  "mutation_attempted": false,
+  "native_call_attempted": false,
+  "native_outcome": "not_called",
+  "response": "default_unknown",
+  "cam_save_restore_flag": "unknown",
+  "cam_dirty_state": "unknown",
+  "message_policy": "vendor_default",
+  "state_sha256": "af48845f36994815c55baa8c6143156a73646936c9b75a41ffcc7631d156e077"
+}

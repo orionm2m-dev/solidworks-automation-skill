@@ -103,8 +103,6 @@ def test_success_preserves_each_result_and_environment(tmp_path, fake_server, mo
 
 @pytest.mark.parametrize("result", [
     CallToolResult(content=[], isError=True),
-    CallToolResult(content=[], structuredContent={"status": "review_required", "may_continue": False}),
-    CallToolResult(content=[TextContent(type="text", text='{"result": {"status": "ok", "may_continue": false}}')]),
     CallToolResult(content=[], structuredContent={"status": "error"}),
     CallToolResult(content=[], structuredContent={"result": {"status": "blocked"}}),
     CallToolResult(content=[TextContent(type="text", text='{"status": "error"}')]),
@@ -283,3 +281,115 @@ def test_persistent_result_write_failure_stops_following_tool_without_replay(tmp
     assert fake_server[0].call_tool.await_count==1
     preserved=[json.loads(p.read_text(encoding="utf-8")) for p in tmp_path.glob("*.tmp")]
     assert preserved and all([x["name"] for x in d["results"]]==["first"] for d in preserved)
+
+
+def actual_result(name):
+    document=json.loads((Path(__file__).parent/'fixtures'/(name+'.json')).read_text(encoding='utf-8'))
+    text=json.dumps(document)
+    return CallToolResult(content=[TextContent(type='text',text=text)],structuredContent={'result':text})
+
+
+def test_actual_observed_guides_ignore_reference_continuation_flags(tmp_path,fake_server):
+    fake_server[0].call_tool.return_value=actual_result('guide_rebind')
+    code,report=run_batch(tmp_path,[{'name':'first'},{'name':'second'}])
+    assert code==0 and report['status']=='success' and len(report['results'])==2
+    assert report['results'][0]['outcome']=={'status':'success','may_continue':True}
+
+
+def test_actual_prepare_completed_is_not_error(tmp_path,fake_server):
+    fake_server[0].call_tool.return_value=actual_result('prepare')
+    code,report=run_batch(tmp_path,[{'name':'first'}])
+    assert code==0 and report['status']=='success' and report['may_continue'] is False
+    assert report['remaining_request_count']==0 and 'error' not in report
+
+
+def test_actual_prepare_stops_following_operation_without_failure(tmp_path,fake_server):
+    fake_server[0].call_tool.return_value=actual_result('prepare')
+    code,report=run_batch(tmp_path,[{'name':'first'},{'name':'second'}])
+    assert code==2 and report['status']=='stopped' and 'error' not in report
+    assert report['remaining_request_count']==1 and fake_server[0].call_tool.await_count==1
+    assert report['results'][0]['outcome']['status']=='success'
+
+
+def test_actual_nc_incomplete_remains_partial_and_stops_chain(tmp_path,fake_server):
+    fake_server[0].call_tool.return_value=actual_result('partial_nc')
+    code,report=run_batch(tmp_path,[{'name':'first'},{'name':'second'}])
+    assert code==2 and report['status']=='partial' and 'error' not in report
+    assert fake_server[0].call_tool.await_count==1
+    parsed=report['results'][0]['result']['content'][0]['parsed_json']
+    assert parsed['readback_verified'] is True and parsed['nc_parameters_complete'] is False
+    assert [r['status'] for r in parsed['nc_parameters']]==['error','observed']
+
+
+@pytest.mark.parametrize('content',[{'status':'review_required','may_continue':False},{'status':'partial'}])
+def test_non_error_stop_has_distinct_outcome(tmp_path,fake_server,content):
+    fake_server[0].call_tool.return_value=CallToolResult(content=[],structuredContent=content)
+    code,report=run_batch(tmp_path,[{'name':'first'},{'name':'second'}])
+    assert code==2 and report['status']==content['status'] and 'error' not in report
+    assert fake_server[0].call_tool.await_count==1
+
+
+@pytest.mark.parametrize('content',[{'status':'observed','issue':{'type':'COMError'}},{'status':'ok','error':'failure'},
+    {'status':'timeout'},{'status':'observed','isError':True},
+    {'result':json.dumps({'status':'failed'})}])
+def test_top_level_failure_never_hidden(tmp_path,fake_server,content):
+    fake_server[0].call_tool.return_value=CallToolResult(content=[],structuredContent=content)
+    code,report=run_batch(tmp_path,[{'name':'first'},{'name':'second'}])
+    assert code==1 and report['status']=='error' and fake_server[0].call_tool.await_count==1
+
+
+def test_mcp_error_overrides_observed_and_partial(tmp_path,fake_server):
+    result=actual_result('partial_nc');result.isError=True
+    fake_server[0].call_tool.return_value=result
+    code,report=run_batch(tmp_path,[{'name':'first'}])
+    assert code==1 and report['status']=='error' and 'isError=true' in report['error']
+
+
+def test_conflicting_mcp_mirrors_do_not_mask_error(tmp_path,fake_server):
+    fake_server[0].call_tool.return_value=CallToolResult(structuredContent={'status':'observed'},
+        content=[TextContent(type='text',text='{"status":"error"}')])
+    code,report=run_batch(tmp_path,[{'name':'first'}])
+    assert code==1 and report['status']=='error'
+
+
+def test_nested_historical_error_is_not_current_failure(tmp_path,fake_server):
+    fake_server[0].call_tool.return_value=CallToolResult(content=[],structuredContent={
+        'status':'observed','history':[{'status':'error','isError':True,'may_continue':False}],
+        'request':{'may_continue':False}})
+    code,report=run_batch(tmp_path,[{'name':'first'}])
+    assert code==0 and report['status']=='success'
+
+
+def test_structured_only_json_wrapper_success_and_stop(tmp_path,fake_server):
+    fake_server[0].call_tool.return_value=CallToolResult(content=[],structuredContent={
+        'result':'{"status":"ok","may_continue":false}'})
+    code,report=run_batch(tmp_path,[{'name':'first'}])
+    assert code==0 and report['status']=='success' and report['may_continue'] is False
+
+
+def test_cli_distinguishes_partial_stop_from_failure(tmp_path,monkeypatch,capsys):
+    request=tmp_path/'request.json';request.write_text('{"requests":[{"name":"first"}]}')
+    monkeypatch.setattr(client,'SERVER_PATH',request)
+    async def partial(*a):return 2
+    monkeypatch.setattr(client,'_execute_requests',partial)
+    assert client.main(['--request',str(request),'--output',str(tmp_path/'out.json')])==2
+    text=capsys.readouterr().out
+    assert 'stopped for review or partial result' in text and 'failed' not in text
+
+
+@pytest.mark.parametrize('host,expected,code',[
+    ({'status':'observed','nc_parameters_complete':False,'nc_parameters':[{'status':'error'}]},'partial',2),
+    ({'status':'error','stage':'failed'},'error',1),
+    ({'status':'observed','nc_parameters_complete':True},'success',0)])
+def test_current_inprocess_host_response_is_explicit_envelope(tmp_path,fake_server,host,expected,code):
+    fake_server[0].call_tool.return_value=CallToolResult(content=[],structuredContent={
+        'scope':'TURN_INPROCESS_CLIENT_READ_V1','status':'observed','readback_verified':True,'host_response':host})
+    actual,report=run_batch(tmp_path,[{'name':'first'}])
+    assert actual==code and report['status']==expected
+
+
+def test_unrelated_host_response_history_is_not_current_envelope(tmp_path,fake_server):
+    fake_server[0].call_tool.return_value=CallToolResult(content=[],structuredContent={
+        'scope':'OTHER_REPORT','status':'observed','host_response':{'status':'error'}})
+    code,report=run_batch(tmp_path,[{'name':'first'}])
+    assert code==0 and report['status']=='success'
