@@ -118,9 +118,16 @@ function Invoke-ElevatedSelf {
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $process = Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -Verb RunAs -ArgumentList @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded
-    ) -Wait -PassThru
-    if ($process.ExitCode -ne 0) {
-        throw "Elevated $ElevatedAction failed or was cancelled. Exit code: $($process.ExitCode)"
+    ) -PassThru
+    # Wait for this elevated helper only; compiler servers may outlive it.
+    try {
+        $process.WaitForExit()
+        $exitCode = $process.ExitCode
+        if ($exitCode -ne 0) {
+            throw "Elevated $ElevatedAction failed or was cancelled. Exit code: $exitCode"
+        }
+    } finally {
+        $process.Dispose()
     }
 }
 

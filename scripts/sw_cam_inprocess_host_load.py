@@ -14,8 +14,19 @@ def parameters(params):
 
 
 def utc_epoch(value):
+    """Read .NET round-trip timestamps; conservatively truncate 100 ns to microseconds."""
+    import re
     require(type(value) is str and len(value)<=64,'Diagnostic UTC timestamp required')
-    stamp=datetime.fromisoformat(value.replace('Z','+00:00'));require(stamp.tzinfo is not None,'Diagnostic timestamp timezone required');return stamp.timestamp()
+    match=re.fullmatch(r'([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.([0-9]{1,7}))?(Z|[+-][0-9]{2}:[0-9]{2})',value)
+    require(match is not None,'Strict timezone-aware .NET timestamp required')
+    date,fraction,offset=match.groups()
+    if offset=='Z':offset='+00:00'
+    else:
+        hours,minutes=int(offset[1:3]),int(offset[4:6])
+        require(minutes<60 and (hours<14 or (hours==14 and minutes==0)),'Invalid .NET timezone offset')
+    normalized=date+('.'+fraction[:6].ljust(6,'0') if fraction else '')+offset
+    stamp=datetime.fromisoformat(normalized)
+    return stamp.timestamp()
 
 
 def verify_diagnostics(before,after,p,started):
