@@ -731,6 +731,34 @@
     "interactive",
     "reviewed"
   ]
+},
+{
+  "id": "cam_shallow_guide_configuration_group",
+  "label": "CAM 浅导向槽四项定义配置与保存",
+  "level": "pilot",
+  "backends": [
+    "solidworks-com-pywin32"
+  ],
+  "verified_versions": [],
+  "dependencies": [
+    "SolidWorks",
+    "SOLIDWORKS CAM",
+    "pywin32",
+    "comtypes"
+  ],
+  "limitations": [
+    "仅接受已绑定的四项MILL定义、完整参数回执、现有合格刀具和显式参数配方。",
+    "组合配置/Save目前只有离线构造、方法绑定、配方协议与MCP包装回归；未登记原生成功。",
+    "指定刀具的自动默认值和NC变化完整保留为未合格草案；不显式设置速度/进给。",
+    "最多一次Save，不执行GTP；新文件摘要和完整保存后回读仍不等同于重新打开后的CAM持久化。",
+    "失败保留逐动作回执且禁止自动重放；完成后需继续验证轨迹、实际刀具、夹持及加工条件。",
+    "使用说明：references/guide-operation-groups.md",
+    "实际调用已确认四次刀具指定及部分字段；客户端超时前未执行Save/GTP。必须从实际回读恢复，不能自动重放。"
+  ],
+  "allowed_modes": [
+    "interactive",
+    "reviewed"
+  ]
 }
 ]
 }
