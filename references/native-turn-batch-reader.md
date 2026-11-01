@@ -12,7 +12,7 @@ The six required request keys are schema_version (1), expected_process_id, expec
 
 An external COM call may arrive on a worker thread. The host dispatches the fixed reader delegate through its existing owner-thread control; the actual reader then checks the ConnectToSW thread ID and STA apartment. A busy flag rejects reentrant reader requests. This is internal add-in dispatch, not UI automation.
 
-The reader checks the owned PID, active part path, document type and SOLIDWORKS configuration. CAM configuration must match SOLIDWORKS configuration. Path, title, type, dirty state and configuration are compared before and after. The result is a single non-atomic observation: these checks do not lock the document or prove every getter observed an indivisible transaction.
+The reader checks the owned PID, active part path, document type and SOLIDWORKS configuration. The CAM configuration object has distinct ConfigurationName and SWConfigurationName properties. Its own name must match GetActiveConfigurationName; SWConfigurationName must match the active SOLIDWORKS configuration. The two applications may use different configuration names. Path, title, type, dirty state and configuration are compared before and after. The result is a single non-atomic observation: these checks do not lock the document or prove every getter observed an indivisible transaction.
 
 The response identifies the loaded assembly path, module version ID, engine version and elapsed time. The caller must pin the actual installed DLL/TLB, require the expected MVID, and compare the same PID/document and its source hashes. Build success and registration are separate from a successful live read.
 
@@ -26,7 +26,7 @@ The top-level readback_verified flag concerns document identity. It does not imp
 
 Use the existing scripts/sw_addin_host.ps1 Build action with explicit SolidWorksApiDir, CamWorksTlbPath, DotNetPath and NetFxToolsDir where discovery is insufficient. The builder generates a local signed CAM interop from the installed vendor TLB and caches it by input hashes. Generated vendor binaries and private development signing keys are not source deliverables.
 
-The frozen staged build passed 48 offline tests, with zero build warnings/errors and successful TLB export. No host instance or native CAM call was made by those tests. A different runtime rebuild can have a different MVID: validate the actual runtime artifact before calling it. External comtypes ABI validation is a separate client integration check.
+The corrected staged build passed 53 offline tests, with zero build warnings/errors and successful TLB export. No host instance or native CAM call was made by those tests. A different runtime rebuild can have a different MVID: validate the actual runtime artifact before calling it. External comtypes ABI validation is a separate client integration check.
 
 ## Batching beyond reads
 
@@ -39,3 +39,11 @@ The vendor Mill Tutorial describes Process Manager parallel generation for 3-axi
 ## Next qualification
 
 After the owned document reaches a recorded checkpoint, load the exact built add-in using the existing registration/load workflow. Compare one batch response with the saved external-reader receipt; measure both total call duration and internal elapsed time. Only a matching successful live result establishes the speedup and compatibility for this installed version. Source code, build evidence, loaded-binary identity and machining progress remain separate records.
+
+## Configuration diagnostic and grouped readers
+
+`solidworks_cam_read_configuration_binding` accepts a sealed request path and SHA plus an explicitly selected process ID. It validates the CAM-to-SOLIDWORKS mapping and the protected route, then reads only the requested NC values. A live bounded diagnostic on 2026-11-01 verified the mapping and unchanged route. One new operation failed at IGetTurnNCParam while the established control operation returned values; this is a partial diagnostic result, not repaired initialization. Do not replay a failing getter without a changed, identified precondition.
+
+`solidworks_cam_read_shallow_guide_group` reads the saved two-feature guide baseline and both operation catalogues together. Existing rough-operation settings are marked as a reference; they are not defaults for uncreated guide operations. The installed reader has 55 offline tests; live execution and new-process ownership continuation require separate evidence.
+
+`solidworks_exit_owned_empty_session` permits one ExitApp only after pinned ownership, verified save/close, exact source identity, and two live empty-session checks. No termination, save, document close or launch is performed. A failed CAM Save cannot be substituted for successful save evidence.
