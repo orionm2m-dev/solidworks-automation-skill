@@ -139,7 +139,9 @@ class _Reader:
             if cached and cached["signature"]!=_signature(before):raise FileProblem("stale_during_read",path,"File metadata changed during checkpoint inspection")
             if cached and not force and (not keep or cached.get("data") is not None):return cached
             if self.bytes_read+before.st_size>MAX_TOTAL_BYTES:raise FileProblem("total_bound_exceeded",path,"Total streamed byte bound exceeded")
-            if keep and self.json_bytes+before.st_size>MAX_JSON_TOTAL_BYTES:raise FileProblem("json_total_bound_exceeded",path,"Aggregate JSON read bound exceeded")
+            # Forced verification streams the file again, but keeps one cached payload.
+            retain=keep and (cached is None or cached.get("data") is None)
+            if retain and self.json_bytes+before.st_size>MAX_JSON_TOTAL_BYTES:raise FileProblem("json_total_bound_exceeded",path,"Aggregate JSON read bound exceeded")
             digest=hashlib.sha256();parts=[];size=0
             with path.open("rb") as stream:
                 opened=_signature(os.fstat(stream.fileno()))
@@ -150,13 +152,13 @@ class _Reader:
                     size+=len(block);self.bytes_read+=len(block)
                     if size>limit or self.bytes_read>MAX_TOTAL_BYTES:raise FileProblem("file_bound_exceeded",path,"File grew beyond the read bound")
                     digest.update(block)
-                    if keep:parts.append(block)
+                    if retain:parts.append(block)
                 after=_signature(os.fstat(stream.fileno()))
             if path.is_symlink() or after!=opened or _signature(path.stat())!=opened or size!=before.st_size:
                 raise FileProblem("stale_during_read",path,"File changed while hashing")
-            item=dict(path=str(path),sha256=digest.hexdigest(),bytes=size,signature=opened,data=b"".join(parts) if keep else None)
+            item=dict(path=str(path),sha256=digest.hexdigest(),bytes=size,signature=opened,data=b"".join(parts) if retain else (cached.get("data") if cached else None))
             if cached and cached["sha256"]!=item["sha256"]:raise FileProblem("stale_during_read",path,"File content changed during checkpoint inspection")
-            if keep:self.json_bytes+=size
+            if retain:self.json_bytes+=size
             self.seen[key]=item;return item
         except FileProblem:raise
         except FileNotFoundError as exc:raise FileProblem("missing_file",path,"Named file is missing") from exc
@@ -255,7 +257,7 @@ def read_resume_checkpoint(status_path):
                     issue("next_action","declared_state_mismatch",id=ref["id"],required_state=ref["required_state"],declared_state=found[0]);ready=False
                 elif not found[1]:ready=False
         # 重读 STATUS 内容指纹，不能把正在编辑的清单当作一致快照。
-        final=reader.read(str(path),MAX_STATUS_BYTES,keep=True,force=True)
+        final=reader.read(str(path),MAX_STATUS_BYTES,force=True)
         report["status_sha256_after"]=final["sha256"]
         for finding in reader.stability():issue("file_stability",**finding)
         ready=ready and not report["findings"] and all(artifacts.values())

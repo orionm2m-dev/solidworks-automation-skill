@@ -208,3 +208,83 @@ def test_checkpoint_artifact_count_remains_bounded(case):
     result=case.run()
     assert result["status"]=="error" and not result["continuation_ready_by_saved_evidence"]
     assert result["findings"][0]["code"]=="invalid_checkpoint"
+
+
+def test_forced_json_recheck_reuses_payload_and_counts_streamed_bytes(tmp_path,monkeypatch):
+    path=tmp_path/'one.json';raw=b'{"ok":true}';path.write_bytes(raw)
+    monkeypatch.setattr(core,'MAX_JSON_TOTAL_BYTES',len(raw))
+    reader=core._Reader();first=reader.read(str(path),100,keep=True)
+    again=reader.read(str(path),100,keep=True,force=True)
+    assert again['data'] is first['data']
+    assert reader.json_bytes==len(raw) and reader.bytes_read==2*len(raw)
+    assert again['sha256']==first['sha256']
+
+
+def test_hash_only_forced_read_preserves_retained_cache(tmp_path,monkeypatch):
+    path=tmp_path/'one.json';raw=b'{"ok":true}';path.write_bytes(raw)
+    monkeypatch.setattr(core,'MAX_JSON_TOTAL_BYTES',len(raw))
+    reader=core._Reader();first=reader.read(str(path),100,keep=True)
+    checked=reader.read(str(path),100,keep=False,force=True)
+    again=reader.read(str(path),100,keep=True)
+    assert checked['data'] is first['data'] and again['data'] is first['data']
+    assert reader.json_bytes==len(raw) and reader.bytes_read==2*len(raw)
+
+
+def test_hash_only_cache_upgrades_to_payload_once(tmp_path,monkeypatch):
+    path=tmp_path/'one.json';raw=b'{"ok":true}';path.write_bytes(raw)
+    monkeypatch.setattr(core,'MAX_JSON_TOTAL_BYTES',len(raw))
+    reader=core._Reader();hashed=reader.read(str(path),100)
+    assert hashed['data'] is None and reader.json_bytes==0
+    kept=reader.read(str(path),100,keep=True,force=True)
+    reader.read(str(path),100,keep=True,force=True)
+    assert kept['data']==raw and reader.json_bytes==len(raw)
+    assert reader.bytes_read==3*len(raw)
+
+
+def test_distinct_json_payloads_still_obey_aggregate_bound(tmp_path,monkeypatch):
+    first=tmp_path/'one.json';second=tmp_path/'two.json'
+    first.write_bytes(b'{}');second.write_bytes(b'[]')
+    monkeypatch.setattr(core,'MAX_JSON_TOTAL_BYTES',3)
+    reader=core._Reader();reader.read(str(first),100,keep=True)
+    with pytest.raises(core.FileProblem) as error:reader.read(str(second),100,keep=True)
+    assert error.value.code=='json_total_bound_exceeded'
+    assert reader.json_bytes==2
+
+
+def test_forced_recheck_still_obeys_total_stream_bound(tmp_path,monkeypatch):
+    path=tmp_path/'one.json';path.write_bytes(b'{}')
+    monkeypatch.setattr(core,'MAX_TOTAL_BYTES',3)
+    reader=core._Reader();reader.read(str(path),100,keep=True)
+    with pytest.raises(core.FileProblem) as error:reader.read(str(path),100,keep=True,force=True)
+    assert error.value.code=='total_bound_exceeded'
+
+
+def test_force_rechecks_content_even_with_identical_metadata(tmp_path,monkeypatch):
+    import os
+    path=tmp_path/'one.json';path.write_bytes(b'{"v":1}')
+    reader=core._Reader();reader.read(str(path),100,keep=True)
+    before=path.stat();path.write_bytes(b'{"v":2}')
+    os.utime(path,ns=(before.st_atime_ns,before.st_mtime_ns))
+    assert core._signature(path.stat())==core._signature(before)
+    with pytest.raises(core.FileProblem) as error:reader.read(str(path),100,keep=True,force=True)
+    assert error.value.code=='stale_during_read'
+
+
+def test_checkpoint_final_fingerprint_fits_unique_json_budget(case,monkeypatch):
+    case.write()
+    unique=case.status.stat().st_size+case.receipt.stat().st_size+case.failure.stat().st_size
+    monkeypatch.setattr(core,'MAX_JSON_TOTAL_BYTES',unique)
+    result=core.read_resume_checkpoint(str(case.status))
+    assert result['status']=='ok' and result['continuation_ready_by_saved_evidence']
+    assert result['status_sha256_after']==digest(case.status)
+
+
+def test_checkpoint_repeated_evidence_uses_one_json_payload(case,monkeypatch):
+    ref=case.manifest['milestones'][0]['evidence_checks'][0]
+    case.manifest['milestones'][0]['evidence_checks']=[deepcopy(ref) for _ in range(64)]
+    case.write()
+    unique=case.status.stat().st_size+case.receipt.stat().st_size+case.failure.stat().st_size
+    monkeypatch.setattr(core,'MAX_JSON_TOTAL_BYTES',unique)
+    result=core.read_resume_checkpoint(str(case.status))
+    assert result['status']=='ok' and result['continuation_ready_by_saved_evidence']
+    assert result['evidence_passed'][0]['evidence_check_count']==64
