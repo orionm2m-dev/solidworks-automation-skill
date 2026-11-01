@@ -5898,6 +5898,24 @@ def _enumerate_solidworks_windows(process_id=None):
     return main_window, dialogs, None
 
 
+class SolidWorksCamSaveErrorObservationInput(BaseInput):
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_creation_time: float = Field(gt=0, strict=True, allow_inf_nan=False)
+    save_attempt_key: str = Field(min_length=1, max_length=1024, strict=True)
+    previous_observation: Optional[dict] = None
+
+
+@mcp.tool(name="solidworks_cam_observe_save_errors", title="Observe Owned CAM Save Error Windows",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_observe_save_errors(params: SolidWorksCamSaveErrorObservationInput) -> str:
+    """Read existing owned-process window text only; no COM, lock, click or dismissal."""
+    from scripts.sw_cam_save_error_observation import observe
+    from scripts.sw_executable_launch import _process_identity
+    result=observe(process_id=params.process_id,expected_creation_time=params.expected_creation_time,
+        save_attempt_key=params.save_attempt_key,previous_observation=params.previous_observation,
+        enumerate_windows=_enumerate_solidworks_windows,read_identity=_process_identity)
+    return json.dumps(result,ensure_ascii=False)
+
 @mcp.tool(
     name="solidworks_recover",
     title="Diagnose and Recover a Blocked SolidWorks Session",
