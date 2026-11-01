@@ -755,7 +755,35 @@
     "失败保留逐动作回执且禁止自动重放；完成后需继续验证轨迹、实际刀具、夹持及加工条件。",
     "使用说明：references/guide-operation-groups.md",
     "原客户端超时后，经完整当前参数核对，续配16个未尝试字段并一次Save成功；旧刀具指定和已确认字段未重放。",
-    "保存后读数与源文件摘要已验证；重新打开持久化和新轨迹仍需独立验证。"
+    "保存后读数与源文件摘要已验证；续配保存后的重新打开已独立验证，新轨迹仍需验证。"
+  ],
+  "allowed_modes": [
+    "interactive",
+    "reviewed"
+  ]
+},
+{
+  "id": "cam_shallow_guide_saved_reopen",
+  "label": "CAM 导向槽保存后重新打开核对",
+  "level": "pilot",
+  "backends": [
+    "solidworks-com-pywin32"
+  ],
+  "verified_versions": [
+    "2026"
+  ],
+  "dependencies": [
+    "SolidWorks",
+    "SOLIDWORKS CAM",
+    "pywin32",
+    "comtypes"
+  ],
+  "limitations": [
+    "只接受完成配置或已确认续配保存的固定四操作回执和当前来源摘要。",
+    "原生关闭/打开同一文件后完整比较13项绑定和4组参数；不Save、不修改字段、不GTP。",
+    "要求成功Save后的连续执行且没有用户/CAM中间修改；SW干净标志不等于独立CAM脏状态证明。",
+    "2026续配后的原生持久化验证通过；其他版本与流程需另行验证。",
+    "使用说明：references/guide-operation-groups.md"
   ],
   "allowed_modes": [
     "interactive",
