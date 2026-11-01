@@ -67,3 +67,7 @@ desktop.ini
 *.dwg
 output/
 exports/
+
+# Native CAM reader test build outputs
+tests/native_cam_reader/bin/
+tests/native_cam_reader/obj/
