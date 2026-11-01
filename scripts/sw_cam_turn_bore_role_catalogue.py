@@ -51,7 +51,37 @@ def read_catalogues(owner,roles,*,read,record):
             def lookup(name):
                 value=read(owner,'GetTdbIdForDefaultOperation',kind,name);record(role+'_id_'+name,value);return value
             value=previous.catalogue.decode_catalogue(raw,lookup)
+        value['operation_type']=kind
         result[role]=dict(value,**spec)
+    return result
+
+
+def normalize_observed_catalogues(report,roles,*,allow_legacy_operation_type=False):
+    """Reconstruct a catalogue from saved names/IDs; never call the application."""
+    require(report['abi']['roles']==roles and report['request']['roles']==[x['role'] for x in roles],'Saved named roles differ')
+    rows=report['observations'];require(type(rows) is list and len(rows)<=130,'Bounded raw catalogue observations required')
+    observations={x['key']:x for x in rows};require(len(observations)==len(rows),'Duplicate observation keys')
+    require(set(report['catalogues'])=={x['role'] for x in roles},'Exact saved role catalogue required')
+    expected_keys=set();result={}
+    for spec in roles:
+        role=spec['role'];kind=spec['resolved_native_value'];key=role+'_names';expected_keys.add(key)
+        observed=observations[key];raw=observed['value'];shape=observed['returned_type']
+        require(shape in ('str','list','tuple'),'Supported saved native catalogue shape required')
+        if shape=='tuple':require(type(raw) in (list,tuple),'Saved tuple names required');raw=tuple(raw)
+        elif shape=='list':require(type(raw) is list,'Saved list names required')
+        else:require(type(raw) is str,'Saved string name required')
+        def lookup(name):
+            k=role+'_id_'+name;expected_keys.add(k);row=observations[k]
+            require(row['returned_type']=='int' and type(row['value']) is int,'Saved strict default ID required');return row['value']
+        if type(raw) in (tuple,list) and not raw:
+            value=dict(converted_python_type=shape,entries=[],unique_default_available=False,selected_default_operation_id=None,selection_performed=False)
+        else:value=previous.catalogue.decode_catalogue(raw,lookup)
+        value['operation_type']=kind;value.update(spec)
+        recorded=deepcopy(report['catalogues'][role]);original=recorded.get('operation_type')
+        require(type(original) is int and (original==kind or (allow_legacy_operation_type and original==1)),'Unrecognized historical operation-type payload')
+        recorded['operation_type']=kind;require(recorded==value,'Saved catalogue disagrees with raw observations or named roles')
+        result[role]=value
+    require(set(observations)==expected_keys,'Unexpected native catalogue observations')
     return result
 
 
