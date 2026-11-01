@@ -82,14 +82,14 @@ def test_exact_four_gtp_then_verified_cl_then_one_save(tmp_path,monkeypatch):
     assert r['saved_checkpoint_context']['source_sha256']=='b'*64
 
 
-@pytest.mark.parametrize('failure',['before','export_before','exception','return','background','old_path','parameters','export_generated','save_return','saved_delta','export_saved'])
+@pytest.mark.parametrize('failure',['before','export_before','exception','return','old_path','parameters','export_generated','save_return','saved_delta','export_saved'])
 def test_prefix_failure_never_replays_or_claims_unsaved_success(tmp_path,monkeypatch,failure):
     b,j,l=setup(tmp_path,monkeypatch,failure);r=m.run_backend(b,j,l)
     assert not r['readback_verified']and not r['continuation_ready']
     assert r['model_saved']is(failure in ('saved_delta','export_saved'))
     gtps=[x for x in b.trace if isinstance(x,tuple)]
     assert len(gtps)<=4
-    if failure in ('exception','return','background','old_path'):assert len(gtps)==1
+    if failure in ('exception','return','old_path'):assert len(gtps)==1
     if failure in ('before','export_before'):assert gtps==[]and not r['GTP_attempted']
     else:assert r['GTP_attempted']
     if failure not in ('save_return','saved_delta','export_saved'):assert 'save'not in b.trace

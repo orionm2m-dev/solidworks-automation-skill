@@ -22,6 +22,7 @@ SCOPE='SAVED_GUIDE_FOUR_SELECTED_GENERATION_V1'
 TARGETS=reopen.TARGETS
 PARAMS={'process_id','expected_document_path','expected_source_sha256','reopen_receipt_path','reopen_receipt_sha256',
     'module_sha256','receipt_path','progress_path','before_cl_path','generated_cl_path','saved_cl_path'}
+CONTINUATION_PARAMS={'zero_attempt_receipt_path','zero_attempt_receipt_sha256'}
 
 
 def completed_reopen(r,p):
@@ -73,7 +74,7 @@ def verify_snapshot(baseline,observed,generated):
 def status_contract(value,target,generated=None):
     require(value['operation_native_id']==target['operation_native_id'] and value['feature_native_id']==target['feature_native_id'],
         'Exact selected outcome identity required')
-    require(value['background_over_before']is True and value['background_over_after']is True,'Background generation not confirmed complete; no retry')
+    require(type(value['background_over_before'])is bool and type(value['background_over_after'])is bool,'Background diagnostic must be strict Boolean')
     configuration.finish.status_contract(value,target,generated=generated)
     return value
 
@@ -152,7 +153,7 @@ class NativeBackend(reopen.ParameterBackend):
             raw,_=self.target(guard,target);mill=guard.typed(raw,'ICWMillOperation')
             tool,_=read_generic_tool(raw,self.doc,guard.read,guard.typed)
             require(group.exact(tool,target['assigned_tool']),'Saved qualified tool changed before GTP')
-            require(guard.read(self.ctx.app,'IsBackgroundProcessForGTPOver')is True,'Background GTP active')
+            require(type(guard.read(self.ctx.app,'IsBackgroundProcessForGTPOver'))is bool,'Background diagnostic must be Boolean')
             return guard.dispatch_once(lambda:_member(mill,'GenerateToolpath'),persist_pending=pending)
 
     def export_cl(self,label,binding):
@@ -176,7 +177,7 @@ class Journal(group.GroupJournal):
         r=self.report
         return dict(scope=SCOPE,status=r['status'],phase=r['phase'],source_path=r['source_path'],source_sha256=r['source_sha256'],
             receipt_path=str(self.receipt),reopen_receipt_pin=r['reopen_receipt_pin'],actions=deepcopy(r['actions']),
-            native_dispatch_pending=r.get('native_dispatch_pending',False),cl_exports=deepcopy(r.get('cl_exports',{})),automatic_replay=False)
+            native_dispatch_pending=r.get('native_dispatch_pending',False),zero_attempt_predecessor_pin=r.get('zero_attempt_predecessor_pin'),cl_exports=deepcopy(r.get('cl_exports',{})),automatic_replay=False)
 
 
 def close_checked(backend,r):
@@ -196,7 +197,11 @@ def run_backend(backend,journal,loaded):
     try:
         journal.create();backend.start();r['before']=backend.capture_parameters('before');verify_snapshot(baseline,r['before'],generated)
         journal.claim_exports()
-        r['before_cl']=backend.export_cl('before',r['before']['binding']);journal.persist()
+        if loaded.get('zero_attempt') is not None:
+            r['before_cl']=deepcopy(loaded['zero_attempt']['before_cl'])
+            r['before_cl_reused_from']=deepcopy(loaded['zero_attempt_pin']);cl._verified(r['before_cl'])
+        else:r['before_cl']=backend.export_cl('before',r['before']['binding'])
+        journal.persist()
         for target in loaded['guide_parameters']['targets']:
             oid=target['operation_native_id'];label='GenerateToolpath:'+str(oid);r['phase']=label;journal.persist()
             started=perf_counter();journal.execute(label,lambda pending:backend.generate(target,pending))
@@ -242,9 +247,51 @@ def run_backend(backend,journal,loaded):
     return r
 
 
+def zero_attempt_contract(prior,p,loaded):
+    require(prior.get('scope')==SCOPE and prior.get('status')=='error' and prior.get('phase')=='finished'
+        and prior.get('failed_phase')=='GenerateToolpath:322','Exact stopped first-generation attempt required')
+    require(not any(k in prior for k in ('cleanup_issue','receipt_write_error')),'Incomplete cleanup cannot authorize continuation')
+    for key in ('mutation_attempted','GTP_attempted','save_attempted','model_saved','native_call_attempted','native_call_returned','native_dispatch_pending'):
+        require(prior.get(key)is False,'Previous attempt is not proven write-free: '+key)
+    require(prior.get('generated_operation_ids')==[] and list(prior.get('actions',{}))==['GenerateToolpath:322'],'Unexpected previous action set')
+    action=prior['actions']['GenerateToolpath:322']
+    require(action==dict(status='prepared',attempted=False,returned=False,readback_verified=False),'Previous GTP was attempted or returned')
+    issue=prior.get('issue',{})
+    require(issue.get('type')=='ValueError' and any(v.get('function')=='status_contract'for v in issue.get('locations',[])),
+        'Exact outcome-contract failure required')
+    outcomes=prior.get('outcomes',[]);require(len(outcomes)==1,'Exactly one pre-dispatch outcome required')
+    outcome=outcomes[0];status_contract(outcome,loaded['guide_parameters']['targets'][0],False)
+    require(outcome['background_over_before']is False and outcome['background_over_after']is False,'Exact historical false diagnostic required')
+    clean_events(prior)
+    require(group.exact(prior['ownership'],loaded['ownership']) and prior['request']['process_id']==p['process_id']
+        and prior['source_sha256']==p['expected_source_sha256']
+        and common._key(prior['source_path'])==common._key(p['expected_document_path'])
+        and group.exact(prior['reopen_receipt_pin'],loaded['reopen_pin']),'Previous source/owner/reopen lineage differs')
+    require(group.exact(prior['before'],loaded['guide_parameters']['expected_parameters']),'Previous baseline differs')
+    proof=prior['before_cl'];cl._verified(proof)
+    require(proof['source_sha256']==p['expected_source_sha256']
+        and group.exact(proof['document'],loaded['guide_parameters']['document'])
+        and proof['expected_generated_operations']==cl.contract(prior['before']['binding'])
+        and common._key(p['before_cl_path'])==common._key(proof['output']['path']),'Completed baseline CL differs')
+
+
+def load_zero_attempt(p,loaded):
+    prior,pin=read_pin(p['zero_attempt_receipt_path'],p['zero_attempt_receipt_sha256']);zero_attempt_contract(prior,p,loaded)
+    original,original_pin=read_pin(prior['request']['receipt_path'],pin['sha256'])
+    require(group.exact(original,prior),'Archived failed receipt differs from original')
+    oldmarker=common.local_evidence_root()/('guide_generation_'+group._digest(dict(scope=SCOPE,pid=p['process_id'],source=common._key(p['expected_document_path']),sha=p['expected_source_sha256']))+'.json')
+    marker,markerpin=read_pin(str(oldmarker),_file_hash(oldmarker))
+    require(marker.get('scope')==SCOPE and marker.get('status')==prior['status'] and marker.get('phase')==prior['phase']
+        and marker.get('source_sha256')==prior['source_sha256'] and marker.get('native_dispatch_pending')is False
+        and common._key(marker['receipt_path'])==common._key(prior['request']['receipt_path'])
+        and group.exact(marker.get('actions'),prior['actions']) and group.exact(marker.get('cl_exports'),prior['cl_exports']),
+        'Original once marker differs; do not remove or replace it')
+    return prior,pin,common._merge([pin,original_pin,markerpin,prior['before_cl']['output']])
+
+
 def prepare_request(request):
     require(type(request)is dict and set(request)=={'action','params'}and request['action']=='generate_four_saved_guides','Exact selected group action required')
-    p=deepcopy(request['params']);require(type(p)is dict and set(p)==PARAMS,'Exact bounded generation request required')
+    p=deepcopy(request['params']);require(type(p)is dict and set(p)in(PARAMS,PARAMS|CONTINUATION_PARAMS),'Exact bounded generation request required')
     require(type(p['process_id'])is int and 0<p['process_id']<2**31,'Strict owned process ID required')
     for key,value in p.items():
         if key.endswith('_path'):require(type(value)is str and Path(value).is_absolute(),'Absolute path required')
@@ -265,15 +312,25 @@ def prepare_request(request):
     registration=common.discover_export_registration(loaded,prior['request']['addin_clsid'])
     typelib=str(Path(registration['addin_path']).parent/'camworks.tlb');require(common._pin(typelib)in pins,'Installed TLB changed')
     p['expected_configuration']=selected['configuration']['sw_configuration_name']
+    if CONTINUATION_PARAMS<=set(p):
+        prior_zero,zero_pin,zero_pins=load_zero_attempt(p,loaded)
+        loaded.update(zero_attempt=prior_zero,zero_attempt_pin=zero_pin)
+        loaded['checkpoint_pins']=common._merge(loaded['checkpoint_pins'],zero_pins)
+        common._check(loaded['checkpoint_pins'])
     abi=audit(typelib,loaded['generated_pin'])
     receipt=common._local_receipt(p['receipt_path']);progress=Path(p['progress_path'])
-    marker=common.local_evidence_root()/('guide_generation_'+group._digest(dict(scope=SCOPE,pid=p['process_id'],source=common._key(p['expected_document_path']),sha=p['expected_source_sha256']))+'.json')
-    outputs=[receipt,progress,marker]+[Path(p[x+'_cl_path'])for x in ('before','generated','saved')]
+    claim=dict(scope=SCOPE,pid=p['process_id'],source=common._key(p['expected_document_path']),sha=p['expected_source_sha256'])
+    if loaded.get('zero_attempt_pin'):claim['zero_attempt_predecessor_sha256']=loaded['zero_attempt_pin']['sha256']
+    marker=common.local_evidence_root()/('guide_generation_'+group._digest(claim)+'.json')
+    outputs=[receipt,progress,marker]+[Path(p[x+'_cl_path'])for x in (('generated','saved')if loaded.get('zero_attempt_pin')else('before','generated','saved'))]
     protected={common._key(v['path'])for v in pins+loaded['checkpoint_pins']}|{common._key(p['expected_document_path'])}
     require(len({common._key(v)for v in outputs})==len(outputs),'Outputs must be distinct')
     for path in outputs:require(not path.exists()and not path.is_symlink()and common._key(path)not in protected,'Fresh nonaliased output required')
     for path in (receipt,progress,marker):require(path.parent.is_dir(),'Existing diagnostic output parent required')
-    cl.validate_outputs(p)
+    if loaded.get('zero_attempt_pin'):
+        dirs=[cl._fresh_path(p[k+'_cl_path']).parent for k in ('generated','saved')]
+        require(len({common._key(v)for v in dirs})==2,'Distinct fresh continuation CL directories required')
+    else:cl.validate_outputs(p)
     return p,loaded,registration,typelib,abi,receipt,marker
 
 
@@ -286,6 +343,7 @@ def dispatch_request(request,*,validate_only=False):
         sw,_=reopen.sw_connect.connect_solidworks(process_id=p['process_id'],launch_new_instance=False,wait_seconds=1)
         report=dict(scope=SCOPE,request=p,module_pin=common._pin(__file__),ownership=loaded['ownership'],source_path=p['expected_document_path'],
             source_sha256=p['expected_source_sha256'],reopen_receipt_pin=loaded['reopen_pin'],recipe=deepcopy(loaded['guide_parameters']['targets']),
-            live_pins=loaded['pins'],checkpoint_pins=loaded['checkpoint_pins'],interface_audit=abi)
+            live_pins=loaded['pins'],checkpoint_pins=loaded['checkpoint_pins'],interface_audit=abi,
+            zero_attempt_predecessor_pin=loaded.get('zero_attempt_pin'))
         journal=Journal(report,receipt,marker);backend=NativeBackend(loaded,p,sw,registration['clsid'],typelib,report,journal.persist)
         return run_backend(backend,journal,loaded)

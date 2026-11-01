@@ -92,7 +92,7 @@ NC、平面以及已分配刀具的尺寸。共享刀具只读取一次，随后
 机床级生成，不指定刀具、不修改参数、不创建操作，也不运行机床或后处理器。
 
 每项生成前持久化 pending，调用后检查操作与对应特征的生成状态、正数记录数以及
-全部受保护绑定。后台计算尚未确认完成、消息错误、返回异常、空轨迹或其他绑定变化
+全部受保护绑定。所选操作与特征的生成状态未完成、消息错误、返回异常、空轨迹或其他绑定变化
 均停止后续调用，不自动重试。一次调用包含多个顺序步骤，不表示 COM 调用并行执行。
 
 CL 导出复用当前 CAM 消息会话，使用固定的 `ICWMachine5.SaveCLFile` 路径；不会额外
@@ -108,3 +108,5 @@ CL 导出复用当前 CAM 消息会话，使用固定的 `ICWMachine5.SaveCLFile
 当前组合功能登记为离线验证：53项协议、真实构造/接口元数据、同会话导出及 MCP
 包装测试通过；已保存并重新打开的实际输入通过只读文件预检。尚未登记本组合生成的
 原生成功。轨迹几何、实际刀具/夹具/机床碰撞、物理进给与转速和生产放行仍未合格。
+
+The global `IsBackgroundProcessForGTPOver` Boolean is diagnostic only; it is not a busy or selected-completion predicate (see `solidworks-cam.md`). Completion requires the selected operation and feature flags to change from false to true after native return, with a positive bounded stream count. A first-dispatch preflight failure can be continued only from a pinned receipt proving no GTP or Save attempt and clean event teardown; the original claim and baseline CL remain preserved. Reusing that CL also requires no intervening user or CAM edits.
