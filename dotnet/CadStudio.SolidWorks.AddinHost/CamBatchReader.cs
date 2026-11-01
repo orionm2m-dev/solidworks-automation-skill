@@ -40,6 +40,11 @@ internal static class CamBatchReader {
         }
         return r;
     }
+    internal static void ValidateConfigurationBinding(string camName, string objectName, string associatedSwName, string expectedSwName) {
+        Require(!String.IsNullOrEmpty(camName) && !String.IsNullOrEmpty(objectName) && !String.IsNullOrEmpty(associatedSwName) && !String.IsNullOrEmpty(expectedSwName), "CONFIGURATION_NAME_REQUIRED");
+        Require(camName == objectName, "CAM_CONFIGURATION_OBJECT_MISMATCH");
+        Require(associatedSwName == expectedSwName, "CAM_SW_CONFIGURATION_MISMATCH");
+    }
     private static string Key(string p) { return Path.GetFullPath(p).TrimEnd('\\', '/').Replace('/', '\\').ToUpperInvariant(); }
     private static double Number(double v) { Require(!Double.IsNaN(v) && !Double.IsInfinity(v), "NONFINITE_NUMBER"); return v; }
     private static string Text(string v) { Require(v != null && v.Length <= 4096, "NATIVE_TEXT_LIMIT"); return v; }
@@ -124,7 +129,10 @@ internal static class CamBatchReader {
             var camApp = (ICWApp4)bridge.GetCWApp(); object active = camApp.IGetActiveDoc(); Require(active != null, "NO_ACTIVE_CAM_DOCUMENT");
             var doc = (ICWDoc3)active; Require(doc.GetDocType() == 1, "CAM_PART_REQUIRED");
             string camConfiguration = Text(doc.GetActiveConfigurationName()); result["cam_configuration"] = camConfiguration;
-            Require(camConfiguration == (string)before["configuration"], "CAM_CONFIGURATION_MISMATCH");
+            var configuration = (ICWConfiguration)doc.GetActiveConfiguration(); Require(configuration != null, "CAM_CONFIGURATION_ABSENT");
+            string associatedSwConfiguration = Text(configuration.SWConfigurationName);
+            result["cam_associated_sw_configuration"] = associatedSwConfiguration;
+            ValidateConfigurationBinding(camConfiguration, Text(configuration.ConfigurationName), associatedSwConfiguration, (string)before["configuration"]);
             var machine = (ICWMachine)((ICWPartDoc)active).IGetMachine(); Require(machine != null && machine.MachType == 3, "TURN_MACHINE_REQUIRED");
             result["stage"] = "inventory"; var handles = new Dictionary<uint, ICWTurnOperation>(); result["inventory"] = Inventory(machine, doc, r, handles);
             result["stage"] = "tools"; result["tools"] = Tools(machine, doc, r);
@@ -132,6 +140,9 @@ internal static class CamBatchReader {
             result["nc_parameters_complete"] = ncRows.All(x => (string)x["status"] == "observed");
             result["stage"] = "document_after"; var after = Document(app, r); result["document_after"] = after;
             Require(serializer.Serialize(before) == serializer.Serialize(after), "DOCUMENT_CHANGED_DURING_READ");
+            var configurationAfter = (ICWConfiguration)doc.GetActiveConfiguration(); Require(configurationAfter != null, "CAM_CONFIGURATION_ABSENT_AFTER");
+            ValidateConfigurationBinding(Text(doc.GetActiveConfigurationName()), Text(configurationAfter.ConfigurationName), Text(configurationAfter.SWConfigurationName), (string)after["configuration"]);
+            Require(Text(configurationAfter.ConfigurationName) == camConfiguration && Text(configurationAfter.SWConfigurationName) == associatedSwConfiguration, "CAM_CONFIGURATION_CHANGED_DURING_READ");
             result["status"] = "observed"; result["readback_verified"] = true; result["stage"] = "finished";
         } catch (Exception error) { result["hresult"] = error.HResult; result["message"] = error.Message; result["error_type"] = error.GetType().Name; }
         clock.Stop(); result["elapsed_ms"] = clock.Elapsed.TotalMilliseconds; return serializer.Serialize(result);

@@ -25,6 +25,14 @@ class NativeReaderTests {
         var extra=Base();extra["method"]="Save";Reject(json.Serialize(extra),"unknown field");
         var cls=Base();cls["cam_addin_clsid"]="{8EE76E8D-9B47-4DE0-AFA2-B2E36621A134}";Reject(json.Serialize(cls),"foreign COM class");
         foreach(var v in new object[]{new[]{322,322},new[]{0},new[]{-1},new[]{1,2,3,4,5,6,7,8,9},new[]{"322"},true}) {var r=Base();r["nc_operation_ids"]=v;Reject(json.Serialize(r),"NC ids");}
+        var binding=type.GetMethod("ValidateConfigurationBinding",BindingFlags.NonPublic|BindingFlags.Static);
+        binding.Invoke(null,new object[]{"Mill - Metric - 0","Mill - Metric - 0","По умолчанию","По умолчанию"}); Check(true,"distinct CAM and associated SW names accepted");
+        foreach(var values in new[]{
+          new[]{"Mill - Metric - 0","Other","По умолчанию","По умолчанию"},
+          new[]{"Mill - Metric - 0","Mill - Metric - 0","Other","По умолчанию"},
+          new[]{"","","По умолчанию","По умолчанию"},
+          new[]{"Mill - Metric - 0","Mill - Metric - 0","",""}
+        }) {bool rejected=false;try {binding.Invoke(null,values);} catch(TargetInvocationException e) {rejected=e.InnerException is InvalidOperationException;} Check(rejected,"wrong/missing configuration binding rejected");}
         var iface=assembly.GetType("CadStudio.SolidWorks.AddinHost.ICamBatchReader",true);
         Check(iface.GUID==new Guid("DA9D97F8-EB0E-4D7B-A741-0E1736E899A2"),"interface GUID");
         Check(iface.GetMethods().Length==1 && iface.GetMethods()[0].Name=="ReadTurnSnapshot","one exported reader");
