@@ -10456,5 +10456,40 @@ def solidworks_cam_generate_saved_guides(params: SolidWorksCamGuideGenerationInp
 
 
 
+class SolidWorksCamInformationPromptInput(BaseInput):
+    process_id: int = Field(gt=0,strict=True)
+    expected_creation_time: float = Field(gt=0,strict=True)
+    expected_executable: str = Field(min_length=1,max_length=4096,strict=True)
+    expected_main_title: str = Field(min_length=1,max_length=2000,strict=True)
+    expected_text: str = Field(min_length=1,max_length=2000,strict=True)
+    receipt_path: str = Field(min_length=1,max_length=4096,strict=True)
+    action: Literal['inspect','acknowledge'] = 'inspect'
+    acknowledge_information: bool = Field(default=False,strict=True)
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON)
+
+
+@mcp.tool(name='solidworks_cam_information_prompt',title='Acknowledge Exact CAM Information (Windows UI Helper)',
+          annotations={'readOnlyHint':False,'destructiveHint':False,'idempotentHint':False,'openWorldHint':False})
+def solidworks_cam_information_prompt(params: SolidWorksCamInformationPromptInput) -> str:
+    """One exact-owner informational OK; no CAM lock, COM, Save, Cancel or focus."""
+    try:
+        _runtime_identity.assert_current()
+        bindings=[]
+        if _selected_process_id is not None:
+            if type(_selected_process_id)is not int or _selected_process_id<=0:raise ValueError('Invalid selected process binding')
+            bindings.append(_selected_process_id)
+        environment_pid=os.environ.get('SOLIDWORKS_MCP_PROCESS_ID')
+        if environment_pid is not None:
+            if not re.fullmatch(r'[1-9][0-9]*',environment_pid):raise ValueError('Invalid environment process binding')
+            bindings.append(int(environment_pid))
+        if not bindings or any(v!=params.process_id for v in bindings):raise ValueError('Exact existing MCP process binding required')
+        from scripts.sw_cam_information_prompt import handle_information_prompt
+        value=handle_information_prompt(params.process_id,expected_creation_time=params.expected_creation_time,
+            expected_executable=params.expected_executable,expected_main_title=params.expected_main_title,expected_text=params.expected_text,receipt_path=params.receipt_path,
+            action=params.action,acknowledge_information=params.acknowledge_information)
+        return _result(value,params.response_format)
+    except Exception as exc:return _tool_error(exc,params.response_format)
+
+
 if __name__ == "__main__":
     main()

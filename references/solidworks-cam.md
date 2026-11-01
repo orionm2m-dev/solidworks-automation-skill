@@ -1733,3 +1733,7 @@ measurements. Skill code and shared references do not hardcode project paths.
 `ICWBaseOpSetup.InsertOperationAfter` 的已核对 TLB 声明只有输入参数，返回 HRESULT。当前 typed dual-vtable 路径只接受严格的整数 `0`（S_OK）；`None`、布尔值和非零值均不能作为成功。先保存有界、可安全序列化的原始返回类型和值，再执行断言，随后仍须验证实际操作顺序及受保护状态。
 
 旧收据若只保留 `int` 类型而丢失数值，不能据此补写或推断 S_OK。保留旧收据与一次性标记，禁止重复移动；只读核对必须明确绑定当时的冻结模块及证据。运行时代码修复后的新哈希不能冒充该历史模块。
+
+## Owned informational warning acknowledgement
+
+`solidworks_cam_information_prompt` is a Windows UI recovery helper, not the CAM API. It acknowledges exactly one informational OK dialog after checking the process ID, creation time, executable, current document window title, complete warning text and single enabled OK control. It writes a pending receipt before one notification and verifies disappearance. It neither takes the held CAM lock nor calls COM, Save, Cancel or focus commands. The dialog warning remains evidence even when the CAM event subscriber records no message; acknowledgement does not qualify the generated path. Two owned lead-compensation warnings were acknowledged successfully on SOLIDWORKS 2026; other dialog types are rejected.
