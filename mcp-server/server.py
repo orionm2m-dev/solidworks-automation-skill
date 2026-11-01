@@ -9711,5 +9711,33 @@ def solidworks_cam_apply_wall_leads_to_all(params: SolidWorksCamWallLeadPropagat
         return _tool_error(exc,params.response_format)
 
 
+class SolidWorksCamWallApplyAllSaveInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    process_id: int = Field(gt=0, strict=True)
+    expected_document_path: str = Field(min_length=1, max_length=4096, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    addin_clsid: str = Field(min_length=38, max_length=38, strict=True)
+    parent_receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    parent_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: str = Field(min_length=1, max_length=4096, strict=True)
+    progress_path: str = Field(min_length=1, max_length=4096, strict=True)
+    module_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
+@mcp.tool(name="solidworks_cam_save_wall_lead_configuration", title="Save Existing Wall Lead Configuration",
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_save_wall_lead_configuration(params: SolidWorksCamWallApplyAllSaveInput) -> str:
+    """Save observed configuration once without replaying setters or toolpath generation."""
+    try:
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_wall_apply_all_save import dispatch_request
+        request=dict(action="save_wall_apply_all_configuration",params=params.model_dump(exclude={"response_format"}))
+        return _result(dispatch_request(request),params.response_format)
+    except Exception as exc:
+        return _tool_error(exc,params.response_format)
+
+
 if __name__ == "__main__":
     main()
