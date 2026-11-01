@@ -26,7 +26,8 @@ reader,generation=config.reader,authority.generation
 SCOPE='SAVED_DEEP_GUIDE_FOUR_PACKET_V1'
 PAIRS=((80,0),(80,1),(81,0),(81,1))
 PARAMS={'process_id','expected_document_path','expected_source_sha256','inspect_receipt_path','inspect_receipt_sha256',
- 'source_backup_path','source_backup_sha256','choices','module_sha256','receipt_path','progress_path','before_cl_path','generated_cl_path','saved_cl_path','acknowledgement'}
+ 'zero_attempt_receipt_path','zero_attempt_receipt_sha256','failed_writer_archive_path','failed_writer_archive_sha256',
+ 'failed_request_archive_path','failed_request_archive_sha256','source_backup_path','source_backup_sha256','choices','module_sha256','receipt_path','progress_path','before_cl_path','generated_cl_path','saved_cl_path','acknowledgement'}
 
 
 def projected_baseline(loaded):
@@ -128,7 +129,7 @@ class NativeBackend(authority.ParameterBackend):
           check_events=self.events,retained_objects=(doc,),verify_retained_binding=check,max_native_calls=4000,
           progress=progress,progress_state=state)
 
-    def capture(self,label,*,full=False,own=None):
+    def capture_snapshot(self,label,*,full=False,own=None):
         self.boundary()
         with self.ctx.guard()as g:
             self.doc=g.typed(g.read(self.ctx.app,'IGetActiveDoc'),'ICWDoc3');self.save_app=g.typed(self.ctx.app,'ICWApp')
@@ -155,7 +156,7 @@ class NativeBackend(authority.ParameterBackend):
         finally:out['read_batch']=batch.summary();self.persist()
         return dict(binding=deepcopy(out['binding']),parameters=deepcopy(out['parameters']))
 
-    def capture_binding(self,label):return self.capture(label)['binding']
+    def capture_binding(self,label):return self.capture_snapshot(label)['binding']
 
     def insert(self,row,anchor,pending,returned):
         raw=definitions.insert_selected_once(self.ctx,self.doc,row,anchor,self.loaded['deep_headers'][str(row['feature_native_id'])],pending)
@@ -234,7 +235,7 @@ def run_backend(backend,journal,loaded):
       automatic_retry=False,automatic_rollback=False,production_qualified=False,geometry_accepted=False,
       persistence_after_reopen_verified=False,continuation_ready=False)
     try:
-        journal.create();backend.start();r['before']=backend.capture('before',full=True)
+        journal.create();backend.start();r['before']=backend.capture_snapshot('before',full=True)
         baseline=projected_baseline(loaded);require(group.exact(r['before'],baseline),'Fresh protected13/10 snapshot differs')
         r['before_cl']=backend.export('before',r['before']['binding']);current=r['before']['binding'];anchor=328
         for recipe in loaded['deep_plan']['rows']:
@@ -248,20 +249,20 @@ def run_backend(backend,journal,loaded):
             after=backend.capture_binding('after_'+recipe['key']);definition=definitions.verify_one_addition(current,after,recipe,oid,anchor)
             target=dict(deepcopy(recipe),operation_native_id=oid,assigned_tool=deepcopy(definition['assigned_tool']))
             backend.learned.append(target);journal.verified(label,definition);current=after;anchor=oid
-        fields.learned_targets(backend.learned);r['definitions']=backend.capture('definitions',full=True)
+        fields.learned_targets(backend.learned);r['definitions']=backend.capture_snapshot('definitions',full=True)
         protected_binding(baseline['binding'],r['definitions']['binding']);before_own={x['operation_native_id']:x for x in r['definitions']['parameters']}
         for target in backend.learned:require(group.exact(before_own[target['operation_native_id']]['levels'],target['expected_levels']),'Native deep machining depth/setup differs from exact feature-derived4.4')
         for target in backend.learned:
             oid=target['operation_native_id'];label='SetTool:'+str(oid)
             journal.execute(label,lambda pending:backend.assign(target,pending));backend.refresh_dirty()
             target['assigned_tool']=deepcopy(loaded['configuration_tool'])
-            own=backend.capture('after_tool_'+str(oid),own=target);protected_binding(baseline['binding'],own['binding'])
+            own=backend.capture_snapshot('after_tool_'+str(oid),own=target);protected_binding(baseline['binding'],own['binding'])
             actual=own['parameters'][0];require(group.exact(actual['tool'],target['reference_tool_dimensions']),'Actual assigned tool dimensions differ')
             config.verify_automatic_target(before_own[oid],actual)
             expected=deepcopy(target['reference_nc']);expected['GetCNCComp']=actual['nc']['feeds_compensation']['GetCNCComp']
             require(expected['GetCNCComp']in(0,1)and group.exact(actual['nc']['feeds_compensation'],expected),'SetTool changed inherited feed/Tlp/retract; explicit new decision required')
             r.setdefault('after_tool_parameters',{})[str(oid)]=deepcopy(actual);journal.verified(label,actual)
-        r['after_tools']=backend.capture('after_tools',full=True);protected_binding(baseline['binding'],r['after_tools']['binding'])
+        r['after_tools']=backend.capture_snapshot('after_tools',full=True);protected_binding(baseline['binding'],r['after_tools']['binding'])
         require(group.exact(r['after_tools']['parameters'][:4],baseline['parameters']),'Protected shallow parameters changed during tool assignment')
         for actual in r['after_tools']['parameters'][4:]:require(group.exact(actual,r['after_tool_parameters'][str(actual['operation_native_id'])]),'Another SetTool changed a previously observed selected target')
         for target in backend.learned:
@@ -276,18 +277,18 @@ def run_backend(backend,journal,loaded):
                 require(group.exact(dict(current_nc,GetCNCComp=0),expected),'Only CNC correction permitted')
                 label='CNC0:'+str(oid);journal.execute(label,lambda pending:backend.set_nc(target,current_nc,pending));backend.refresh_dirty()
                 actual=backend.read_nc(target);require(group.exact(actual,expected),'Exact CNC0/Tlp1 readback required');journal.verified(label,actual)
-        r['configured']=backend.capture('configured',full=True);verify_configured(r['after_tools'],r['configured'],backend.learned,loaded['configuration_tool'])
+        r['configured']=backend.capture_snapshot('configured',full=True);verify_configured(r['after_tools'],r['configured'],backend.learned,loaded['configuration_tool'])
         protected_binding(baseline['binding'],r['configured']['binding']);counts={}
         for target in backend.learned:
             label='GTP:'+str(target['operation_native_id']);journal.execute(label,lambda pending:backend.generate(target,pending));backend.refresh_dirty()
             outcome=backend.outcome(target);generation.status_contract(outcome,target,True)
             counts[target['operation_native_id']]=deepcopy(outcome['record_counts']);journal.verified(label,outcome)
-        r['generated']=backend.capture('generated',full=True);verify_generated(r['configured'],r['generated'],counts,backend.learned)
+        r['generated']=backend.capture_snapshot('generated',full=True);verify_generated(r['configured'],r['generated'],counts,backend.learned)
         r['generated_cl']=backend.export('generated',r['generated']['binding']);r['protected_cl']=cl.verify_protected(r['before_cl'],r['generated_cl'])
         r['new_cutcom_review']=cl.verify_no_new_cutcom(r['generated_cl']);r['save_stage']={};journal.entry('SaveActiveDocument')
         def capture(label):
             if label=='before':backend.boundary();return deepcopy(r['generated'])
-            r['saved']=backend.capture('saved',full=True);return r['saved']
+            r['saved']=backend.capture_snapshot('saved',full=True);return r['saved']
         def verify(v):require(group.exact(v,r['generated']),'Save changed complete protected/deep snapshot')
         def save():
             value=backend.save();entry=r['actions']['SaveActiveDocument'];require(entry['attempted']is True,'Save bypassed pending')
@@ -323,6 +324,60 @@ def run_backend(backend,journal,loaded):
     return r
 
 
+
+def verify_zero_attempt(r,p,loaded,archived_writer,archived_request):
+    require(r.get('scope')==SCOPE and r.get('status')=='error'and r.get('phase')=='finished'and r.get('failed_phase')=='preflight',
+      'Only the exact preflight failure can continue')
+    require(r.get('actions')=={} and r.get('actual_new_ids')==[] and not any(k in r for k in ('captures','before','before_cl','cl_exports','generated_cl','saved_cl','source_transition','saved_checkpoint_context','receipt_write_error','cleanup_issue')),
+      'Any observed action/capture or uncertain cleanup forbids this continuation')
+    for key in ('mutation_attempted','native_call_attempted','native_call_returned','native_dispatch_pending','operation_creation_attempted',
+      'SetTool_attempted','setter_attempted','GTP_attempted','save_attempted','model_saved','readback_verified','continuation_ready','automatic_retry','automatic_rollback'):
+        require(r.get(key)is False,'Zero-attempt proof missing: '+key)
+    clean_events(r);require(r.get('cleanup_session_active')is False,'Prior subscription cleanup must be complete')
+    expected_issue=dict(type='TypeError',hresult=None,actual_return_type=None,
+      locations=[dict(file='sw_cam_deep_guide_group.py',function='run_backend',line=237)])
+    require(group.exact(r.get('issue'),expected_issue),'Only known capture-module collision is covered')
+    require(r['module_pin']['sha256']==archived_writer['sha256']==r['request']['module_sha256']
+      and archived_writer['sha256']=='66ab12b39be05bcdc695733d3c1c55b89089a8a7b4007e0451e4e133dd89ea51'
+      and p['module_sha256']!=archived_writer['sha256']and common._key(archived_writer['path'])!=common._key(r['module_pin']['path']),
+      'Exact independently archived failed writer and changed correction required')
+    require(archived_request.get('action')=='apply_deep_guide_group'and type(archived_request.get('params'))is dict,'Exact original sealed action required')
+    expected_request=deepcopy(r['request']);expected_request.pop('expected_configuration')
+    require(group.exact(archived_request['params'],expected_request),'Archived sealed request differs from executed request')
+    require(group.exact(r['ownership'],loaded['ownership'])and r['ownership']['process_id']==p['process_id'],'Failed attempt owner differs')
+    require(r['source_sha256']==p['expected_source_sha256']and common._key(r['source_path'])==common._key(p['expected_document_path']),
+      'Failed attempt source differs')
+    for key in ('process_id','expected_source_sha256','inspect_receipt_sha256','source_backup_sha256','choices','acknowledgement'):
+        require(group.exact(r['request'][key],p[key]),'Continuation changes requested work: '+key)
+    for key in ('expected_document_path','inspect_receipt_path','source_backup_path'):
+        require(common._key(r['request'][key])==common._key(p[key]),'Continuation changes source authority: '+key)
+    require(group.exact(r['plan'],loaded['deep_plan']),'Continuation changes inspected recipe')
+    # Only the replaced failed writer becomes a historical archive pin. All other
+    # previous code/data dependencies remain live and must still match exactly.
+    retired=[];others=[]
+    for pin in r['checkpoint_pins']:
+        if common._key(pin['path'])==common._key(r['module_pin']['path']):
+            require(pin['sha256']==archived_writer['sha256'],'Failed writer pin mismatch');retired.append(pin)
+        else:others.append(pin)
+    require(len(retired)==1 and not any(common._key(x['path'])==common._key(r['module_pin']['path'])for x in r['live_pins']),
+      'Exactly one failed-writer historical pin may be replaced')
+    common._check(r['live_pins']);common._check(others)
+    return common._merge(others,[archived_writer])
+
+
+def load_zero_attempt(p,loaded):
+    failure,fp=read_pin(p['zero_attempt_receipt_path'],p['zero_attempt_receipt_sha256'])
+    archived_writer=common._pin(p['failed_writer_archive_path'])
+    require(archived_writer['sha256']==p['failed_writer_archive_sha256'],'Failed writer archive changed')
+    archived_request,rp=read_pin(p['failed_request_archive_path'],p['failed_request_archive_sha256'])
+    canonical,cp=read_pin(failure['request']['receipt_path'],p['zero_attempt_receipt_sha256'])
+    require(group.exact(canonical,failure)and common._key(fp['path'])!=common._key(cp['path']),'Independent archive and untouched canonical failure required')
+    pins=verify_zero_attempt(failure,p,loaded,archived_writer,archived_request)
+    return common._merge(pins,[fp,cp,rp]),dict(receipt_pin=fp,canonical_receipt_pin=cp,failed_writer_pin=archived_writer,
+      failed_request_pin=rp,recognized_failure_type='TypeError',recognized_failure_location='run_backend:237',
+      original_mutation_attempted=False,original_actions_empty=True,original_session_closed=True,source_unchanged=True,
+      correction='Rename capture method to capture_snapshot; retain inherited capture module unchanged')
+
 def prepare_request(request):
     require(type(request)is dict and set(request)=={'action','params'}and request['action']=='apply_deep_guide_group','Exact deep packet action required')
     p=deepcopy(request['params']);require(type(p)is dict and set(p)==PARAMS,'Exact bounded packet fields required')
@@ -357,10 +412,12 @@ def prepare_request(request):
     for target in plan['rows']:
         ref=next(x for x in source_params if x['operation_native_id']==target['reference_operation_native_id'])
         levels=deepcopy(ref['levels']);levels['levels']['machining_depth_native']=4.4;target['expected_levels']=levels
+    predecessor_pins,predecessor=load_zero_attempt(p,loaded)
+    loaded['zero_attempt_predecessor']=predecessor
     extra=[common._pin(x)for x in (__file__,fields.__file__,cl.__file__,inspect.__file__,definitions.__file__,config.__file__,nc.__file__)]
     extra+=cl.dependency_pins()+[observed_pin,gpin,backup]+geometry['source_pins']
-    loaded['checkpoint_pins']=common._merge(loaded['checkpoint_pins'],observed['checkpoint_pins'],extra)
-    require(len(loaded['pins'])<=64 and len(loaded['checkpoint_pins'])<=56,'Bounded packet code/proof closure required')
+    loaded['checkpoint_pins']=common._merge(loaded['checkpoint_pins'],observed['checkpoint_pins'],extra,predecessor_pins)
+    require(len(loaded['pins'])<=64 and len(loaded['checkpoint_pins'])<=60,'Bounded packet code/proof closure required')
     common._check(loaded['pins']);common._check(loaded['checkpoint_pins'])
     abi.update(configuration=config.audit(typelib,loaded['generated_pin']),compensation=nc.audit(typelib,loaded['generated_pin']),insertion=definitions.audit_insert(typelib,loaded['generated_pin']))
     receipt=common._local_receipt(p['receipt_path']);progress=Path(p['progress_path'])
@@ -377,12 +434,12 @@ def dispatch_request(request,*,validate_only=False):
     p,loaded,registration,typelib,abi,receipt,marker,pin=prepare_request(request)
     if validate_only:return dict(status='validated_offline',native_called=False,scope=SCOPE,source_sha256=p['expected_source_sha256'],
       live_pin_count=len(loaded['pins']),checkpoint_pin_count=len(loaded['checkpoint_pins']),plan=loaded['deep_plan'],
-      marker_path=str(marker),interface_audit=abi,expected_final_definitions=17,expected_final_generated=14)
+      marker_path=str(marker),zero_attempt_predecessor=loaded['zero_attempt_predecessor'],interface_audit=abi,expected_final_definitions=17,expected_final_generated=14)
     from scripts.sw_operation_guard import solidworks_operation_lock
     with solidworks_operation_lock(timeout_seconds=1,process_id=p['process_id']):
         sw,_=authority.reopen.sw_connect.connect_solidworks(process_id=p['process_id'],launch_new_instance=False,wait_seconds=1)
         report=dict(scope=SCOPE,request=p,module_pin=common._pin(__file__),source_path=p['expected_document_path'],source_sha256=p['expected_source_sha256'],
-          ownership=deepcopy(loaded['ownership']),inspect_receipt_pin=pin,plan=deepcopy(loaded['deep_plan']),interface_audit=abi,
+          ownership=deepcopy(loaded['ownership']),zero_attempt_predecessor=deepcopy(loaded['zero_attempt_predecessor']),inspect_receipt_pin=pin,plan=deepcopy(loaded['deep_plan']),interface_audit=abi,
           live_pins=deepcopy(loaded['pins']),checkpoint_pins=deepcopy(loaded['checkpoint_pins']))
         journal=Journal(report,receipt,marker);backend=NativeBackend(loaded,p,sw,registration['clsid'],typelib,report,journal.persist)
         return run_backend(backend,journal,loaded)

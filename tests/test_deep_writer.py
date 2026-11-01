@@ -34,14 +34,14 @@ class FakeBackend:
     def event(self,key,pending):
         pending();self.calls.append(key)
         if self.failure==key:raise OSError('unknown native outcome: '+key)
-    def capture(self,label,full=False,own=None):
+    def capture_snapshot(self,label,full=False,own=None):
         if self.failure==label:raise ValueError('capture rejected: '+label)
         value=deepcopy(self.state)
         if not full:value['parameters']=[]if own is None else[x for x in value['parameters']if x['operation_native_id']==own['operation_native_id']]
         if self.failure=='changed_protected'and label=='configured':value['parameters'][0]['nc']['feeds_compensation']['XYFeed']+=1
         if self.failure=='wrong_depth'and label=='definitions':value['parameters'][-1]['levels']['levels']['machining_depth_native']=1.
         return value
-    def capture_binding(self,label):return self.capture(label)['binding']
+    def capture_binding(self,label):return self.capture_snapshot(label)['binding']
     def insert(self,target,anchor,pending,returned):
         self.event('insert:'+target['key'],pending);returned(object());oid=401+2*len(self.learned)
         template=deepcopy(next(x for x in self.state['binding']['operations']if x['native_id']==target['reference_operation_native_id']))
