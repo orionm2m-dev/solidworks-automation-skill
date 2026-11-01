@@ -1784,3 +1784,14 @@ workflow results, not approval of arbitrary operation pairs. Mesh accuracy,
 material-removal acceptance, temporal stock/neck clearance, fixture and machine
 collisions, tool grip, feeds/speeds, postprocessing and production release remain
 separate checks. A final WIP cannot prove the stock state before an earlier cut.
+
+The installed TLB describes `CreateSTLOfWIPs2` as all-WIP export with an optional
+quality enum; neither that declaration nor the available API help establishes
+its cache/recalculation policy. Do not invent a `GenerateWIP`/`UpdateWIP` prerequisite
+or use `RebuildActiveDocForCAMData2` as a guessed WIP-only refresh. The existing
+precision study found `ICWWipParam` properties but no documented owning getter;
+its class is noncreatable. Reuse that finding before further owner discovery.
+`RunSimulationSilent` and `ActiveDocSaveStlFileFromSimulation` are separate scopes
+and expose no numeric deviation argument. TURN-specific quality limits do not
+establish MILL behavior. Preserve coarse WIP as evidence; it cannot certify a
+smaller geometric error merely because `FINE` was requested.
