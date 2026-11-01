@@ -174,12 +174,13 @@ def test_catalogue_abi_source_contract_without_com_import():
 @pytest.fixture
 def snippet(monkeypatch):
     from enum import Enum
+    from typing import Optional
     from pydantic import BaseModel,ConfigDict,Field,model_validator
     class Format(str,Enum):JSON='json'
     class FakeMcp:
         def tool(self,**kwargs):return lambda f:f
     env=dict(BaseInput=BaseModel, ConfigDict=ConfigDict, Field=Field, model_validator=model_validator,
-        ResponseFormat=Format, mcp=FakeMcp(), _selected_process_id=47168)
+        ResponseFormat=Format, Optional=Optional, mcp=FakeMcp(), _selected_process_id=47168)
     server = REPO / 'mcp-server/server.py'
     tree = ast.parse(server.read_text(encoding='utf-8-sig'))
     wanted = {'SolidWorksCamShallowGuideGroupInput', 'solidworks_cam_read_shallow_guide_group'}

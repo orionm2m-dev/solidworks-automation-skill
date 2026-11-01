@@ -30,6 +30,7 @@ MAX_CALLS = 1900
 PARAMS = {'process_id', 'expected_document_path', 'expected_source_sha256',
     'expected_configuration', 'addin_clsid', 'checkpoint_receipt_path',
     'checkpoint_receipt_sha256', 'module_sha256', 'receipt_path', 'progress_path'}
+REBIND_PARAMS = {'session_rebind_receipt_path', 'session_rebind_receipt_sha256'}
 GETTERS = start.GETTERS | {'IGetAllDefaultOperations', 'GetTdbIdForDefaultOperation',
     'IGetMachine', 'MachType', 'IGetEnumOpSetups', 'IGetEnumOperations', 'GetActiveConfigurationName'}
 INTERFACES = start.INTERFACES | {'ICWDoc3', 'ICWPartDoc', 'ICWMachine', 'ICWBaseOpSetup'}
@@ -234,7 +235,7 @@ def validate_request(request):
     require(type(request) is dict and set(request) == {'action', 'params'}
         and request['action'] == 'read_shallow_guide_group', 'Exact group read action required')
     p = request['params']
-    require(type(p) is dict and set(p) == PARAMS, 'Exact reader parameters required')
+    require(type(p) is dict and set(p) in (PARAMS, PARAMS | REBIND_PARAMS), 'Exact reader parameters and complete optional rebind pair required')
     require(type(p['process_id']) is int and 0 < p['process_id'] < 2**31, 'Exact positive PID required')
     require(type(p['expected_configuration']) is str and 0 < len(p['expected_configuration']) <= 256
         and '\x00' not in p['expected_configuration'], 'Explicit current configuration required')
@@ -248,13 +249,24 @@ def validate_request(request):
 
 
 def load_inputs(p):
-    loaded = checkpoint.load_completed(p['checkpoint_receipt_path'], p['checkpoint_receipt_sha256'],
-        **{k: p[k] for k in ('process_id', 'expected_document_path', 'expected_source_sha256')})
+    if REBIND_PARAMS <= set(p):
+        from scripts.sw_cam_fresh_finish_rebind import load_verified_rebind
+        loaded = load_verified_rebind(p['session_rebind_receipt_path'], p['session_rebind_receipt_sha256'], p)
+    else:
+        loaded = checkpoint.load_completed(p['checkpoint_receipt_path'], p['checkpoint_receipt_sha256'],
+            **{k: p[k] for k in ('process_id', 'expected_document_path', 'expected_source_sha256')})
+    return prepare_loaded(loaded)
+
+
+def prepare_loaded(loaded):
+    """Pin only the existing reader's live closure; keep retired phase proofs."""
     expected(loaded)
     # Completed writer proofs stay checked before/after, outside the per-read live closure.
     retired_names = {'sw_cam_ud14_save.py', 'sw_cam_pocket_finish_apply.py', 'sw_cam_pocket_rough_apply.py',
         'sw_cam_pocket_wall_continue.py', 'sw_cam_wall_outcome.py', 'sw_cam_wall_perimeter_first.py',
-        'sw_cam_wall_configuration_save.py', 'sw_cam_fresh_finish_field_batch.py', 'sw_cam_finish_defaults_progress.py'}
+        'sw_cam_wall_configuration_save.py', 'sw_cam_fresh_finish_field_batch.py', 'sw_cam_finish_defaults_progress.py',
+        'sw_cam_fresh_finish_insert.py', 'sw_cam_chamfer_insert_defaults.py', 'sw_cam_fresh_finish_recipe.py',
+        'sw_cam_shared_cutter_geometry.py', 'sw_cam_shared_holder_geometry.py'}
     retired = [v for v in loaded['pins'] if Path(v['path']).name in retired_names]
     loaded['offline_export_proof_pins'] = common._merge(loaded['offline_export_proof_pins'], retired)
     loaded['pins'] = common._merge([v for v in loaded['pins'] if v not in retired],

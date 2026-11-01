@@ -9971,13 +9971,15 @@ class SolidWorksCamShallowGuideGroupInput(BaseInput):
     module_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
     receipt_path: str = Field(min_length=1, max_length=32767, strict=True)
     progress_path: str = Field(min_length=1, max_length=32767, strict=True)
+    session_rebind_receipt_path: Optional[str] = Field(default=None,min_length=1,max_length=32767,strict=True)
+    session_rebind_receipt_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
     response_format: ResponseFormat = ResponseFormat.JSON
 
     @model_validator(mode="after")
     def exact_group_contract(self):
         from scripts.sw_cam_guide_group_reader import validate_request
         validate_request(dict(action="read_shallow_guide_group",
-            params=self.model_dump(exclude={"response_format"})))
+            params=self.model_dump(exclude={"response_format"},exclude_none=True)))
         return self
 
 
@@ -9990,8 +9992,10 @@ def solidworks_cam_read_shallow_guide_group(params: SolidWorksCamShallowGuideGro
             raise ValueError("Explicit owned process connection required")
         from scripts.sw_cam_guide_group_reader import dispatch_request
         return dispatch_request(dict(action="read_shallow_guide_group",
-            params=params.model_dump(exclude={"response_format"})))
+            params=params.model_dump(exclude={"response_format"},exclude_none=True)))
     return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+
 
 
 # Integration snippet for mcp-server/server.py; not an installed server.
@@ -10028,6 +10032,43 @@ def solidworks_exit_verified_empty_session(params: SolidWorksVerifiedEmptyExitIn
         from scripts.sw_owned_empty_exit import safely_exit_verified_empty_session
         return safely_exit_verified_empty_session(params.model_dump(exclude={"response_format"}))
     return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+
+# Add to mcp-server/server.py before its main entrypoint.
+class SolidWorksCamFreshFinishRebindInput(BaseInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0,lt=2**31,strict=True)
+    previous_process_id: int = Field(gt=0,lt=2**31,strict=True)
+    expected_document_path: str = Field(min_length=1,max_length=32767,strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    expected_configuration: str = Field(min_length=1,max_length=256,strict=True)
+    addin_clsid: str = Field(min_length=38,max_length=38,strict=True)
+    checkpoint_receipt_path: str = Field(min_length=1,max_length=32767,strict=True)
+    checkpoint_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    owned_startup_receipt_path: str = Field(min_length=1,max_length=32767,strict=True)
+    owned_startup_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    module_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    receipt_path: str = Field(min_length=1,max_length=32767,strict=True)
+    progress_path: str = Field(min_length=1,max_length=32767,strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def saved_session_rebind_contract(self):
+        from scripts.sw_cam_fresh_finish_rebind import validate_request
+        validate_request(dict(action="rebind_fresh_finish_session",params=self.model_dump(exclude={"response_format"})))
+        return self
+
+
+@mcp.tool(name="solidworks_cam_rebind_fresh_finish_session", title="Verify Saved Guide Route in New Owned Session",
+    annotations={"readOnlyHint":True,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_rebind_fresh_finish_session(params: SolidWorksCamFreshFinishRebindInput) -> str:
+    """Bind unchanged saved fresh-finish evidence and read both guides; no mutation or replay."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit new owned process connection required")
+        from scripts.sw_cam_fresh_finish_rebind import dispatch_request
+        return dispatch_request(dict(action="rebind_fresh_finish_session",params=params.model_dump(exclude={"response_format"})))
+    return _run_locked(op,params.response_format,load_automation=False,desktop_guard=True)
 
 
 if __name__ == "__main__":
