@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
-import hashlib,json,math,re
+import hashlib,json,math,re,time
 from scripts.sw_cam import _member,_error
 from scripts.sw_cam_generation import _write_receipt
 from scripts.sw_cam_lifecycle import _verify_save
@@ -17,8 +17,11 @@ SCOPE='OWNED_EMPTY_SESSION_EXIT_V1'
 FIELDS={'process_id','expected_creation_filetime','expected_executable_path','expected_document_path','expected_source_sha256','ownership_receipt_path','ownership_receipt_sha256','save_receipt_path','save_receipt_sha256','close_receipt_path','close_receipt_sha256','receipt_path','wait_milliseconds','acknowledge_exit_owned_empty_session'}
 
 
-def parameters(value):
-    require(type(value) is dict and set(value)==FIELDS,'Exact empty-session exit parameters required');p=deepcopy(value)
+VERIFIED_EMPTY_SCOPE='OWNED_VERIFIED_EMPTY_SESSION_EXIT_V1'
+VERIFIED_EMPTY_FIELDS=(FIELDS-{'save_receipt_path','save_receipt_sha256','close_receipt_path','close_receipt_sha256'})|{'empty_receipt_path','empty_receipt_sha256','acknowledge_restored_checkpoint_exit'}
+
+def _parameters(value,fields):
+    require(type(value) is dict and set(value)==fields,'Exact empty-session exit parameters required');p=deepcopy(value)
     require(type(p['process_id']) is int and 0<p['process_id']<2**31,'Strict owned PID required')
     require(type(p['expected_creation_filetime']) is int and _EPOCH<p['expected_creation_filetime']<2**63,'Exact creation FILETIME required')
     require(type(p['wait_milliseconds']) is int and 1<=p['wait_milliseconds']<=30000,'Exit observation wait must be1..30000ms')
@@ -27,6 +30,14 @@ def parameters(value):
         if name.endswith('_path'):require(type(v) is str and Path(v).is_absolute() and len(v)<=32767,'Absolute bounded paths required')
         if name.endswith('_sha256'):require(type(v) is str and re.fullmatch('[0-9a-f]{64}',v),'Exact lowercase SHA256 required')
     require(Path(p['expected_executable_path']).name.casefold()=='sldworks.exe' and Path(p['expected_document_path']).suffix.casefold()=='.sldprt','Exact SOLIDWORKS/part paths required')
+    return p
+
+
+def parameters(value):return _parameters(value,FIELDS)
+
+def verified_empty_parameters(value):
+    p=_parameters(value,VERIFIED_EMPTY_FIELDS)
+    require(p['acknowledge_restored_checkpoint_exit'] is True,'Explicit restored-checkpoint exit acknowledgement required')
     return p
 
 
@@ -89,13 +100,18 @@ class NativeBackend:
 
 
 def run_exit(params,*,backend=None):
-    p=parameters(params);plan=prepare(p);engine=backend or NativeBackend(p)
-    r=dict(scope=SCOPE,status='prepared',phase='prepared',request=p,pins=plan['pins'],marker_path=str(plan['marker']),exit_attempted=False,exit_call_count=0,exit_returned=False,process_exit_verified=False,empty_session_verified=False,saved_files_preserved=None,readback_verified=False,terminate_rights_requested=False,termination_attempted=False,save_attempted=False,close_document_attempted=False,launch_attempted=False,automatic_retry=False,client_module_sha256=digest(__file__))
+    p=parameters(params);return _run_prepared_exit(p,prepare(p),backend=backend)
+
+
+def _run_prepared_exit(p,plan,*,backend=None):
+    engine=backend or NativeBackend(p)
+    r=dict(scope=plan.get('scope',SCOPE),status='prepared',phase='prepared',request=p,pins=plan['pins'],marker_path=str(plan['marker']),exit_attempted=False,exit_call_count=0,exit_returned=False,process_exit_verified=False,empty_session_verified=False,saved_files_preserved=None,readback_verified=False,terminate_rights_requested=False,termination_attempted=False,save_attempted=False,close_document_attempted=False,launch_attempted=False,automatic_retry=False,client_module_sha256=digest(__file__))
+    if 'empty_observation' in plan:r.update(evidence_mode='verified_empty_session_after_checkpoint_restore',empty_observation=plan['empty_observation'],save_close_evidence_required=False)
     _write_receipt(plan['output'],r,create=True)
     try:
         engine.start();before=engine.owner();_match_identity(p,before);r['owner_before']=before
         r['open_documents_before']=engine.empty();check_files(plan['pins'])
-        _write_receipt(plan['marker'],dict(scope=SCOPE,process_id=p['process_id'],creation_filetime=p['expected_creation_filetime'],receipt_path=p['receipt_path'],intent='one_graceful_exit_no_replay'),create=True)
+        _write_receipt(plan['marker'],dict(scope=r['scope'],process_id=p['process_id'],creation_filetime=p['expected_creation_filetime'],receipt_path=p['receipt_path'],intent='one_graceful_exit_no_replay'),create=True)
         require(engine.owner()==before,'Owned process identity changed');r['open_documents_final']=engine.empty();check_files(plan['pins']);r['empty_session_verified']=True
         r.update(phase='ExitApp',exit_attempted=True,exit_call_count=1,native_dispatch_pending=True);_write_receipt(plan['output'],r)
         try:
@@ -122,3 +138,48 @@ def run_exit(params,*,backend=None):
 def safely_exit_owned_empty_session(params):
     p=parameters(params)
     with solidworks_operation_lock(timeout_seconds=1,process_id=p['process_id']):return run_exit(p)
+
+
+def validate_empty_observation(value,p):
+    # Accept the existing batch receipt, or the exact parsed tool result.
+    if 'results' in value:
+        require(value.get('schema_version')==1 and value.get('status')=='success' and type(value.get('results')) is list,'Completed inspection batch required')
+        rows=value['results']
+        require(type(value.get('request_count')) is int and value['request_count']==len(rows) and 1<=len(rows)<=2,'Bounded completed inspection batch required')
+        require(all(row.get('name') in ('solidworks_connect','solidworks_inspect_open_documents') for row in rows),'Only connection and document inspection evidence accepted')
+        selected=[row for row in rows if row.get('name')=='solidworks_inspect_open_documents']
+        require(len(selected)==1,'Exactly one document inspection result required')
+        result=selected[0]['result'];require(result.get('isError') is not True,'Failed inspection result rejected')
+        payloads=[block['parsed_json'] for block in result.get('content',[]) if type(block) is dict and type(block.get('parsed_json')) is dict]
+        require(len(payloads)==1,'One parsed document inspection payload required');value=payloads[0]
+    require(type(value) is dict and value.get('status')=='ok' and type(value.get('process_id')) is int and value['process_id']==p['process_id'],'Successful inspection of exact owned PID required')
+    require(value.get('active_document') is None and 'active_document' in value and value.get('documents')==[] and type(value.get('document_count')) is int and value['document_count']==0,'Inspection must prove no active or open documents')
+    require(value.get('user_control') is True and value.get('mutation_attempted') is False,'Read-only user-controlled inspection required')
+    require(not any(name in value for name in ('issue','error','failed_phase','receipt_write_error')),'Uncertain inspection rejected')
+    return {name:value[name] for name in ('status','process_id','active_document','documents','document_count','user_control','mutation_attempted')}
+
+
+def prepare_verified_empty(p,*,now=None):
+    values={};pins=[dict(path=p['expected_document_path'],sha256=p['expected_source_sha256'])]
+    for name in ('ownership','empty'):
+        values[name],pin=read_pin(p[name+'_receipt_path'],p[name+'_receipt_sha256']);pins.append(dict(path=pin['path'],sha256=pin['sha256']))
+    require(len({key(v['path']) for v in pins})==len(pins),'Source/evidence aliases forbidden');check_files(pins)
+    validate_ownership(values['ownership'],p);observation=validate_empty_observation(values['empty'],p)
+    # File age is only an artifact recency gate. Two live empty/process checks remain authoritative.
+    age=(time.time() if now is None else now)-Path(p['empty_receipt_path']).stat().st_mtime
+    require(0<=age<=300,'Empty inspection artifact must have been written within the last five minutes')
+    observation.update(artifact_age_seconds=age,recency_basis='file_mtime_only_live_empty_checks_still_required')
+    out=Path(p['receipt_path']);marker=out.parent/('owned_empty_exit_'+str(p['process_id'])+'_'+str(p['expected_creation_filetime'])+'.json')
+    require(out.suffix.casefold()=='.json' and out.parent.is_dir() and key(out)!=key(marker),'Fresh JSON output required')
+    for file in (out,marker):require(not file.exists() and not file.is_symlink() and key(file) not in {key(v['path']) for v in pins},'Existing/aliased exit receipt or marker; do not replay')
+    return dict(values=values,pins=pins,output=out,marker=marker,scope=VERIFIED_EMPTY_SCOPE,empty_observation=observation)
+
+
+def run_verified_empty_exit(params,*,backend=None):
+    p=verified_empty_parameters(params)
+    return _run_prepared_exit(p,prepare_verified_empty(p),backend=backend)
+
+
+def safely_exit_verified_empty_session(params):
+    p=verified_empty_parameters(params)
+    with solidworks_operation_lock(timeout_seconds=1,process_id=p['process_id']):return run_verified_empty_exit(p)
