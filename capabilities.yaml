@@ -187,6 +187,34 @@
   ],
   "capabilities": [
     {
+      "id": "cam_shallow_guide_operation_groups",
+      "label": "CAM 浅导向槽定义与参数批处理",
+      "level": "pilot",
+      "backends": [
+        "solidworks-com-pywin32"
+      ],
+      "verified_versions": [
+        "2026"
+      ],
+      "dependencies": [
+        "SolidWorks",
+        "SOLIDWORKS CAM",
+        "pywin32",
+        "comtypes"
+      ],
+      "limitations": [
+        "仅支持已签封的两个特征及四项原生操作，不是通用多特征生成器。",
+        "四定义插入和完整参数读取已实测；只比较原操作元数据与轨迹记录数，不代替CL几何验证。",
+        "插入调用不执行SetTool/GTP/Save；新定义仅存在于会话内存，必须单独保存并确认持久化。",
+        "默认刀具、物理单位、切削条件和机床/夹具仍需核实；没有生产许可。",
+        "使用说明：references/guide-operation-groups.md"
+      ],
+      "allowed_modes": [
+        "interactive",
+        "reviewed"
+      ]
+    },
+    {
       "id": "solidworks_cam_native",
       "label": "SOLIDWORKS CAM 原生连接与车床配置",
       "level": "pilot",
