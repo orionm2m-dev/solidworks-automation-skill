@@ -739,7 +739,9 @@
   "backends": [
     "solidworks-com-pywin32"
   ],
-  "verified_versions": [],
+  "verified_versions": [
+    "2026"
+  ],
   "dependencies": [
     "SolidWorks",
     "SOLIDWORKS CAM",
@@ -748,12 +750,12 @@
   ],
   "limitations": [
     "仅接受已绑定的四项MILL定义、完整参数回执、现有合格刀具和显式参数配方。",
-    "组合配置/Save目前只有离线构造、方法绑定、配方协议与MCP包装回归；未登记原生成功。",
     "指定刀具的自动默认值和NC变化完整保留为未合格草案；不显式设置速度/进给。",
     "最多一次Save，不执行GTP；新文件摘要和完整保存后回读仍不等同于重新打开后的CAM持久化。",
     "失败保留逐动作回执且禁止自动重放；完成后需继续验证轨迹、实际刀具、夹持及加工条件。",
     "使用说明：references/guide-operation-groups.md",
-    "实际调用已确认四次刀具指定及部分字段；客户端超时前未执行Save/GTP。必须从实际回读恢复，不能自动重放。"
+    "原客户端超时后，经完整当前参数核对，续配16个未尝试字段并一次Save成功；旧刀具指定和已确认字段未重放。",
+    "保存后读数与源文件摘要已验证；重新打开持久化和新轨迹仍需独立验证。"
   ],
   "allowed_modes": [
     "interactive",
