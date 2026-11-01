@@ -13,7 +13,7 @@ namespace CadStudio.SolidWorks.AddinHost
     [ComVisible(true)]
     [Guid(AddinGuid)]
     [ProgId("CadStudio.SolidWorks.AddinHost")]
-    public sealed class SwAddin : ISwAddin
+    public sealed class SwAddin : ISwAddin, ICamBatchReader
     {
         public const string AddinGuid = "8EE76E8D-9B47-4DE0-AFA2-B2E36621A134";
         private const int CommandGroupId = 55001;
@@ -31,6 +31,8 @@ namespace CadStudio.SolidWorks.AddinHost
         private IPropertyManagerPage2 propertyPage;
         private PropertyPageHandler propertyPageHandler;
         private int addinCookie;
+        private int camOwnerThread;
+        private int camReaderBusy;
         private bool commandGroupReady;
         private bool taskPaneReady;
         private bool propertyManagerPageReady;
@@ -73,6 +75,7 @@ namespace CadStudio.SolidWorks.AddinHost
             try
             {
                 swApp = (ISldWorks)thisSw;
+                camOwnerThread = System.Threading.Thread.CurrentThread.ManagedThreadId;
                 addinCookie = cookie;
                 bool callbackReady = swApp.SetAddinCallbackInfo2(0, this, addinCookie);
                 diagnostics.MarkConnection(swApp.RevisionNumber(), callbackReady);
@@ -116,6 +119,25 @@ namespace CadStudio.SolidWorks.AddinHost
             GC.Collect();
             GC.WaitForPendingFinalizers();
             return released;
+        }
+
+        public string ReadTurnSnapshot(string requestJson)
+        {
+            if (System.Threading.Interlocked.Exchange(ref camReaderBusy, 1) != 0)
+                throw new InvalidOperationException("CAM_READER_BUSY");
+            try
+            {
+                if (System.Threading.Thread.CurrentThread.ManagedThreadId == camOwnerThread)
+                    return CamBatchReader.Execute(swApp, camOwnerThread, requestJson);
+                // Marshal the fixed reader to the add-in's existing owner-thread
+                // control. This is internal dispatch, not external window control.
+                var dispatcher = taskPaneControl;
+                if (dispatcher == null || dispatcher.IsDisposed || !dispatcher.IsHandleCreated)
+                    throw new InvalidOperationException("CAM_OWNER_DISPATCH_UNAVAILABLE");
+                return (string)dispatcher.Invoke((Func<string>)(() =>
+                    CamBatchReader.Execute(swApp, camOwnerThread, requestJson)));
+            }
+            finally { System.Threading.Interlocked.Exchange(ref camReaderBusy, 0); }
         }
 
         /// <summary>CommandManager 回调：显示 PropertyManagerPage。</summary>

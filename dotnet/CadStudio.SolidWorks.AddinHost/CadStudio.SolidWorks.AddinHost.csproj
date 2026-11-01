@@ -35,6 +35,8 @@
       <EmbedInteropTypes>false</EmbedInteropTypes>
     </Reference>
     <Reference Include="System.Web.Extensions" />
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="CamWorks.Interop"><HintPath>$(CamWorksInteropPath)</HintPath><Private>true</Private><EmbedInteropTypes>false</EmbedInteropTypes></Reference>
   </ItemGroup>
 
   <Target Name="ValidateSolidWorksApiDir" BeforeTargets="ResolveReferences">

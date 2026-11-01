@@ -9785,5 +9785,72 @@ def solidworks_cam_save_wall_lead_configuration(params: SolidWorksCamWallApplyAl
         return _tool_error(exc,params.response_format)
 
 
+
+class SolidWorksCamInprocessReaderInput(BaseInput):
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    expected_process_creation_time: float = Field(gt=0, allow_inf_nan=False, strict=True)
+    expected_document_path: str = Field(min_length=1, max_length=32767, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    host_dll_path: str = Field(min_length=1, max_length=32767, strict=True)
+    host_dll_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    host_tlb_path: str = Field(min_length=1, max_length=32767, strict=True)
+    host_tlb_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_host_module_version_id: str = Field(min_length=36, max_length=38, strict=True)
+    max_operations: int = Field(ge=1, le=64, strict=True)
+    max_tools: int = Field(ge=1, le=64, strict=True)
+    receipt_path: str = Field(min_length=1, max_length=32767, strict=True)
+    reference_receipt_path: Optional[str] = Field(default=None, min_length=1, max_length=32767, strict=True)
+    reference_receipt_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    nc_operation_ids: list[StrictInt] = Field(default_factory=list, max_length=8)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def bounded_reader_contract(self):
+        from scripts.sw_cam_inprocess_reader import validate_params
+        validate_params(self.model_dump(exclude={"response_format"}))
+        return self
+
+
+@mcp.tool(name="solidworks_cam_read_turn_snapshot",
+    title="Read In-Process TURN Snapshot",
+    annotations={"readOnlyHint":True,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_read_turn_snapshot(params: SolidWorksCamInprocessReaderInput) -> str:
+    """One bounded read through an already loaded host; no load, save or CAM mutation."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_inprocess_reader import read_turn_snapshot
+        return read_turn_snapshot(params.model_dump(exclude={"response_format"}))
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+class SolidWorksCamInprocessHostLoadInput(SolidWorksCamInprocessReaderInput):
+    acknowledge_host_load: bool = Field(strict=True)
+
+    @model_validator(mode="after")
+    def bounded_reader_contract(self):
+        from scripts.sw_cam_inprocess_reader import validate_params
+        validate_params(self.model_dump(exclude={"response_format", "acknowledge_host_load"}))
+        return self
+
+    @model_validator(mode="after")
+    def explicit_load_contract(self):
+        from scripts.sw_cam_inprocess_host_load import parameters
+        parameters(self.model_dump(exclude={"response_format"}))
+        return self
+
+
+@mcp.tool(name="solidworks_cam_load_reader_host",
+    title="Load Registered CAM Reader Host",
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_load_reader_host(params: SolidWorksCamInprocessHostLoadInput) -> str:
+    """One explicit LoadAddIn; verify owned connection and unchanged document. No CAM or Save."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        from scripts.sw_cam_inprocess_host_load import load_reader_host
+        return load_reader_host(params.model_dump(exclude={"response_format"}))
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+
 if __name__ == "__main__":
     main()

@@ -17,6 +17,8 @@ param(
     [string]$SolidWorksApiDir = $env:SOLIDWORKS_API_DIR,
     [string]$DotNetPath = "$env:LOCALAPPDATA\Microsoft\dotnet\dotnet.exe",
     [string]$Configuration = 'Release',
+    [string]$CamWorksTlbPath = $env:SOLIDWORKS_CAM_TLB,
+    [string]$NetFxToolsDir = '',
     [switch]$ElevatedChild
 )
 
@@ -53,10 +55,47 @@ function Resolve-SolidWorksApiDir {
 
 function Build-AddinHost {
     $apiDir = Resolve-SolidWorksApiDir
-    if (-not (Test-Path $DotNetPath)) {
-        throw "dotnet SDK not found: $DotNetPath"
+    $dotNetExe = $DotNetPath
+    if (-not (Test-Path -LiteralPath $dotNetExe)) {
+        $dotNetExe = (Get-Command dotnet.exe -ErrorAction Stop).Source
     }
-    & $DotNetPath build $ProjectPath -c $Configuration "-p:SolidWorksApiDir=$apiDir" --nologo
+    $camTlb = $CamWorksTlbPath
+    if (-not $camTlb) {
+        $solidWorksDir = Split-Path -Parent (Split-Path -Parent $apiDir)
+        $camTlb = Join-Path (Split-Path -Parent $solidWorksDir) 'SOLIDWORKS CAM\camworks.tlb'
+    }
+    if (-not (Test-Path -LiteralPath $camTlb -PathType Leaf)) { throw "CAM typelib not found: $camTlb" }
+    $toolsDir = $NetFxToolsDir
+    if (-not $toolsDir) { $toolsDir = Join-Path ${env:ProgramFiles(x86)} 'Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.8 Tools' }
+    $importer = Join-Path $toolsDir 'TlbImp.exe'
+    $strongName = Join-Path $toolsDir 'sn.exe'
+    foreach ($tool in @($importer, $strongName)) { if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) { throw "Required build tool missing: $tool" } }
+    $interopDir = Join-Path (Split-Path -Parent $ProjectPath) 'obj\cam-interop'
+    New-Item -ItemType Directory -Force -Path $interopDir | Out-Null
+    $interopPath = Join-Path $interopDir 'CamWorks.Interop.dll'
+    $keyPath = Join-Path $interopDir 'CamWorks.Interop.snk'
+    if (-not (Test-Path -LiteralPath $keyPath)) {
+        & $strongName -k $keyPath
+        if ($LASTEXITCODE -ne 0) { throw 'CAM interop development key creation failed.' }
+    }
+    $inputs = @{
+        typelib_sha256 = (Get-FileHash -LiteralPath $camTlb -Algorithm SHA256).Hash
+        importer_sha256 = (Get-FileHash -LiteralPath $importer -Algorithm SHA256).Hash
+        key_sha256 = (Get-FileHash -LiteralPath $keyPath -Algorithm SHA256).Hash
+    }
+    $manifestPath = Join-Path $interopDir 'build-inputs.json'
+    $reuse = $false
+    if ((Test-Path -LiteralPath $manifestPath) -and (Test-Path -LiteralPath $interopPath)) {
+        $old = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $reuse = $old.typelib_sha256 -eq $inputs.typelib_sha256 -and $old.importer_sha256 -eq $inputs.importer_sha256 -and $old.key_sha256 -eq $inputs.key_sha256 -and $old.output_sha256 -eq (Get-FileHash -LiteralPath $interopPath -Algorithm SHA256).Hash
+    }
+    if (-not $reuse) {
+        & $importer $camTlb "/out:$interopPath" /namespace:CamWorks.Interop /machine:X64 "/keyfile:$keyPath" /silent
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $interopPath)) { throw 'CAM interop import failed.' }
+        $inputs.output_sha256 = (Get-FileHash -LiteralPath $interopPath -Algorithm SHA256).Hash
+        $inputs | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    }
+    & $dotNetExe build $ProjectPath -c $Configuration "-p:SolidWorksApiDir=$apiDir" "-p:CamWorksInteropPath=$interopPath" --nologo
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $AssemblyPath)) {
         throw "Add-in build failed: $AssemblyPath"
     }
@@ -75,9 +114,9 @@ function Invoke-ElevatedSelf {
         param([string]$Value)
         return "'" + $Value.Replace("'", "''") + "'"
     }
-    $command = "& $(& $quote $PSCommandPath) -Action $ElevatedAction -RegistrationScope Machine -SolidWorksApiDir $(& $quote $apiDir) -DotNetPath $(& $quote $DotNetPath) -Configuration $(& $quote $Configuration) -ElevatedChild"
+    $command = "& $(& $quote $PSCommandPath) -Action $ElevatedAction -RegistrationScope Machine -SolidWorksApiDir $(& $quote $apiDir) -DotNetPath $(& $quote $DotNetPath) -Configuration $(& $quote $Configuration) -CamWorksTlbPath $(& $quote $CamWorksTlbPath) -NetFxToolsDir $(& $quote $NetFxToolsDir) -ElevatedChild"
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-    $process = Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList @(
+    $process = Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -Verb RunAs -ArgumentList @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded
     ) -Wait -PassThru
     if ($process.ExitCode -ne 0) {
