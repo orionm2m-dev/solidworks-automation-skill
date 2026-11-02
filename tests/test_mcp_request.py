@@ -393,3 +393,26 @@ def test_unrelated_host_response_history_is_not_current_envelope(tmp_path,fake_s
         'scope':'OTHER_REPORT','status':'observed','host_response':{'status':'error'}})
     code,report=run_batch(tmp_path,[{'name':'first'}])
     assert code==0 and report['status']=='success'
+
+
+@pytest.mark.parametrize("current", [
+    {"status": "uncertain", "model_saved": True, "readback_verified": False},
+    {"status": "review_required", "terminal_issue": {"type": "ValueError"}},
+    {"status": "observed", "cleanup_issue": {"type": "COMError"}},
+])
+def test_uncertain_or_terminal_failure_stops_next_native_command(tmp_path, fake_server, current):
+    fake_server[0].call_tool.return_value = CallToolResult(content=[], structuredContent=current)
+    code, report = run_batch(tmp_path, [{"name": "first"}, {"name": "second"}])
+    assert code == 1 and report["status"] == "error"
+    assert fake_server[0].call_tool.await_count == 1
+    assert report["results"][0]["outcome"]["may_continue"] is False
+
+
+def test_archived_uncertain_result_is_not_current_failure(tmp_path, fake_server):
+    fake_server[0].call_tool.return_value = CallToolResult(content=[], structuredContent={
+        "status": "observed", "terminal_issue": None, "cleanup_issue": None,
+        "history": [{"status": "uncertain", "terminal_issue": {"type": "ValueError"}}],
+    })
+    code, report = run_batch(tmp_path, [{"name": "first"}, {"name": "second"}])
+    assert code == 0 and report["status"] == "success"
+    assert fake_server[0].call_tool.await_count == 2

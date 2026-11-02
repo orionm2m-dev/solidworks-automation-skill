@@ -127,11 +127,11 @@ def _classify_result(payload: dict[str, Any]) -> dict[str, Any]:
     for value in _result_documents(payload):
         status = value.get("status")
         status = status.lower() if isinstance(status, str) else None
-        if value.get("isError") is True or status in {"error", "blocked", "failed", "timeout"}:
+        if value.get("isError") is True or status in {"error", "blocked", "failed", "timeout", "uncertain"}:
             return dict(status="error", may_continue=False,
                         reason="Structured isError=true" if value.get("isError") is True else f"Structured status={status}")
-        if value.get("error") or value.get("issue"):
-            return dict(status="error", may_continue=False, reason="Structured error/issue")
+        if any(value.get(key) for key in ("error", "issue", "terminal_issue", "cleanup_issue")):
+            return dict(status="error", may_continue=False, reason="Structured current error/issue")
         if status == "partial" or value.get("nc_parameters_complete") is False:
             outcome.update(status="partial", may_continue=False, reason="Structured result is partial")
         elif status == "review_required" and value.get("may_continue") is False and outcome["status"] == "success":
