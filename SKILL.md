@@ -44,6 +44,8 @@ metadata: { "openclaw": { "homepage": "https://github.com/wzyn20051216/solidwork
 
 Для продолжения рассчитанного фрезерного маршрута читать раздел [Completed route: CL, explicit save and WIP](references/solidworks-cam.md#completed-route-cl-explicit-save-and-wip-pilot). Он различает текущий сохранённый источник, исторические квитанции, движения, остаток и точность их представления.
 
+При разработке пакетного расчёта MILL читать [проверенный порядок GTP и сохранения](references/solidworks-cam.md#grouped-mill-generation-and-save): реальный guard, диагностический флаг фона и изменение подачи после смены инструмента.
+
 При добавлении локального CAM-инструмента применять [проверку профиля и сохранения](references/cam-local-taper-tool.md). До нативного запуска сопоставлять читатель со всеми типами фактического каталога; программные тесты на одном типе не подтверждают поддержку всей библиотеки.
 
 Для сохранённого пустого Finish и создания отдельной новой операции читать [cam-fresh-finish-definition](references/cam-fresh-finish-definition.md): определение операции, траектория и производственная проверка имеют разные границы; совместимость исторических зависимостей оформляется явно.
@@ -97,7 +99,7 @@ python SKILL_DIR/scripts/cad_studio.py doctor
 规则：
 
 1. 检测到缺少 `comtypes` / `win32com` / `pythoncom` 时，向用户弹出友好确认：
-   `检测到当前 Python 环境缺少 comtypes / win32com 库，是否授权 AI 自动为您配置本地环境？[Y/N]`
+   `检测到当前 Python 环境缺少 comtypes / win32com 库，是否授权自动为您配置本地环境？[Y/N]`
 2. 用户输入 `Y` / `yes` 后，代理可在本地 shell 中自动执行 `python -m pip install "pywin32>=305" "comtypes>=1.2.0"` 补齐依赖；用户拒绝时停止并给出手动安装命令。
 3. 检测不到 SolidWorks 安装或 COM 注册时，停止原生 SolidWorks 操作；若原生格式并非必需且 `fallbackPolicy=allow_open_formats`，继续执行无头开放格式后端，不要把整个任务误标为失败。
 

@@ -1,0 +1,2290 @@
+[
+  {
+    "role": "operation",
+    "interface": "ICWMillOperation",
+    "member": "GetMachiningDepth",
+    "argument": "feature",
+    "group": "all",
+    "signature": {
+      "name": "GetMachiningDepth",
+      "return_type": "System.Double",
+      "token": 100665444,
+      "interface": "ICWMillOperation",
+      "parameters": [
+        {
+          "is_in": true,
+          "is_out": false,
+          "type": "System.Object",
+          "name": "pFeat"
+        }
+      ],
+      "iid": "4eddca74-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWMillOperation3",
+    "member": "GetOverrideMachiningDepth",
+    "argument": "feature",
+    "group": "all",
+    "signature": {
+      "name": "GetOverrideMachiningDepth",
+      "return_type": "System.Boolean",
+      "token": 100665493,
+      "interface": "ICWMillOperation3",
+      "parameters": [
+        {
+          "is_in": true,
+          "is_out": false,
+          "type": "System.Object",
+          "name": "pFeat"
+        }
+      ],
+      "iid": "20dec8d6-8b4f-4876-90cb-f2a8d87a9d78"
+    }
+  },
+  {
+    "role": "toolpath",
+    "interface": "ICWToolpathParam",
+    "member": "GetToolpathParameters",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetToolpathParameters",
+      "return_type": "System.Void",
+      "token": 100672482,
+      "interface": "ICWToolpathParam",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obUseSetupDefForTopZ"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obIsMinZ"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obAdjustFeatHeight"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Int32&",
+          "name": "olFirstCutZType"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obUseSetupDefForBottomZ"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odMinimumZ"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odStartZ"
+        }
+      ],
+      "iid": "78297866-1ab2-4ee0-a1b9-02648983ec38"
+    }
+  },
+  {
+    "role": "origin",
+    "interface": "ICWPosition",
+    "member": "GetCoordinates",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetCoordinates",
+      "return_type": "System.Void",
+      "token": 100672358,
+      "interface": "ICWPosition",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "pPosX"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "pPosY"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "pPosZ"
+        }
+      ],
+      "iid": "e7807f27-04d2-48a3-91af-6db704dbcc9c"
+    }
+  },
+  {
+    "role": "axis",
+    "interface": "ICWUnitVector",
+    "member": "GetCoordinates",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetCoordinates",
+      "return_type": "System.Void",
+      "token": 100672376,
+      "interface": "ICWUnitVector",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "pPosX"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "pPosY"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "pPosZ"
+        }
+      ],
+      "iid": "51e2211d-ed7a-4ee4-942f-2850614ba0f3"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetEntryExitType",
+    "argument": "feature",
+    "group": "rough",
+    "signature": {
+      "name": "GetEntryExitType",
+      "return_type": "System.Int32",
+      "token": 100666948,
+      "interface": "ICWRghMillOp",
+      "parameters": [
+        {
+          "is_in": true,
+          "is_out": false,
+          "type": "System.Object",
+          "name": "pDispMillFeat"
+        }
+      ],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetEntryHoleAttr",
+    "argument": "feature",
+    "group": "rough",
+    "signature": {
+      "name": "GetEntryHoleAttr",
+      "return_type": "System.String",
+      "token": 100666949,
+      "interface": "ICWRghMillOp",
+      "parameters": [
+        {
+          "is_in": true,
+          "is_out": false,
+          "type": "System.Object",
+          "name": "pDispMillFeat"
+        }
+      ],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetRampAngle",
+    "argument": "feature",
+    "group": "rough",
+    "signature": {
+      "name": "GetRampAngle",
+      "return_type": "System.Double",
+      "token": 100666950,
+      "interface": "ICWRghMillOp",
+      "parameters": [
+        {
+          "is_in": true,
+          "is_out": false,
+          "type": "System.Object",
+          "name": "pDispMillFeat"
+        }
+      ],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetSpiralRadius",
+    "argument": "feature",
+    "group": "rough",
+    "signature": {
+      "name": "GetSpiralRadius",
+      "return_type": "System.Double",
+      "token": 100666951,
+      "interface": "ICWRghMillOp",
+      "parameters": [
+        {
+          "is_in": true,
+          "is_out": false,
+          "type": "System.Object",
+          "name": "pDispMillFeat"
+        }
+      ],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetSpiralPitch",
+    "argument": "feature",
+    "group": "rough",
+    "signature": {
+      "name": "GetSpiralPitch",
+      "return_type": "System.Double",
+      "token": 100666952,
+      "interface": "ICWRghMillOp",
+      "parameters": [
+        {
+          "is_in": true,
+          "is_out": false,
+          "type": "System.Object",
+          "name": "pDispMillFeat"
+        }
+      ],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetHoleCentreEntry",
+    "argument": "feature",
+    "group": "rough",
+    "signature": {
+      "name": "GetHoleCentreEntry",
+      "return_type": "System.Boolean",
+      "token": 100666953,
+      "interface": "ICWRghMillOp",
+      "parameters": [
+        {
+          "is_in": true,
+          "is_out": false,
+          "type": "System.Object",
+          "name": "pDispMillFeat"
+        }
+      ],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetEntryLengthAngle",
+    "argument": "feature",
+    "group": "rough",
+    "signature": {
+      "name": "GetEntryLengthAngle",
+      "return_type": "System.Boolean",
+      "token": 100666954,
+      "interface": "ICWRghMillOp",
+      "parameters": [
+        {
+          "is_in": true,
+          "is_out": false,
+          "type": "System.Object",
+          "name": "pDispMillFeat"
+        }
+      ],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetEntryLength",
+    "argument": "feature",
+    "group": "rough",
+    "signature": {
+      "name": "GetEntryLength",
+      "return_type": "System.Double",
+      "token": 100666955,
+      "interface": "ICWRghMillOp",
+      "parameters": [
+        {
+          "is_in": true,
+          "is_out": false,
+          "type": "System.Object",
+          "name": "pDispMillFeat"
+        }
+      ],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetEntryAngle",
+    "argument": "feature",
+    "group": "rough",
+    "signature": {
+      "name": "GetEntryAngle",
+      "return_type": "System.Double",
+      "token": 100666956,
+      "interface": "ICWRghMillOp",
+      "parameters": [
+        {
+          "is_in": true,
+          "is_out": false,
+          "type": "System.Object",
+          "name": "pDispMillFeat"
+        }
+      ],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetAutoCorrectEntryLengthAngle",
+    "argument": "feature",
+    "group": "rough",
+    "signature": {
+      "name": "GetAutoCorrectEntryLengthAngle",
+      "return_type": "System.Boolean",
+      "token": 100666957,
+      "interface": "ICWRghMillOp",
+      "parameters": [
+        {
+          "is_in": true,
+          "is_out": false,
+          "type": "System.Object",
+          "name": "pDispMillFeat"
+        }
+      ],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetEntryStartPtX",
+    "argument": "feature",
+    "group": "rough",
+    "signature": {
+      "name": "GetEntryStartPtX",
+      "return_type": "System.Object",
+      "token": 100666958,
+      "interface": "ICWRghMillOp",
+      "parameters": [
+        {
+          "is_in": true,
+          "is_out": false,
+          "type": "System.Object",
+          "name": "pDispMillFeat"
+        }
+      ],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetEntryStartPtY",
+    "argument": "feature",
+    "group": "rough",
+    "signature": {
+      "name": "GetEntryStartPtY",
+      "return_type": "System.Object",
+      "token": 100666959,
+      "interface": "ICWRghMillOp",
+      "parameters": [
+        {
+          "is_in": true,
+          "is_out": false,
+          "type": "System.Object",
+          "name": "pDispMillFeat"
+        }
+      ],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "DepthMethod",
+    "argument": "none",
+    "group": "rough",
+    "signature": {
+      "name": "get_DepthMethod",
+      "return_type": "System.Int32",
+      "token": 100666891,
+      "interface": "ICWRghMillOp",
+      "parameters": [],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "DepthAllow",
+    "argument": "none",
+    "group": "rough",
+    "signature": {
+      "name": "get_DepthAllow",
+      "return_type": "System.Double",
+      "token": 100666893,
+      "interface": "ICWRghMillOp",
+      "parameters": [],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "FirstDepthAmt",
+    "argument": "none",
+    "group": "rough",
+    "signature": {
+      "name": "get_FirstDepthAmt",
+      "return_type": "System.Double",
+      "token": 100666895,
+      "interface": "ICWRghMillOp",
+      "parameters": [],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "SbsqDepthAmt",
+    "argument": "none",
+    "group": "rough",
+    "signature": {
+      "name": "get_SbsqDepthAmt",
+      "return_type": "System.Double",
+      "token": 100666897,
+      "interface": "ICWRghMillOp",
+      "parameters": [],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "FinCutAmt",
+    "argument": "none",
+    "group": "rough",
+    "signature": {
+      "name": "get_FinCutAmt",
+      "return_type": "System.Double",
+      "token": 100666899,
+      "interface": "ICWRghMillOp",
+      "parameters": [],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetStartDepth",
+    "argument": "none",
+    "group": "rough",
+    "signature": {
+      "name": "GetStartDepth",
+      "return_type": "System.Void",
+      "token": 100666971,
+      "interface": "ICWRghMillOp",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obPercent"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odStartDepth"
+        }
+      ],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetSubsequentDepthAmount",
+    "argument": "none",
+    "group": "rough",
+    "signature": {
+      "name": "GetSubsequentDepthAmount",
+      "return_type": "System.Void",
+      "token": 100666973,
+      "interface": "ICWRghMillOp",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obPercent"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odSbsqDepthAmt"
+        }
+      ],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "PocketMethod",
+    "argument": "none",
+    "group": "rough",
+    "signature": {
+      "name": "get_PocketMethod",
+      "return_type": "System.Int32",
+      "token": 100666869,
+      "interface": "ICWRghMillOp",
+      "parameters": [],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "SideAllow",
+    "argument": "none",
+    "group": "rough",
+    "signature": {
+      "name": "get_SideAllow",
+      "return_type": "System.Double",
+      "token": 100666905,
+      "interface": "ICWRghMillOp",
+      "parameters": [],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetStepOver",
+    "argument": "none",
+    "group": "rough",
+    "signature": {
+      "name": "GetStepOver",
+      "return_type": "System.Void",
+      "token": 100666907,
+      "interface": "ICWRghMillOp",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "bPercent"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "pVal"
+        }
+      ],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetZAllowance",
+    "argument": "none",
+    "group": "rough",
+    "signature": {
+      "name": "GetZAllowance",
+      "return_type": "System.Double",
+      "token": 100666942,
+      "interface": "ICWRghMillOp",
+      "parameters": [],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetContainType",
+    "argument": "none",
+    "group": "rough",
+    "signature": {
+      "name": "GetContainType",
+      "return_type": "System.Int32",
+      "token": 100666944,
+      "interface": "ICWRghMillOp",
+      "parameters": [],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetContainAllowance",
+    "argument": "none",
+    "group": "rough",
+    "signature": {
+      "name": "GetContainAllowance",
+      "return_type": "System.Double",
+      "token": 100666946,
+      "interface": "ICWRghMillOp",
+      "parameters": [],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetXYClearance",
+    "argument": "none",
+    "group": "rough",
+    "signature": {
+      "name": "GetXYClearance",
+      "return_type": "System.Double",
+      "token": 100666969,
+      "interface": "ICWRghMillOp",
+      "parameters": [],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWRghMillOp",
+    "member": "GetToolDiameterPercent",
+    "argument": "feature",
+    "group": "rough",
+    "signature": {
+      "name": "GetToolDiameterPercent",
+      "return_type": "System.Void",
+      "token": 100666975,
+      "interface": "ICWRghMillOp",
+      "parameters": [
+        {
+          "is_in": true,
+          "is_out": false,
+          "type": "System.Object",
+          "name": "pDispMillFeat"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odToolDiameterPercent"
+        }
+      ],
+      "iid": "4eddca80-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp",
+    "member": "SideAllow",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_SideAllow",
+      "return_type": "System.Double",
+      "token": 100666258,
+      "interface": "ICWFinishMillOp",
+      "parameters": [],
+      "iid": "4eddca7e-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp",
+    "member": "SideCutAmt",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_SideCutAmt",
+      "return_type": "System.Double",
+      "token": 100666260,
+      "interface": "ICWFinishMillOp",
+      "parameters": [],
+      "iid": "4eddca7e-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp",
+    "member": "FinalSideCutAmt",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_FinalSideCutAmt",
+      "return_type": "System.Double",
+      "token": 100666262,
+      "interface": "ICWFinishMillOp",
+      "parameters": [],
+      "iid": "4eddca7e-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp",
+    "member": "SpringPass",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_SpringPass",
+      "return_type": "System.Int32",
+      "token": 100666264,
+      "interface": "ICWFinishMillOp",
+      "parameters": [],
+      "iid": "4eddca7e-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp",
+    "member": "DepthMethod",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_DepthMethod",
+      "return_type": "System.Int32",
+      "token": 100666272,
+      "interface": "ICWFinishMillOp",
+      "parameters": [],
+      "iid": "4eddca7e-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp",
+    "member": "Ramp",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_Ramp",
+      "return_type": "System.Int32",
+      "token": 100666274,
+      "interface": "ICWFinishMillOp",
+      "parameters": [],
+      "iid": "4eddca7e-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp",
+    "member": "DepthAllow",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_DepthAllow",
+      "return_type": "System.Double",
+      "token": 100666276,
+      "interface": "ICWFinishMillOp",
+      "parameters": [],
+      "iid": "4eddca7e-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp",
+    "member": "FirstDepthCut",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_FirstDepthCut",
+      "return_type": "System.Double",
+      "token": 100666278,
+      "interface": "ICWFinishMillOp",
+      "parameters": [],
+      "iid": "4eddca7e-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp",
+    "member": "MaxDepthCut",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_MaxDepthCut",
+      "return_type": "System.Double",
+      "token": 100666280,
+      "interface": "ICWFinishMillOp",
+      "parameters": [],
+      "iid": "4eddca7e-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp",
+    "member": "FinalDepthCut",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_FinalDepthCut",
+      "return_type": "System.Double",
+      "token": 100666282,
+      "interface": "ICWFinishMillOp",
+      "parameters": [],
+      "iid": "4eddca7e-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp",
+    "member": "DepthAngle",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_DepthAngle",
+      "return_type": "System.Double",
+      "token": 100666284,
+      "interface": "ICWFinishMillOp",
+      "parameters": [],
+      "iid": "4eddca7e-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp",
+    "member": "CleanUpPassOpt",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_CleanUpPassOpt",
+      "return_type": "System.Boolean",
+      "token": 100666286,
+      "interface": "ICWFinishMillOp",
+      "parameters": [],
+      "iid": "4eddca7e-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp",
+    "member": "CutMethod",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_CutMethod",
+      "return_type": "System.Int32",
+      "token": 100666298,
+      "interface": "ICWFinishMillOp",
+      "parameters": [],
+      "iid": "4eddca7e-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp",
+    "member": "BottomFinOpt",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_BottomFinOpt",
+      "return_type": "System.Boolean",
+      "token": 100666300,
+      "interface": "ICWFinishMillOp",
+      "parameters": [],
+      "iid": "4eddca7e-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp",
+    "member": "PerimeterPassType",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_PerimeterPassType",
+      "return_type": "System.Int32",
+      "token": 100666302,
+      "interface": "ICWFinishMillOp",
+      "parameters": [],
+      "iid": "4eddca7e-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp",
+    "member": "BottomFinMethod",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_BottomFinMethod",
+      "return_type": "System.Int32",
+      "token": 100666304,
+      "interface": "ICWFinishMillOp",
+      "parameters": [],
+      "iid": "4eddca7e-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp",
+    "member": "OverridePrevAllow",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_OverridePrevAllow",
+      "return_type": "System.Boolean",
+      "token": 100666308,
+      "interface": "ICWFinishMillOp",
+      "parameters": [],
+      "iid": "4eddca7e-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp2",
+    "member": "GetPreviousAllowance",
+    "argument": "feature",
+    "group": "finish",
+    "signature": {
+      "name": "GetPreviousAllowance",
+      "return_type": "System.Double",
+      "token": 100666366,
+      "interface": "ICWFinishMillOp2",
+      "parameters": [
+        {
+          "is_in": true,
+          "is_out": false,
+          "type": "System.Object",
+          "name": "pFeatDisp"
+        }
+      ],
+      "iid": "d8284255-f7d4-4837-9917-ac97b2d8c7ec"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp3",
+    "member": "GetZAllowance",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetZAllowance",
+      "return_type": "System.Double",
+      "token": 100666471,
+      "interface": "ICWFinishMillOp3",
+      "parameters": [],
+      "iid": "86b3cebb-97d6-461c-9a0d-e1047d826fbc"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp3",
+    "member": "GetContainType",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetContainType",
+      "return_type": "System.Int32",
+      "token": 100666473,
+      "interface": "ICWFinishMillOp3",
+      "parameters": [],
+      "iid": "86b3cebb-97d6-461c-9a0d-e1047d826fbc"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp3",
+    "member": "GetContainAllowance",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetContainAllowance",
+      "return_type": "System.Double",
+      "token": 100666475,
+      "interface": "ICWFinishMillOp3",
+      "parameters": [],
+      "iid": "86b3cebb-97d6-461c-9a0d-e1047d826fbc"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp3",
+    "member": "GetTypeOfFirstCutZ",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetTypeOfFirstCutZ",
+      "return_type": "System.Int32",
+      "token": 100666458,
+      "interface": "ICWFinishMillOp3",
+      "parameters": [],
+      "iid": "86b3cebb-97d6-461c-9a0d-e1047d826fbc"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp3",
+    "member": "GetIsChamferMachining",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetIsChamferMachining",
+      "return_type": "System.Void",
+      "token": 100666487,
+      "interface": "ICWFinishMillOp3",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obIsChamferMach"
+        }
+      ],
+      "iid": "86b3cebb-97d6-461c-9a0d-e1047d826fbc"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp3",
+    "member": "GetChamferLength",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetChamferLength",
+      "return_type": "System.Double",
+      "token": 100666489,
+      "interface": "ICWFinishMillOp3",
+      "parameters": [],
+      "iid": "86b3cebb-97d6-461c-9a0d-e1047d826fbc"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp3",
+    "member": "GetFirstDepthCut",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetFirstDepthCut",
+      "return_type": "System.Void",
+      "token": 100666495,
+      "interface": "ICWFinishMillOp3",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odFirstDepthCut"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obPercent"
+        }
+      ],
+      "iid": "86b3cebb-97d6-461c-9a0d-e1047d826fbc"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp3",
+    "member": "GetMaxDepthCut",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetMaxDepthCut",
+      "return_type": "System.Void",
+      "token": 100666497,
+      "interface": "ICWFinishMillOp3",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odMaxDepthCut"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obPercent"
+        }
+      ],
+      "iid": "86b3cebb-97d6-461c-9a0d-e1047d826fbc"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp3",
+    "member": "GetSideCutAmt",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetSideCutAmt",
+      "return_type": "System.Void",
+      "token": 100666481,
+      "interface": "ICWFinishMillOp3",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "pVal"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obPercent"
+        }
+      ],
+      "iid": "86b3cebb-97d6-461c-9a0d-e1047d826fbc"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp3",
+    "member": "LeadInOutApplyToAll",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_LeadInOutApplyToAll",
+      "return_type": "System.Boolean",
+      "token": 100666532,
+      "interface": "ICWFinishMillOp3",
+      "parameters": [],
+      "iid": "86b3cebb-97d6-461c-9a0d-e1047d826fbc"
+    }
+  },
+  {
+    "role": "lead_out",
+    "interface": "ICWLeadInOut",
+    "member": "GetIsSameLeadinout",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetIsSameLeadinout",
+      "return_type": "System.Void",
+      "token": 100669706,
+      "interface": "ICWLeadInOut",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obIsSameLeadinout"
+        }
+      ],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_in",
+    "interface": "ICWLeadInOut",
+    "member": "ArcAngle",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_ArcAngle",
+      "return_type": "System.Double",
+      "token": 100669692,
+      "interface": "ICWLeadInOut",
+      "parameters": [],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_in",
+    "interface": "ICWLeadInOut",
+    "member": "GetArcRadius2",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetArcRadius2",
+      "return_type": "System.Void",
+      "token": 100669710,
+      "interface": "ICWLeadInOut",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odArcRadius"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obPercent"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odIncremental"
+        }
+      ],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_in",
+    "interface": "ICWLeadInOut",
+    "member": "GetLeadAmt2",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetLeadAmt2",
+      "return_type": "System.Void",
+      "token": 100669714,
+      "interface": "ICWLeadInOut",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odLeadAmt"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obPercent"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odIncremental"
+        }
+      ],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_in",
+    "interface": "ICWLeadInOut",
+    "member": "GetLeadOverlap2",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetLeadOverlap2",
+      "return_type": "System.Void",
+      "token": 100669712,
+      "interface": "ICWLeadInOut",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odLeadOverlap"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obPercent"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odIncremental"
+        }
+      ],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_out",
+    "interface": "ICWLeadInOut",
+    "member": "ArcAngle",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_ArcAngle",
+      "return_type": "System.Double",
+      "token": 100669692,
+      "interface": "ICWLeadInOut",
+      "parameters": [],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_out",
+    "interface": "ICWLeadInOut",
+    "member": "GetArcRadius2",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetArcRadius2",
+      "return_type": "System.Void",
+      "token": 100669710,
+      "interface": "ICWLeadInOut",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odArcRadius"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obPercent"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odIncremental"
+        }
+      ],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_out",
+    "interface": "ICWLeadInOut",
+    "member": "GetLeadAmt2",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetLeadAmt2",
+      "return_type": "System.Void",
+      "token": 100669714,
+      "interface": "ICWLeadInOut",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odLeadAmt"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obPercent"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odIncremental"
+        }
+      ],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_out",
+    "interface": "ICWLeadInOut",
+    "member": "GetLeadOverlap2",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetLeadOverlap2",
+      "return_type": "System.Void",
+      "token": 100669712,
+      "interface": "ICWLeadInOut",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odLeadOverlap"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obPercent"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odIncremental"
+        }
+      ],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp3",
+    "member": "GougeCheck",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_GougeCheck",
+      "return_type": "System.Boolean",
+      "token": 100666534,
+      "interface": "ICWFinishMillOp3",
+      "parameters": [],
+      "iid": "86b3cebb-97d6-461c-9a0d-e1047d826fbc"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp3",
+    "member": "GetIsSingleCutDepth",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetIsSingleCutDepth",
+      "return_type": "System.Void",
+      "token": 100666505,
+      "interface": "ICWFinishMillOp3",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obIsSingleCutDepth"
+        }
+      ],
+      "iid": "86b3cebb-97d6-461c-9a0d-e1047d826fbc"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp",
+    "member": "DepthProcessOpt",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_DepthProcessOpt",
+      "return_type": "System.Int32",
+      "token": 100666294,
+      "interface": "ICWFinishMillOp",
+      "parameters": [],
+      "iid": "4eddca7e-325a-11d6-a9a7-00062999e55f"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp3",
+    "member": "ContourMillRestMachMethod",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_ContourMillRestMachMethod",
+      "return_type": "System.Int32",
+      "token": 100666547,
+      "interface": "ICWFinishMillOp3",
+      "parameters": [],
+      "iid": "86b3cebb-97d6-461c-9a0d-e1047d826fbc"
+    }
+  },
+  {
+    "role": "operation",
+    "interface": "ICWFinishMillOp3",
+    "member": "GetToolRadiusLeadInLeadOut",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetToolRadiusLeadInLeadOut",
+      "return_type": "System.Boolean",
+      "token": 100666528,
+      "interface": "ICWFinishMillOp3",
+      "parameters": [],
+      "iid": "86b3cebb-97d6-461c-9a0d-e1047d826fbc"
+    }
+  },
+  {
+    "role": "lead_in",
+    "interface": "ICWLeadInOut",
+    "member": "LeadType",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_LeadType",
+      "return_type": "System.Int32",
+      "token": 100669682,
+      "interface": "ICWLeadInOut",
+      "parameters": [],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_in",
+    "interface": "ICWLeadInOut",
+    "member": "LeadAngle",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_LeadAngle",
+      "return_type": "System.Double",
+      "token": 100669686,
+      "interface": "ICWLeadInOut",
+      "parameters": [],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_in",
+    "interface": "ICWLeadInOut",
+    "member": "SidePassType",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_SidePassType",
+      "return_type": "System.Int32",
+      "token": 100669694,
+      "interface": "ICWLeadInOut",
+      "parameters": [],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_in",
+    "interface": "ICWLeadInOut",
+    "member": "CutDepthType",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_CutDepthType",
+      "return_type": "System.Int32",
+      "token": 100669696,
+      "interface": "ICWLeadInOut",
+      "parameters": [],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_in",
+    "interface": "ICWLeadInOut",
+    "member": "StartAngle",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_StartAngle",
+      "return_type": "System.Double",
+      "token": 100669716,
+      "interface": "ICWLeadInOut",
+      "parameters": [],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_in",
+    "interface": "ICWLeadInOut",
+    "member": "GetIsSameLeadinout",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetIsSameLeadinout",
+      "return_type": "System.Void",
+      "token": 100669706,
+      "interface": "ICWLeadInOut",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obIsSameLeadinout"
+        }
+      ],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_in",
+    "interface": "ICWLeadInOut",
+    "member": "GetFeedRate",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetFeedRate",
+      "return_type": "System.Void",
+      "token": 100669708,
+      "interface": "ICWLeadInOut",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odFeedRatePercent"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obPercent"
+        }
+      ],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_out",
+    "interface": "ICWLeadInOut",
+    "member": "LeadType",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_LeadType",
+      "return_type": "System.Int32",
+      "token": 100669682,
+      "interface": "ICWLeadInOut",
+      "parameters": [],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_out",
+    "interface": "ICWLeadInOut",
+    "member": "LeadAngle",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_LeadAngle",
+      "return_type": "System.Double",
+      "token": 100669686,
+      "interface": "ICWLeadInOut",
+      "parameters": [],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_out",
+    "interface": "ICWLeadInOut",
+    "member": "SidePassType",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_SidePassType",
+      "return_type": "System.Int32",
+      "token": 100669694,
+      "interface": "ICWLeadInOut",
+      "parameters": [],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_out",
+    "interface": "ICWLeadInOut",
+    "member": "CutDepthType",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_CutDepthType",
+      "return_type": "System.Int32",
+      "token": 100669696,
+      "interface": "ICWLeadInOut",
+      "parameters": [],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_out",
+    "interface": "ICWLeadInOut",
+    "member": "StartAngle",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "get_StartAngle",
+      "return_type": "System.Double",
+      "token": 100669716,
+      "interface": "ICWLeadInOut",
+      "parameters": [],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "lead_out",
+    "interface": "ICWLeadInOut",
+    "member": "GetFeedRate",
+    "argument": "none",
+    "group": "finish",
+    "signature": {
+      "name": "GetFeedRate",
+      "return_type": "System.Void",
+      "token": 100669708,
+      "interface": "ICWLeadInOut",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "odFeedRatePercent"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "obPercent"
+        }
+      ],
+      "iid": "6da10a61-7c7f-11d6-a9ef-00062999e55f"
+    }
+  },
+  {
+    "role": "nc",
+    "interface": "ICWNCParam3",
+    "member": "FeedPlaneType",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "get_FeedPlaneType",
+      "return_type": "System.Int32",
+      "token": 100665681,
+      "interface": "ICWNCParam3",
+      "parameters": [],
+      "iid": "32880b43-2e9a-4143-9c71-8053a1336ca5"
+    }
+  },
+  {
+    "role": "nc",
+    "interface": "ICWNCParam3",
+    "member": "FeedPlaneDistance",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "get_FeedPlaneDistance",
+      "return_type": "System.Double",
+      "token": 100665683,
+      "interface": "ICWNCParam3",
+      "parameters": [],
+      "iid": "32880b43-2e9a-4143-9c71-8053a1336ca5"
+    }
+  },
+  {
+    "role": "nc",
+    "interface": "ICWNCParam4",
+    "member": "GetUseCurrentMachiningDepthForFeedPlane",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetUseCurrentMachiningDepthForFeedPlane",
+      "return_type": "System.Boolean",
+      "token": 100665739,
+      "interface": "ICWNCParam4",
+      "parameters": [],
+      "iid": "3dc6fb05-9c9f-42a4-8532-f1b7892cf3aa"
+    }
+  },
+  {
+    "role": "nc",
+    "interface": "ICWNCParam",
+    "member": "GetClrPlaneUseSetupStatus",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetClrPlaneUseSetupStatus",
+      "return_type": "System.Boolean",
+      "token": 100665623,
+      "interface": "ICWNCParam",
+      "parameters": [],
+      "iid": "7532c780-3bc4-11d6-a9af-00062999e55f"
+    }
+  },
+  {
+    "role": "nc",
+    "interface": "ICWNCParam",
+    "member": "GetRpdPlaneUseSetupStatus",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetRpdPlaneUseSetupStatus",
+      "return_type": "System.Boolean",
+      "token": 100665625,
+      "interface": "ICWNCParam",
+      "parameters": [],
+      "iid": "7532c780-3bc4-11d6-a9af-00062999e55f"
+    }
+  },
+  {
+    "role": "nc",
+    "interface": "ICWNCParam",
+    "member": "GetSpndlSpeed",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetSpndlSpeed",
+      "return_type": "System.Double",
+      "token": 100665617,
+      "interface": "ICWNCParam",
+      "parameters": [],
+      "iid": "7532c780-3bc4-11d6-a9af-00062999e55f"
+    }
+  },
+  {
+    "role": "nc",
+    "interface": "ICWNCParam",
+    "member": "GetTlpComp",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetTlpComp",
+      "return_type": "System.Int32",
+      "token": 100665627,
+      "interface": "ICWNCParam",
+      "parameters": [],
+      "iid": "7532c780-3bc4-11d6-a9af-00062999e55f"
+    }
+  },
+  {
+    "role": "nc",
+    "interface": "ICWNCParam",
+    "member": "GetCNCComp",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetCNCComp",
+      "return_type": "System.Int32",
+      "token": 100665629,
+      "interface": "ICWNCParam",
+      "parameters": [],
+      "iid": "7532c780-3bc4-11d6-a9af-00062999e55f"
+    }
+  },
+  {
+    "role": "nc",
+    "interface": "ICWNCParam",
+    "member": "GetRetractType",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetRetractType",
+      "return_type": "System.Int32",
+      "token": 100665631,
+      "interface": "ICWNCParam",
+      "parameters": [],
+      "iid": "7532c780-3bc4-11d6-a9af-00062999e55f"
+    }
+  },
+  {
+    "role": "nc",
+    "interface": "ICWNCParam2",
+    "member": "XYFeed",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "get_XYFeed",
+      "return_type": "System.Double",
+      "token": 100665655,
+      "interface": "ICWNCParam2",
+      "parameters": [],
+      "iid": "7b7640fd-f53e-4b98-a073-eb4e6992e802"
+    }
+  },
+  {
+    "role": "nc",
+    "interface": "ICWNCParam4",
+    "member": "GetZFeedrate2",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetZFeedrate2",
+      "return_type": "System.Void",
+      "token": 100665748,
+      "interface": "ICWNCParam4",
+      "parameters": [
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Double&",
+          "name": "dZFeedrate"
+        },
+        {
+          "is_in": false,
+          "is_out": true,
+          "type": "System.Boolean&",
+          "name": "bPercentage"
+        }
+      ],
+      "iid": "3dc6fb05-9c9f-42a4-8532-f1b7892cf3aa"
+    }
+  },
+  {
+    "role": "setup",
+    "interface": "ICWOpSetup3",
+    "member": "ClearancePlaneType",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "get_ClearancePlaneType",
+      "return_type": "System.Int32",
+      "token": 100665088,
+      "interface": "ICWOpSetup3",
+      "parameters": [],
+      "iid": "ce864dca-ed48-41b7-b38d-3e56d63b372f"
+    }
+  },
+  {
+    "role": "setup",
+    "interface": "ICWOpSetup3",
+    "member": "ClearancePlaneDistance",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "get_ClearancePlaneDistance",
+      "return_type": "System.Double",
+      "token": 100665090,
+      "interface": "ICWOpSetup3",
+      "parameters": [],
+      "iid": "ce864dca-ed48-41b7-b38d-3e56d63b372f"
+    }
+  },
+  {
+    "role": "setup",
+    "interface": "ICWOpSetup3",
+    "member": "RapidPlaneType",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "get_RapidPlaneType",
+      "return_type": "System.Int32",
+      "token": 100665084,
+      "interface": "ICWOpSetup3",
+      "parameters": [],
+      "iid": "ce864dca-ed48-41b7-b38d-3e56d63b372f"
+    }
+  },
+  {
+    "role": "setup",
+    "interface": "ICWOpSetup3",
+    "member": "RapidPlaneDistance",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "get_RapidPlaneDistance",
+      "return_type": "System.Double",
+      "token": 100665086,
+      "interface": "ICWOpSetup3",
+      "parameters": [],
+      "iid": "ce864dca-ed48-41b7-b38d-3e56d63b372f"
+    }
+  },
+  {
+    "role": "tool",
+    "interface": "ICWMillTool",
+    "member": "MillToolType",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "get_MillToolType",
+      "return_type": "System.Int32",
+      "token": 100670420,
+      "interface": "ICWMillTool",
+      "parameters": [],
+      "iid": "7532c746-3bc4-11d6-a9af-00062999e55f"
+    }
+  },
+  {
+    "role": "tool",
+    "interface": "ICWMillTool",
+    "member": "MillToolSubType",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "get_MillToolSubType",
+      "return_type": "System.Int32",
+      "token": 100670422,
+      "interface": "ICWMillTool",
+      "parameters": [],
+      "iid": "7532c746-3bc4-11d6-a9af-00062999e55f"
+    }
+  },
+  {
+    "role": "tool",
+    "interface": "ICWMillTool",
+    "member": "EffCutlength",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "get_EffCutlength",
+      "return_type": "System.Double",
+      "token": 100670428,
+      "interface": "ICWMillTool",
+      "parameters": [],
+      "iid": "7532c746-3bc4-11d6-a9af-00062999e55f"
+    }
+  },
+  {
+    "role": "tool",
+    "interface": "ICWMillTool",
+    "member": "ShankDia",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "get_ShankDia",
+      "return_type": "System.Double",
+      "token": 100670424,
+      "interface": "ICWMillTool",
+      "parameters": [],
+      "iid": "7532c746-3bc4-11d6-a9af-00062999e55f"
+    }
+  },
+  {
+    "role": "tool",
+    "interface": "ICWMillTool",
+    "member": "OverallLen",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "get_OverallLen",
+      "return_type": "System.Double",
+      "token": 100670430,
+      "interface": "ICWMillTool",
+      "parameters": [],
+      "iid": "7532c746-3bc4-11d6-a9af-00062999e55f"
+    }
+  },
+  {
+    "role": "tool",
+    "interface": "ICWMillTool",
+    "member": "EndRadius",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "get_EndRadius",
+      "return_type": "System.Double",
+      "token": 100670426,
+      "interface": "ICWMillTool",
+      "parameters": [],
+      "iid": "7532c746-3bc4-11d6-a9af-00062999e55f"
+    }
+  },
+  {
+    "role": "tool",
+    "interface": "ICWMillTool",
+    "member": "NoOfFlutes",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "get_NoOfFlutes",
+      "return_type": "System.Int32",
+      "token": 100670432,
+      "interface": "ICWMillTool",
+      "parameters": [],
+      "iid": "7532c746-3bc4-11d6-a9af-00062999e55f"
+    }
+  },
+  {
+    "role": "tool",
+    "interface": "ICWMillTool",
+    "member": "ShoulderLength",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "get_ShoulderLength",
+      "return_type": "System.Double",
+      "token": 100670434,
+      "interface": "ICWMillTool",
+      "parameters": [],
+      "iid": "7532c746-3bc4-11d6-a9af-00062999e55f"
+    }
+  },
+  {
+    "role": "tool",
+    "interface": "ICWMillTool",
+    "member": "MillToolShankType",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "get_MillToolShankType",
+      "return_type": "System.Int32",
+      "token": 100670447,
+      "interface": "ICWMillTool",
+      "parameters": [],
+      "iid": "7532c746-3bc4-11d6-a9af-00062999e55f"
+    }
+  },
+  {
+    "role": "tool",
+    "interface": "ICWMillTool",
+    "member": "ShoulderDia",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "get_ShoulderDia",
+      "return_type": "System.Double",
+      "token": 100670449,
+      "interface": "ICWMillTool",
+      "parameters": [],
+      "iid": "7532c746-3bc4-11d6-a9af-00062999e55f"
+    }
+  },
+  {
+    "role": "tool",
+    "interface": "ICWMillTool",
+    "member": "ShankLength",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "get_ShankLength",
+      "return_type": "System.Double",
+      "token": 100670451,
+      "interface": "ICWMillTool",
+      "parameters": [],
+      "iid": "7532c746-3bc4-11d6-a9af-00062999e55f"
+    }
+  },
+  {
+    "role": "holder",
+    "interface": "ICWMillToolHolder",
+    "member": "GetHolderShape",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetHolderShape",
+      "return_type": "System.String",
+      "token": 100671838,
+      "interface": "ICWMillToolHolder",
+      "parameters": [],
+      "iid": "b4b1751e-af20-491c-b06d-7cca7242aed2"
+    }
+  },
+  {
+    "role": "holder",
+    "interface": "ICWMillToolHolder",
+    "member": "GetHolderId",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetHolderId",
+      "return_type": "System.Int32",
+      "token": 100671836,
+      "interface": "ICWMillToolHolder",
+      "parameters": [],
+      "iid": "b4b1751e-af20-491c-b06d-7cca7242aed2"
+    }
+  },
+  {
+    "role": "holder",
+    "interface": "ICWMillToolHolder",
+    "member": "GetHolderNumber",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetHolderNumber",
+      "return_type": "System.String",
+      "token": 100671837,
+      "interface": "ICWMillToolHolder",
+      "parameters": [],
+      "iid": "b4b1751e-af20-491c-b06d-7cca7242aed2"
+    }
+  },
+  {
+    "role": "holder",
+    "interface": "ICWMillToolHolder",
+    "member": "GetName",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetName",
+      "return_type": "System.String",
+      "token": 100671847,
+      "interface": "ICWMillToolHolder",
+      "parameters": [],
+      "iid": "b4b1751e-af20-491c-b06d-7cca7242aed2"
+    }
+  },
+  {
+    "role": "holder",
+    "interface": "ICWMillToolHolder",
+    "member": "GetHolderTopDia",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetHolderTopDia",
+      "return_type": "System.Double",
+      "token": 100671841,
+      "interface": "ICWMillToolHolder",
+      "parameters": [],
+      "iid": "b4b1751e-af20-491c-b06d-7cca7242aed2"
+    }
+  },
+  {
+    "role": "holder",
+    "interface": "ICWMillToolHolder",
+    "member": "GetHolderBottomDia",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetHolderBottomDia",
+      "return_type": "System.Double",
+      "token": 100671842,
+      "interface": "ICWMillToolHolder",
+      "parameters": [],
+      "iid": "b4b1751e-af20-491c-b06d-7cca7242aed2"
+    }
+  },
+  {
+    "role": "holder",
+    "interface": "ICWMillToolHolder",
+    "member": "GetHolderOverallLength",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetHolderOverallLength",
+      "return_type": "System.Double",
+      "token": 100671843,
+      "interface": "ICWMillToolHolder",
+      "parameters": [],
+      "iid": "b4b1751e-af20-491c-b06d-7cca7242aed2"
+    }
+  },
+  {
+    "role": "holder",
+    "interface": "ICWMillToolHolder",
+    "member": "GetHolderBottomLength",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetHolderBottomLength",
+      "return_type": "System.Double",
+      "token": 100671844,
+      "interface": "ICWMillToolHolder",
+      "parameters": [],
+      "iid": "b4b1751e-af20-491c-b06d-7cca7242aed2"
+    }
+  },
+  {
+    "role": "holder",
+    "interface": "ICWMillToolHolder",
+    "member": "GetProtrusion",
+    "argument": "none",
+    "group": "all",
+    "signature": {
+      "name": "GetProtrusion",
+      "return_type": "System.Double",
+      "token": 100671845,
+      "interface": "ICWMillToolHolder",
+      "parameters": [],
+      "iid": "b4b1751e-af20-491c-b06d-7cca7242aed2"
+    }
+  }
+]

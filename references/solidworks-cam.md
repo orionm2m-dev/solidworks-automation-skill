@@ -1728,6 +1728,33 @@ The current project catalogue and receipts hold paths, hashes and case-specific
 measurements. Skill code and shared references do not hardcode project paths.
 
 
+### Grouped MILL generation and save
+
+Reuse the existing `sw_cam_guide_group_generation.status_contract` when adding
+bounded 2.5D MILL writers. Successful guide generation has returned strict
+Boolean `false` for both background-process observations. Neither value alone
+establishes idle state or completion; use the selected operation result, owned
+session, generated records and clean event transport.
+
+Acquire typed interfaces and prepare arguments before `dispatch_once`. Its
+callback performs the native mutation only: the scope is already claimed, so
+calling its `read` or `typed` methods inside that callback is invalid. Exercise
+the actual backend method with the real `ScopedCamDispatchGuard` and a counted
+native-call substitute before live use. A fake backend alone does not test this
+ordering. An attempted journal entry is not proof that the vendor method ran;
+only an exact, independently checked pre-call failure can justify a specific
+recovery. Preserve the original receipt and consumed marker.
+
+GTP after a tool change can alter feeds. Read back the complete relevant
+parameters and record the actual delta. For nominal geometry review, a separately
+reviewed policy may bind exact positive feed pairs/counts to the old/new CL hashes
+and selected operations. Preserve units, modes, command order, all spatial tokens
+and protected streams. This does not qualify cutting conditions. Reuse completed
+GTP results: when the generated state is known, adopt it explicitly and save once
+through the existing CAM save engine rather than regenerating to satisfy an old
+parameter expectation. An uncertain native generation outcome remains distinct
+from a known, completed generation with a reviewed parameter delta.
+
 ### CAM 操作移动的 HRESULT 与历史证据
 
 `ICWBaseOpSetup.InsertOperationAfter` 的已核对 TLB 声明只有输入参数，返回 HRESULT。当前 typed dual-vtable 路径只接受严格的整数 `0`（S_OK）；`None`、布尔值和非零值均不能作为成功。先保存有界、可安全序列化的原始返回类型和值，再执行断言，随后仍须验证实际操作顺序及受保护状态。

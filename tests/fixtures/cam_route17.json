@@ -1,0 +1,555 @@
+{
+  "features": {
+    "80": {
+      "native_id": 80,
+      "volume_type": 2,
+      "subtype_raw": 0,
+      "shape_raw": 6,
+      "suppressed": false,
+      "name": "Feature 1",
+      "axis_native": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "depth_native": 4.4,
+      "bounds_native": [
+        2.552809242142377,
+        2.6005948527443774,
+        4.4
+      ],
+      "start_native": [
+        -7.639525636225,
+        10.002896324536998,
+        10.9
+      ]
+    },
+    "81": {
+      "native_id": 81,
+      "volume_type": 2,
+      "subtype_raw": 0,
+      "shape_raw": 6,
+      "suppressed": false,
+      "name": "Feature 2",
+      "axis_native": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "depth_native": 4.4,
+      "bounds_native": [
+        3.390326528590997,
+        3.115919070887995,
+        4.4
+      ],
+      "start_native": [
+        7.889679093033,
+        9.804096679302,
+        10.9
+      ]
+    },
+    "82": {
+      "native_id": 82,
+      "volume_type": 2,
+      "subtype_raw": 0,
+      "shape_raw": 6,
+      "suppressed": false,
+      "name": "Feature 3",
+      "axis_native": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "depth_native": 0.9999990000000005,
+      "bounds_native": [
+        2.552488372549375,
+        2.600184158396375,
+        0.9999990000000005
+      ],
+      "start_native": [
+        7.639525636225,
+        -10.002896324529999,
+        7.499999
+      ]
+    },
+    "83": {
+      "native_id": 83,
+      "volume_type": 2,
+      "subtype_raw": 0,
+      "shape_raw": 6,
+      "suppressed": false,
+      "name": "Feature 4",
+      "axis_native": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "depth_native": 0.9999990000000005,
+      "bounds_native": [
+        2.5528092421422035,
+        2.6005948527472067,
+        0.9999990000000005
+      ],
+      "start_native": [
+        -7.8580097250300005,
+        -9.832197846334,
+        7.499999
+      ]
+    }
+  },
+  "operation_setups": [
+    {
+      "index": 0,
+      "native_id": 93,
+      "operation_count": 17
+    },
+    {
+      "index": 1,
+      "native_id": 94,
+      "operation_count": 0
+    },
+    {
+      "index": 2,
+      "native_id": 95,
+      "operation_count": 0
+    }
+  ],
+  "operations": [
+    {
+      "setup_index": 0,
+      "setup_native_id": 93,
+      "operation_index": 0,
+      "native_id": 195,
+      "mill_operation_type": 8,
+      "base_operation_type": 0,
+      "suppressed": false,
+      "toolpath_generated": false,
+      "linked_feature_ids": [
+        64
+      ],
+      "toolpath_record_counts": [],
+      "assigned_tool": {
+        "native_id": 197,
+        "is_mill_tool": true,
+        "native_read_complete": true,
+        "units_verified": false,
+        "holder_geometry_verified": false,
+        "tool_type_raw": 6,
+        "cut_diameter_native": 10.0,
+        "protrusion_native": 25.0
+      }
+    },
+    {
+      "setup_index": 0,
+      "setup_native_id": 93,
+      "operation_index": 1,
+      "native_id": 196,
+      "mill_operation_type": 2,
+      "base_operation_type": 0,
+      "suppressed": false,
+      "toolpath_generated": false,
+      "linked_feature_ids": [
+        64
+      ],
+      "toolpath_record_counts": [],
+      "assigned_tool": {
+        "native_id": 198,
+        "is_mill_tool": true,
+        "native_read_complete": true,
+        "units_verified": false,
+        "holder_geometry_verified": false,
+        "tool_type_raw": 2,
+        "cut_diameter_native": 19.0,
+        "protrusion_native": 170.0
+      }
+    },
+    {
+      "setup_index": 0,
+      "setup_native_id": 93,
+      "operation_index": 2,
+      "native_id": 267,
+      "mill_operation_type": 20,
+      "base_operation_type": 0,
+      "suppressed": false,
+      "toolpath_generated": true,
+      "linked_feature_ids": [
+        265
+      ],
+      "toolpath_record_counts": [
+        760
+      ],
+      "assigned_tool": {
+        "native_id": 249,
+        "is_mill_tool": true,
+        "native_read_complete": true,
+        "units_verified": false,
+        "holder_geometry_verified": false,
+        "tool_type_raw": 1,
+        "cut_diameter_native": 8.0,
+        "protrusion_native": 25.0
+      }
+    },
+    {
+      "setup_index": 0,
+      "setup_native_id": 93,
+      "operation_index": 3,
+      "native_id": 247,
+      "mill_operation_type": 0,
+      "base_operation_type": 0,
+      "suppressed": false,
+      "toolpath_generated": true,
+      "linked_feature_ids": [
+        244
+      ],
+      "toolpath_record_counts": [
+        191
+      ],
+      "assigned_tool": {
+        "native_id": 263,
+        "is_mill_tool": true,
+        "native_read_complete": true,
+        "units_verified": false,
+        "holder_geometry_verified": false,
+        "tool_type_raw": 14,
+        "cut_diameter_native": 8.0,
+        "protrusion_native": 25.0
+      }
+    },
+    {
+      "setup_index": 0,
+      "setup_native_id": 93,
+      "operation_index": 4,
+      "native_id": 248,
+      "mill_operation_type": 1,
+      "base_operation_type": 0,
+      "suppressed": false,
+      "toolpath_generated": true,
+      "linked_feature_ids": [
+        244
+      ],
+      "toolpath_record_counts": [
+        74
+      ],
+      "assigned_tool": {
+        "native_id": 249,
+        "is_mill_tool": true,
+        "native_read_complete": true,
+        "units_verified": false,
+        "holder_geometry_verified": false,
+        "tool_type_raw": 1,
+        "cut_diameter_native": 8.0,
+        "protrusion_native": 25.0
+      }
+    },
+    {
+      "setup_index": 0,
+      "setup_native_id": 93,
+      "operation_index": 5,
+      "native_id": 271,
+      "mill_operation_type": 1,
+      "base_operation_type": 0,
+      "suppressed": false,
+      "toolpath_generated": true,
+      "linked_feature_ids": [
+        264
+      ],
+      "toolpath_record_counts": [
+        29
+      ],
+      "assigned_tool": {
+        "native_id": 269,
+        "is_mill_tool": true,
+        "native_read_complete": true,
+        "units_verified": false,
+        "holder_geometry_verified": false,
+        "tool_type_raw": 8,
+        "cut_diameter_native": 0.6,
+        "protrusion_native": 20.0
+      }
+    },
+    {
+      "setup_index": 0,
+      "setup_native_id": 93,
+      "operation_index": 6,
+      "native_id": 143,
+      "mill_operation_type": 0,
+      "base_operation_type": 0,
+      "suppressed": false,
+      "toolpath_generated": true,
+      "linked_feature_ids": [
+        79
+      ],
+      "toolpath_record_counts": [
+        31196
+      ],
+      "assigned_tool": {
+        "native_id": 145,
+        "is_mill_tool": true,
+        "native_read_complete": true,
+        "units_verified": false,
+        "holder_geometry_verified": false,
+        "tool_type_raw": 1,
+        "cut_diameter_native": 2.0,
+        "protrusion_native": 20.0
+      }
+    },
+    {
+      "setup_index": 0,
+      "setup_native_id": 93,
+      "operation_index": 7,
+      "native_id": 144,
+      "mill_operation_type": 1,
+      "base_operation_type": 0,
+      "suppressed": false,
+      "toolpath_generated": false,
+      "linked_feature_ids": [
+        79
+      ],
+      "toolpath_record_counts": [],
+      "assigned_tool": {
+        "native_id": 273,
+        "is_mill_tool": true,
+        "native_read_complete": true,
+        "units_verified": false,
+        "holder_geometry_verified": false,
+        "tool_type_raw": 1,
+        "cut_diameter_native": 2.0,
+        "protrusion_native": 26.000000000000004
+      }
+    },
+    {
+      "setup_index": 0,
+      "setup_native_id": 93,
+      "operation_index": 8,
+      "native_id": 320,
+      "mill_operation_type": 1,
+      "base_operation_type": 0,
+      "suppressed": false,
+      "toolpath_generated": true,
+      "linked_feature_ids": [
+        79
+      ],
+      "toolpath_record_counts": [
+        2284
+      ],
+      "assigned_tool": {
+        "native_id": 273,
+        "is_mill_tool": true,
+        "native_read_complete": true,
+        "units_verified": false,
+        "holder_geometry_verified": false,
+        "tool_type_raw": 1,
+        "cut_diameter_native": 2.0,
+        "protrusion_native": 26.000000000000004
+      }
+    },
+    {
+      "setup_index": 0,
+      "setup_native_id": 93,
+      "operation_index": 9,
+      "native_id": 322,
+      "mill_operation_type": 0,
+      "base_operation_type": 0,
+      "suppressed": false,
+      "toolpath_generated": true,
+      "linked_feature_ids": [
+        82
+      ],
+      "toolpath_record_counts": [
+        4500
+      ],
+      "assigned_tool": {
+        "native_id": 273,
+        "is_mill_tool": true,
+        "native_read_complete": true,
+        "units_verified": false,
+        "holder_geometry_verified": false,
+        "tool_type_raw": 1,
+        "cut_diameter_native": 2.0,
+        "protrusion_native": 26.000000000000004
+      }
+    },
+    {
+      "setup_index": 0,
+      "setup_native_id": 93,
+      "operation_index": 10,
+      "native_id": 324,
+      "mill_operation_type": 1,
+      "base_operation_type": 0,
+      "suppressed": false,
+      "toolpath_generated": true,
+      "linked_feature_ids": [
+        82
+      ],
+      "toolpath_record_counts": [
+        104
+      ],
+      "assigned_tool": {
+        "native_id": 273,
+        "is_mill_tool": true,
+        "native_read_complete": true,
+        "units_verified": false,
+        "holder_geometry_verified": false,
+        "tool_type_raw": 1,
+        "cut_diameter_native": 2.0,
+        "protrusion_native": 26.000000000000004
+      }
+    },
+    {
+      "setup_index": 0,
+      "setup_native_id": 93,
+      "operation_index": 11,
+      "native_id": 326,
+      "mill_operation_type": 0,
+      "base_operation_type": 0,
+      "suppressed": false,
+      "toolpath_generated": true,
+      "linked_feature_ids": [
+        83
+      ],
+      "toolpath_record_counts": [
+        4500
+      ],
+      "assigned_tool": {
+        "native_id": 273,
+        "is_mill_tool": true,
+        "native_read_complete": true,
+        "units_verified": false,
+        "holder_geometry_verified": false,
+        "tool_type_raw": 1,
+        "cut_diameter_native": 2.0,
+        "protrusion_native": 26.000000000000004
+      }
+    },
+    {
+      "setup_index": 0,
+      "setup_native_id": 93,
+      "operation_index": 12,
+      "native_id": 328,
+      "mill_operation_type": 1,
+      "base_operation_type": 0,
+      "suppressed": false,
+      "toolpath_generated": true,
+      "linked_feature_ids": [
+        83
+      ],
+      "toolpath_record_counts": [
+        104
+      ],
+      "assigned_tool": {
+        "native_id": 273,
+        "is_mill_tool": true,
+        "native_read_complete": true,
+        "units_verified": false,
+        "holder_geometry_verified": false,
+        "tool_type_raw": 1,
+        "cut_diameter_native": 2.0,
+        "protrusion_native": 26.000000000000004
+      }
+    },
+    {
+      "setup_index": 0,
+      "setup_native_id": 93,
+      "operation_index": 13,
+      "native_id": 330,
+      "mill_operation_type": 0,
+      "base_operation_type": 0,
+      "suppressed": false,
+      "toolpath_generated": true,
+      "linked_feature_ids": [
+        80
+      ],
+      "toolpath_record_counts": [
+        17118
+      ],
+      "assigned_tool": {
+        "native_id": 338,
+        "is_mill_tool": true,
+        "native_read_complete": true,
+        "units_verified": false,
+        "holder_geometry_verified": false,
+        "tool_type_raw": 1,
+        "cut_diameter_native": 2.0,
+        "protrusion_native": 22.0
+      }
+    },
+    {
+      "setup_index": 0,
+      "setup_native_id": 93,
+      "operation_index": 14,
+      "native_id": 332,
+      "mill_operation_type": 1,
+      "base_operation_type": 0,
+      "suppressed": false,
+      "toolpath_generated": true,
+      "linked_feature_ids": [
+        80
+      ],
+      "toolpath_record_counts": [
+        368
+      ],
+      "assigned_tool": {
+        "native_id": 338,
+        "is_mill_tool": true,
+        "native_read_complete": true,
+        "units_verified": false,
+        "holder_geometry_verified": false,
+        "tool_type_raw": 1,
+        "cut_diameter_native": 2.0,
+        "protrusion_native": 22.0
+      }
+    },
+    {
+      "setup_index": 0,
+      "setup_native_id": 93,
+      "operation_index": 15,
+      "native_id": 334,
+      "mill_operation_type": 0,
+      "base_operation_type": 0,
+      "suppressed": false,
+      "toolpath_generated": true,
+      "linked_feature_ids": [
+        81
+      ],
+      "toolpath_record_counts": [
+        17118
+      ],
+      "assigned_tool": {
+        "native_id": 338,
+        "is_mill_tool": true,
+        "native_read_complete": true,
+        "units_verified": false,
+        "holder_geometry_verified": false,
+        "tool_type_raw": 1,
+        "cut_diameter_native": 2.0,
+        "protrusion_native": 22.0
+      }
+    },
+    {
+      "setup_index": 0,
+      "setup_native_id": 93,
+      "operation_index": 16,
+      "native_id": 336,
+      "mill_operation_type": 1,
+      "base_operation_type": 0,
+      "suppressed": false,
+      "toolpath_generated": true,
+      "linked_feature_ids": [
+        81
+      ],
+      "toolpath_record_counts": [
+        368
+      ],
+      "assigned_tool": {
+        "native_id": 338,
+        "is_mill_tool": true,
+        "native_read_complete": true,
+        "units_verified": false,
+        "holder_geometry_verified": false,
+        "tool_type_raw": 1,
+        "cut_diameter_native": 2.0,
+        "protrusion_native": 22.0
+      }
+    }
+  ]
+}

@@ -10985,5 +10985,1508 @@ def solidworks_cam_verify_deep_guides_reopen(params: SolidWorksCamDeepGuideReope
 
 
 
+# Integration snippet for mcp-server/server.py; insert before its main entry point.
+
+class SolidWorksCamLongCutToolInput(BaseInput):
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
+
+    @model_validator(mode="after")
+
+    def sealed_request_path(self):
+
+        from pathlib import Path
+
+        if not Path(self.request_path).is_absolute():
+
+            raise ValueError("Absolute sealed request path required")
+
+        return self
+
+
+
+
+
+def _cam_long_cut_tool_sealed_payload(request_path, request_sha256, process_id):
+
+    import hashlib
+
+    import json
+
+    from pathlib import Path
+
+    path = Path(request_path)
+
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+
+        raise ValueError("Bounded existing non-symlink sealed request required")
+
+    data = path.read_bytes()
+
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+
+        raise ValueError("Sealed request digest mismatch")
+
+    def pairs(rows):
+
+        result = {}
+
+        for key, value in rows:
+
+            if key in result:
+
+                raise ValueError("Duplicate sealed JSON key")
+
+            result[key] = value
+
+        return result
+
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+
+            or payload["action"] != "create_long_cut_tool_definition"
+
+            or type(payload["params"]) is not dict
+
+            or type(payload["params"].get("process_id")) is not int
+
+            or payload["params"]["process_id"] != process_id):
+
+        raise ValueError("Sealed request action or owned process differs")
+
+    params = payload["params"]
+
+    module = Path(SCRIPTS_DIR) / "sw_cam_long_cut_tool_definition.py"
+
+    if (not module.is_file() or module.is_symlink()
+
+            or hashlib.sha256(module.read_bytes()).hexdigest() != params.get("module_sha256")):
+
+        raise ValueError("Installed continuation module digest differs")
+
+    if any(type(params.get(k)) is not str for k in ("receipt_path", "saved_cl_path")):
+
+        raise ValueError("Explicit diagnostic paths required")
+
+    outputs = (Path(params["receipt_path"]), Path(params["saved_cl_path"]))
+
+    if any(output.resolve() == path.resolve() for output in outputs):
+
+        raise ValueError("Diagnostic output may not alias its sealed request")
+
+    return payload
+
+
+
+
+
+@mcp.tool(name="solidworks_cam_create_long_cut_tool_definition",
+
+    title="Create Exact Long Cut Tool",
+
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+
+def solidworks_cam_create_long_cut_tool_definition(params: SolidWorksCamLongCutToolInput) -> str:
+
+    """Create one separate OSG3130520 tool, verify its complete profile and save once while preserving17 definitions, eight parameter groups and14 streams; no assignment or GTP."""
+
+    def op():
+
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+
+            raise ValueError("Explicit owned process connection required")
+
+        payload = _cam_long_cut_tool_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+
+        from scripts.sw_cam_long_cut_tool_definition import dispatch_request
+
+        from copy import deepcopy
+        result = dispatch_request(deepcopy(payload))
+
+        if _cam_long_cut_tool_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+
+            raise ValueError("Sealed diagnostic request changed during read")
+
+        return result
+
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+
+
+
+# Integration snippet for mcp-server/server.py; insert before its main entry point.
+
+# Integration snippet for mcp-server/server.py; insert before its main entry point.
+
+class SolidWorksCamDeepToolReplacementCurrentInput(BaseInput):
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
+
+    @model_validator(mode="after")
+
+    def sealed_request_path(self):
+
+        from pathlib import Path
+
+        if not Path(self.request_path).is_absolute():
+
+            raise ValueError("Absolute sealed request path required")
+
+        return self
+
+
+
+
+
+def _cam_deep_tool_replacement_current_sealed_payload(request_path, request_sha256, process_id):
+
+    import hashlib
+
+    import json
+
+    from pathlib import Path
+
+    path = Path(request_path)
+
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+
+        raise ValueError("Bounded existing non-symlink sealed request required")
+
+    data = path.read_bytes()
+
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+
+        raise ValueError("Sealed request digest mismatch")
+
+    def pairs(rows):
+
+        result = {}
+
+        for key, value in rows:
+
+            if key in result:
+
+                raise ValueError("Duplicate sealed JSON key")
+
+            result[key] = value
+
+        return result
+
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+
+            or payload["action"] != "replace_existing_deep_guide_tool"
+
+            or type(payload["params"]) is not dict
+
+            or type(payload["params"].get("process_id")) is not int
+
+            or payload["params"]["process_id"] != process_id):
+
+        raise ValueError("Sealed request action or owned process differs")
+
+    params = payload["params"]
+
+    module = Path(SCRIPTS_DIR) / "sw_cam_deep_long_tool_replace_current.py"
+
+    if (not module.is_file() or module.is_symlink()
+
+            or hashlib.sha256(module.read_bytes()).hexdigest() != params.get("module_sha256")):
+
+        raise ValueError("Installed replacement module digest differs")
+
+    if any(type(params.get(k)) is not str for k in ("receipt_path", "progress_path", "saved_cl_path")):
+
+        raise ValueError("Explicit diagnostic paths required")
+
+    outputs = (Path(params["receipt_path"]), Path(params["progress_path"]), Path(params["saved_cl_path"]))
+
+    if any(output.resolve() == path.resolve() for output in outputs):
+
+        raise ValueError("Diagnostic output may not alias its sealed request")
+
+    return payload
+
+
+
+
+
+@mcp.tool(name="solidworks_cam_replace_deep_guide_tool",
+
+    title="Replace Deep Guide Tool",
+
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+
+def solidworks_cam_replace_deep_guide_tool(params: SolidWorksCamDeepToolReplacementCurrentInput) -> str:
+
+    """Assign the already created OSG3130520 tool only to four existing deep operations, restore their saved recipe, regenerate four paths and save once; preserve13 other definitions and10 streams. Feed changes require explicit per-operation pairs in the sealed nominal-geometry policy; production feeds remain unqualified."""
+
+    def op():
+
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+
+            raise ValueError("Explicit owned process connection required")
+
+        payload = _cam_deep_tool_replacement_current_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+
+        from scripts.sw_cam_deep_long_tool_replace_current import dispatch_request
+
+        from copy import deepcopy
+        result = dispatch_request(deepcopy(payload))
+
+        if _cam_deep_tool_replacement_current_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+
+            raise ValueError("Sealed diagnostic request changed during read")
+
+        return result
+
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+
+
+
+
+
+
+# Integration snippet for mcp-server/server.py; insert before its main entry point.
+
+class SolidWorksCamAssignedDeepGenerationInput(BaseInput):
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
+
+    @model_validator(mode="after")
+
+    def sealed_request_path(self):
+
+        from pathlib import Path
+
+        if not Path(self.request_path).is_absolute():
+
+            raise ValueError("Absolute sealed request path required")
+
+        return self
+
+
+
+
+
+def _cam_assigned_deep_generation_sealed_payload(request_path, request_sha256, process_id):
+
+    import hashlib
+
+    import json
+
+    from pathlib import Path
+
+    path = Path(request_path)
+
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+
+        raise ValueError("Bounded existing non-symlink sealed request required")
+
+    data = path.read_bytes()
+
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+
+        raise ValueError("Sealed request digest mismatch")
+
+    def pairs(rows):
+
+        result = {}
+
+        for key, value in rows:
+
+            if key in result:
+
+                raise ValueError("Duplicate sealed JSON key")
+
+            result[key] = value
+
+        return result
+
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+
+            or payload["action"] != "continue_assigned_deep_guide_toolpaths"
+
+            or type(payload["params"]) is not dict
+
+            or type(payload["params"].get("process_id")) is not int
+
+            or payload["params"]["process_id"] != process_id):
+
+        raise ValueError("Sealed request action or owned process differs")
+
+    params = payload["params"]
+
+    module = Path(SCRIPTS_DIR) / "sw_cam_deep_long_tool_gtp_continue.py"
+
+    if (not module.is_file() or module.is_symlink()
+
+            or hashlib.sha256(module.read_bytes()).hexdigest() != params.get("module_sha256")):
+
+        raise ValueError("Installed continuation module digest differs")
+
+    if any(type(params.get(k)) is not str for k in ("receipt_path", "progress_path", "saved_cl_path")):
+
+        raise ValueError("Explicit diagnostic paths required")
+
+    outputs = (Path(params["receipt_path"]), Path(params["progress_path"]), Path(params["saved_cl_path"]))
+
+    if any(output.resolve() == path.resolve() for output in outputs):
+
+        raise ValueError("Diagnostic output may not alias its sealed request")
+
+    return payload
+
+
+
+
+
+@mcp.tool(name="solidworks_cam_continue_assigned_deep_guides",
+
+    title="Continue Assigned Deep Guide Toolpaths",
+
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+
+def solidworks_cam_continue_assigned_deep_guides(params: SolidWorksCamAssignedDeepGenerationInput) -> str:
+
+    """Adopt four verified existing tool assignments, generate their four paths and save once; no SetTool or recipe changes. Preserve13 other definitions and10 streams."""
+
+    def op():
+
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+
+            raise ValueError("Explicit owned process connection required")
+
+        payload = _cam_assigned_deep_generation_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+
+        from scripts.sw_cam_deep_long_tool_gtp_continue import dispatch_request
+
+        from copy import deepcopy
+        result = dispatch_request(deepcopy(payload))
+
+        if _cam_assigned_deep_generation_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+
+            raise ValueError("Sealed diagnostic request changed during read")
+
+        return result
+
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+
+
+
+# Integration snippet for mcp-server/server.py; insert before its main entry point.
+
+class SolidWorksCamZeroNativeDeepRecoveryInput(BaseInput):
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
+
+    @model_validator(mode="after")
+
+    def sealed_request_path(self):
+
+        from pathlib import Path
+
+        if not Path(self.request_path).is_absolute():
+
+            raise ValueError("Absolute sealed request path required")
+
+        return self
+
+
+
+
+
+def _cam_zero_native_deep_recovery_sealed_payload(request_path, request_sha256, process_id):
+
+    import hashlib
+
+    import json
+
+    from pathlib import Path
+
+    path = Path(request_path)
+
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+
+        raise ValueError("Bounded existing non-symlink sealed request required")
+
+    data = path.read_bytes()
+
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+
+        raise ValueError("Sealed request digest mismatch")
+
+    def pairs(rows):
+
+        result = {}
+
+        for key, value in rows:
+
+            if key in result:
+
+                raise ValueError("Duplicate sealed JSON key")
+
+            result[key] = value
+
+        return result
+
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+
+            or payload["action"] != "recover_zero_native_deep_guide_generation"
+
+            or type(payload["params"]) is not dict
+
+            or type(payload["params"].get("process_id")) is not int
+
+            or payload["params"]["process_id"] != process_id):
+
+        raise ValueError("Sealed request action or owned process differs")
+
+    params = payload["params"]
+
+    module = Path(SCRIPTS_DIR) / "sw_cam_deep_long_tool_gtp_recover.py"
+
+    if (not module.is_file() or module.is_symlink()
+
+            or hashlib.sha256(module.read_bytes()).hexdigest() != params.get("module_sha256")):
+
+        raise ValueError("Installed continuation module digest differs")
+
+    if any(type(params.get(k)) is not str for k in ("receipt_path", "progress_path", "saved_cl_path")):
+
+        raise ValueError("Explicit diagnostic paths required")
+
+    outputs = (Path(params["receipt_path"]), Path(params["progress_path"]), Path(params["saved_cl_path"]))
+
+    if any(output.resolve() == path.resolve() for output in outputs):
+
+        raise ValueError("Diagnostic output may not alias its sealed request")
+
+    return payload
+
+
+
+
+
+@mcp.tool(name="solidworks_cam_recover_zero_native_deep_guides",
+
+    title="Recover Zero-Native Deep Generation",
+
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+
+def solidworks_cam_recover_zero_native_deep_guides(params: SolidWorksCamZeroNativeDeepRecoveryInput) -> str:
+
+    """Recover only the pinned guard-order stop proven to precede native GenerateToolpath. Adopt verified assignments, bind interfaces before claim, generate four paths and save once; no SetTool or recipe changes."""
+
+    def op():
+
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+
+            raise ValueError("Explicit owned process connection required")
+
+        payload = _cam_zero_native_deep_recovery_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+
+        from scripts.sw_cam_deep_long_tool_gtp_recover import dispatch_request
+
+        from copy import deepcopy
+        result = dispatch_request(deepcopy(payload))
+
+        if _cam_zero_native_deep_recovery_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+
+            raise ValueError("Sealed diagnostic request changed during read")
+
+        return result
+
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+
+
+
+# Integration snippet for mcp-server/server.py; insert before its main entry point.
+
+class SolidWorksCamCompletedDeepSaveInput(BaseInput):
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
+
+    @model_validator(mode="after")
+
+    def sealed_request_path(self):
+
+        from pathlib import Path
+
+        if not Path(self.request_path).is_absolute():
+
+            raise ValueError("Absolute sealed request path required")
+
+        return self
+
+
+
+
+
+def _cam_completed_deep_save_sealed_payload(request_path, request_sha256, process_id):
+
+    import hashlib
+
+    import json
+
+    from pathlib import Path
+
+    path = Path(request_path)
+
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+
+        raise ValueError("Bounded existing non-symlink sealed request required")
+
+    data = path.read_bytes()
+
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+
+        raise ValueError("Sealed request digest mismatch")
+
+    def pairs(rows):
+
+        result = {}
+
+        for key, value in rows:
+
+            if key in result:
+
+                raise ValueError("Duplicate sealed JSON key")
+
+            result[key] = value
+
+        return result
+
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+
+            or payload["action"] != "save_completed_deep_guide_toolpaths"
+
+            or type(payload["params"]) is not dict
+
+            or type(payload["params"].get("process_id")) is not int
+
+            or payload["params"]["process_id"] != process_id):
+
+        raise ValueError("Sealed request action or owned process differs")
+
+    params = payload["params"]
+
+    module = Path(SCRIPTS_DIR) / "sw_cam_deep_long_tool_completed_save.py"
+
+    if (not module.is_file() or module.is_symlink()
+
+            or hashlib.sha256(module.read_bytes()).hexdigest() != params.get("module_sha256")):
+
+        raise ValueError("Installed continuation module digest differs")
+
+    if any(type(params.get(k)) is not str for k in ("receipt_path", "progress_path", "saved_cl_path")):
+
+        raise ValueError("Explicit diagnostic paths required")
+
+    outputs = (Path(params["receipt_path"]), Path(params["progress_path"]), Path(params["saved_cl_path"]))
+
+    if any(output.resolve() == path.resolve() for output in outputs):
+
+        raise ValueError("Diagnostic output may not alias its sealed request")
+
+    return payload
+
+
+
+
+
+@mcp.tool(name="solidworks_cam_save_completed_deep_guides",
+
+    title="Save Completed Deep Guide Toolpaths",
+
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+
+def solidworks_cam_save_completed_deep_guides(params: SolidWorksCamCompletedDeepSaveInput) -> str:
+
+    """Adopt four already completed toolpaths and their exact observed XY feed1000 for nominal geometry only. Save once and export CL; no GTP, SetTool or parameter changes."""
+
+    def op():
+
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+
+            raise ValueError("Explicit owned process connection required")
+
+        payload = _cam_completed_deep_save_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+
+        from scripts.sw_cam_deep_long_tool_completed_save import dispatch_request
+
+        from copy import deepcopy
+        result = dispatch_request(deepcopy(payload))
+
+        if _cam_completed_deep_save_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+
+            raise ValueError("Sealed diagnostic request changed during read")
+
+        return result
+
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+
+
+
+class SolidWorksCamLongCutGuideReopenInput(BaseInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def sealed_request_path(self):
+        from pathlib import Path
+        if not Path(self.request_path).is_absolute():
+            raise ValueError("Absolute sealed request path required")
+        return self
+
+
+def _cam_long_cut_guide_reopen_sealed_payload(request_path, request_sha256, process_id):
+    import hashlib
+    import json
+    from pathlib import Path
+    path = Path(request_path)
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+        raise ValueError("Bounded existing non-symlink sealed request required")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+        raise ValueError("Sealed request digest mismatch")
+    def pairs(rows):
+        result = {}
+        for key, value in rows:
+            if key in result:
+                raise ValueError("Duplicate sealed JSON key")
+            result[key] = value
+        return result
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+            or payload["action"] != "verify_saved_long_cut_guides_reopen"
+            or type(payload["params"]) is not dict
+            or type(payload["params"].get("process_id")) is not int
+            or payload["params"]["process_id"] != process_id):
+        raise ValueError("Sealed request action or owned process differs")
+    params = payload["params"]
+    module = Path(SCRIPTS_DIR) / "sw_cam_deep_long_cut_reopen.py"
+    if (not module.is_file() or module.is_symlink()
+            or hashlib.sha256(module.read_bytes()).hexdigest() != params.get("module_sha256")):
+        raise ValueError("Installed continuation module digest differs")
+    if (type(params.get("receipt_path")) is not str
+            or Path(params["receipt_path"]).resolve() == path.resolve()):
+        raise ValueError("Diagnostic receipt may not alias its sealed request")
+    return payload
+
+
+@mcp.tool(name="solidworks_cam_verify_saved_long_cut_guides_reopen",
+    title="Verify Deep Guide Persistence",
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_verify_saved_long_cut_guides_reopen(params: SolidWorksCamLongCutGuideReopenInput) -> str:
+    """Close/Open the verified deep checkpoint and compare seventeen bindings, eight parameter groups and fourteen CL streams; no Save or GTP."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        payload = _cam_long_cut_guide_reopen_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+        from scripts.sw_cam_deep_long_cut_reopen import dispatch_request
+        result = dispatch_request(payload)
+        if _cam_long_cut_guide_reopen_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+            raise ValueError("Sealed diagnostic request changed during read")
+        return result
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+
+
+class SolidWorksCamMixedRootPocketsInput(BaseInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def sealed_request_path(self):
+        from pathlib import Path
+        if not Path(self.request_path).is_absolute():
+            raise ValueError("Absolute sealed request path required")
+        return self
+
+
+def _cam_mixed_root_pockets_sealed_payload(request_path, request_sha256, process_id):
+    import hashlib
+    import json
+    from pathlib import Path
+    path = Path(request_path)
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+        raise ValueError("Bounded existing non-symlink sealed request required")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+        raise ValueError("Sealed request digest mismatch")
+    def pairs(rows):
+        result = {}
+        for key, value in rows:
+            if key in result:
+                raise ValueError("Duplicate sealed JSON key")
+            result[key] = value
+        return result
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+            or payload["action"] != "create_two_mixed_root_pockets"
+            or type(payload["params"]) is not dict
+            or type(payload["params"].get("process_id")) is not int
+            or payload["params"]["process_id"] != process_id):
+        raise ValueError("Sealed request action or owned process differs")
+    params = payload["params"]
+    module = Path(SCRIPTS_DIR) / "sw_cam_mixed_root_pockets.py"
+    if (not module.is_file() or module.is_symlink()
+            or hashlib.sha256(module.read_bytes()).hexdigest() != params.get("module_sha256")):
+        raise ValueError("Installed continuation module digest differs")
+    if (type(params.get("receipt_path")) is not str
+            or Path(params["receipt_path"]).resolve() == path.resolve()):
+        raise ValueError("Diagnostic receipt may not alias its sealed request")
+    return payload
+
+
+@mcp.tool(name="solidworks_cam_create_two_mixed_root_pockets",
+    title="Create Two Mixed Root Pockets",
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_create_two_mixed_root_pockets(params: SolidWorksCamMixedRootPocketsInput) -> str:
+    """Create two mixed LINE/ARC pocket features, preserve the existing solid and seventeen operations/fourteen paths, and save once; no GOP or GTP."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        payload = _cam_mixed_root_pockets_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+        from scripts.sw_cam_mixed_root_pockets import dispatch_request
+        result = dispatch_request(payload)
+        if _cam_mixed_root_pockets_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+            raise ValueError("Sealed diagnostic request changed during read")
+        return result
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+
+
+class SolidWorksCamMixedArcDiagnosticInput(BaseInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def sealed_request_path(self):
+        from pathlib import Path
+        if not Path(self.request_path).is_absolute():
+            raise ValueError("Absolute sealed request path required")
+        return self
+
+
+def _cam_mixed_arc_diagnostic_sealed_payload(request_path, request_sha256, process_id):
+    import hashlib
+    import json
+    from pathlib import Path
+    path = Path(request_path)
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+        raise ValueError("Bounded existing non-symlink sealed request required")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+        raise ValueError("Sealed request digest mismatch")
+    def pairs(rows):
+        result = {}
+        for key, value in rows:
+            if key in result:
+                raise ValueError("Duplicate sealed JSON key")
+            result[key] = value
+        return result
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+            or payload["action"] != "read_existing_mixed_arc"
+            or type(payload["params"]) is not dict
+            or type(payload["params"].get("process_id")) is not int
+            or payload["params"]["process_id"] != process_id):
+        raise ValueError("Sealed request action or owned process differs")
+    params = payload["params"]
+    module = Path(SCRIPTS_DIR) / "sw_cam_mixed_arc_diagnostic.py"
+    if (not module.is_file() or module.is_symlink()
+            or hashlib.sha256(module.read_bytes()).hexdigest() != params.get("module_sha256")):
+        raise ValueError("Installed continuation module digest differs")
+    if (type(params.get("receipt_path")) is not str
+            or Path(params["receipt_path"]).resolve() == path.resolve()):
+        raise ValueError("Diagnostic receipt may not alias its sealed request")
+    return payload
+
+
+@mcp.tool(name="solidworks_cam_read_existing_mixed_arc",
+    title="Read Existing Mixed Sketch Arc",
+    annotations={"readOnlyHint":True,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_read_existing_mixed_arc(params: SolidWorksCamMixedArcDiagnosticInput) -> str:
+    """Read raw underlying-curve intervals, native arc direction and geometry from the already existing first mixed sketch; no creation, edit, save or regeneration."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        payload = _cam_mixed_arc_diagnostic_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+        from scripts.sw_cam_mixed_arc_diagnostic import dispatch_request
+        result = dispatch_request(payload)
+        if _cam_mixed_arc_diagnostic_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+            raise ValueError("Sealed diagnostic request changed during read")
+        return result
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+
+
+class SolidWorksCamMixedRootResumeInput(BaseInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def sealed_request_path(self):
+        from pathlib import Path
+        if not Path(self.request_path).is_absolute():
+            raise ValueError("Absolute sealed request path required")
+        return self
+
+
+def _cam_mixed_root_resume_sealed_payload(request_path, request_sha256, process_id):
+    import hashlib
+    import json
+    from pathlib import Path
+    path = Path(request_path)
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+        raise ValueError("Bounded existing non-symlink sealed request required")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+        raise ValueError("Sealed request digest mismatch")
+    def pairs(rows):
+        result = {}
+        for key, value in rows:
+            if key in result:
+                raise ValueError("Duplicate sealed JSON key")
+            result[key] = value
+        return result
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+            or payload["action"] != "resume_two_mixed_root_pockets"
+            or type(payload["params"]) is not dict
+            or type(payload["params"].get("process_id")) is not int
+            or payload["params"]["process_id"] != process_id):
+        raise ValueError("Sealed request action or owned process differs")
+    params = payload["params"]
+    module = Path(SCRIPTS_DIR) / "sw_cam_mixed_root_resume.py"
+    if (not module.is_file() or module.is_symlink()
+            or hashlib.sha256(module.read_bytes()).hexdigest() != params.get("module_sha256")):
+        raise ValueError("Installed continuation module digest differs")
+    if (type(params.get("receipt_path")) is not str
+            or Path(params["receipt_path"]).resolve() == path.resolve()):
+        raise ValueError("Diagnostic receipt may not alias its sealed request")
+    return payload
+
+
+@mcp.tool(name="solidworks_cam_resume_two_mixed_root_pockets",
+    title="Resume Two Mixed Root Pockets",
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_resume_two_mixed_root_pockets(params: SolidWorksCamMixedRootResumeInput) -> str:
+    """Read and adopt the existing first sketch, create two mixed pocket features and the remaining sketch, preserve seventeen operations/fourteen paths, and save once; no GOP or GTP."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        payload = _cam_mixed_root_resume_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+        from scripts.sw_cam_mixed_root_resume import dispatch_request
+        result = dispatch_request(payload)
+        if _cam_mixed_root_resume_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+            raise ValueError("Sealed diagnostic request changed during read")
+        return result
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+
+class SolidWorksCamMixedFeatureDiagnosticInput(BaseInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def sealed_request_path(self):
+        from pathlib import Path
+        if not Path(self.request_path).is_absolute():
+            raise ValueError("Absolute sealed request path required")
+        return self
+
+
+def _cam_mixed_feature_diagnostic_sealed_payload(request_path, request_sha256, process_id):
+    import hashlib
+    import json
+    from pathlib import Path
+    path = Path(request_path)
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+        raise ValueError("Bounded existing non-symlink sealed request required")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+        raise ValueError("Sealed request digest mismatch")
+    def pairs(rows):
+        result = {}
+        for key, value in rows:
+            if key in result:
+                raise ValueError("Duplicate sealed JSON key")
+            result[key] = value
+        return result
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+            or payload["action"] != "read_existing_mixed_feature"
+            or type(payload["params"]) is not dict
+            or type(payload["params"].get("process_id")) is not int
+            or payload["params"]["process_id"] != process_id):
+        raise ValueError("Sealed request action or owned process differs")
+    params = payload["params"]
+    module = Path(SCRIPTS_DIR) / "sw_cam_mixed_feature_diagnostic.py"
+    if (not module.is_file() or module.is_symlink()
+            or hashlib.sha256(module.read_bytes()).hexdigest() != params.get("module_sha256")):
+        raise ValueError("Installed continuation module digest differs")
+    if (type(params.get("receipt_path")) is not str
+            or Path(params["receipt_path"]).resolve() == path.resolve()):
+        raise ValueError("Diagnostic receipt may not alias its sealed request")
+    return payload
+
+
+@mcp.tool(name="solidworks_cam_read_existing_mixed_feature",
+    title="Read Existing Mixed Pocket Geometry",
+    annotations={"readOnlyHint":True,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_read_existing_mixed_feature(params: SolidWorksCamMixedFeatureDiagnosticInput) -> str:
+    """Read and persist one existing mixed pocket and partial native top/bottom curves with narrow route/CAD checks; no creation, save, generation or full parameter snapshot."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        payload = _cam_mixed_feature_diagnostic_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+        from scripts.sw_cam_mixed_feature_diagnostic import dispatch_request
+        result = dispatch_request(payload)
+        if _cam_mixed_feature_diagnostic_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+            raise ValueError("Sealed diagnostic request changed during read")
+        return result
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+
+class SolidWorksCamMixedRootFinishInput(BaseInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def sealed_request_path(self):
+        from pathlib import Path
+        if not Path(self.request_path).is_absolute():
+            raise ValueError("Absolute sealed request path required")
+        return self
+
+
+def _cam_mixed_root_finish_sealed_payload(request_path, request_sha256, process_id):
+    import hashlib
+    import json
+    from pathlib import Path
+    path = Path(request_path)
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+        raise ValueError("Bounded existing non-symlink sealed request required")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+        raise ValueError("Sealed request digest mismatch")
+    def pairs(rows):
+        result = {}
+        for key, value in rows:
+            if key in result:
+                raise ValueError("Duplicate sealed JSON key")
+            result[key] = value
+        return result
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+            or payload["action"] != "finish_remaining_mixed_root_pocket"
+            or type(payload["params"]) is not dict
+            or type(payload["params"].get("process_id")) is not int
+            or payload["params"]["process_id"] != process_id):
+        raise ValueError("Sealed request action or owned process differs")
+    params = payload["params"]
+    module = Path(SCRIPTS_DIR) / "sw_cam_mixed_root_finish.py"
+    if (not module.is_file() or module.is_symlink()
+            or hashlib.sha256(module.read_bytes()).hexdigest() != params.get("module_sha256")):
+        raise ValueError("Installed continuation module digest differs")
+    if (type(params.get("receipt_path")) is not str
+            or Path(params["receipt_path"]).resolve() == path.resolve()):
+        raise ValueError("Diagnostic receipt may not alias its sealed request")
+    return payload
+
+
+@mcp.tool(name="solidworks_cam_finish_remaining_mixed_root_pocket",
+    title="Finish Remaining Mixed Root Pocket",
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_finish_remaining_mixed_root_pocket(params: SolidWorksCamMixedRootFinishInput) -> str:
+    """Adopt the proved existing first pocket and sketch, create only the remaining sketch and pocket, preserve seventeen operations/fourteen paths, and save once; no GOP or GTP."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        payload = _cam_mixed_root_finish_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+        from scripts.sw_cam_mixed_root_finish import dispatch_request
+        result = dispatch_request(payload)
+        if _cam_mixed_root_finish_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+            raise ValueError("Sealed diagnostic request changed during read")
+        return result
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+
+
+class SolidWorksCamHostLifecycleInput(BaseInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def sealed_request_path(self):
+        from pathlib import Path
+        if not Path(self.request_path).is_absolute():
+            raise ValueError("Absolute sealed lifecycle request required")
+        return self
+
+
+def _cam_host_lifecycle_sealed_payload(request_path, request_sha256, process_id):
+    import hashlib
+    from pathlib import Path
+    from scripts.sw_cam_inprocess_reader import decode
+    path=Path(request_path)
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size>1048576:
+        raise ValueError("Bounded existing sealed request required")
+    data=path.read_bytes()
+    if hashlib.sha256(data).hexdigest()!=request_sha256:
+        raise ValueError("Sealed lifecycle request digest differs")
+    payload=decode(data.decode("utf-8-sig"))
+    if (type(payload)is not dict or set(payload)!={"action","params"}
+            or payload["action"]!="replace_owned_host_and_read_mill" or type(payload["params"])is not dict
+            or type(payload["params"].get("process_id"))is not int or payload["params"]["process_id"]!=process_id):
+        raise ValueError("Exact lifecycle action and owned process required")
+    p=payload["params"]
+    for filename,field in (("sw_cam_mill_host_lifecycle.py","module_sha256"),
+                           ("sw_cam_mill_host_checkpoint.py","checkpoint_provider_sha256"),
+                           ("sw_cam_mill_packet_projection.py","projector_sha256")):
+        module=Path(SCRIPTS_DIR)/filename
+        if not module.is_file() or module.is_symlink() or hashlib.sha256(module.read_bytes()).hexdigest()!=p.get(field):
+            raise ValueError("Installed sealed host component differs: "+filename)
+    if type(p.get("receipt_path"))is not str or Path(p["receipt_path"]).resolve()==path.resolve():
+        raise ValueError("Lifecycle receipt may not overwrite its sealed request")
+    return payload
+
+
+@mcp.tool(name="solidworks_cam_replace_reader_host_and_read_mill",
+    title="Replace Owned Reader Host and Qualify MILL",
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_replace_reader_host_and_read_mill(params: SolidWorksCamHostLifecycleInput) -> str:
+    """Replace only the owned versioned host via CurrentUser registration, then compare one fixed 17/8 MILL packet to the saved checkpoint. No CAM edits, Save, generation, replay or automatic restart."""
+    def op():
+        from copy import deepcopy
+        if type(_selected_process_id)is not int or _selected_process_id!=params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        payload=_cam_host_lifecycle_sealed_payload(params.request_path,params.request_sha256,params.process_id)
+        from scripts.sw_cam_mill_host_lifecycle import dispatch_request
+        from scripts.sw_cam_mill_host_checkpoint import provide_reference
+        result=dispatch_request(deepcopy(payload),reference_provider=provide_reference)
+        if _cam_host_lifecycle_sealed_payload(params.request_path,params.request_sha256,params.process_id)!=payload:
+            raise ValueError("Sealed lifecycle request changed during dispatch")
+        return result
+    return _run_locked(op,params.response_format,load_automation=False,desktop_guard=True)
+
+
+
+
+class SolidWorksCamSerialFlatMixedInput(BaseInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def sealed_request_path(self):
+        from pathlib import Path
+        if not Path(self.request_path).is_absolute():
+            raise ValueError("Absolute sealed request path required")
+        return self
+
+
+def _cam_serial_flat_finished_sealed_payload(request_path, request_sha256, process_id):
+    import hashlib
+    import json
+    from pathlib import Path
+    path = Path(request_path)
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+        raise ValueError("Bounded existing non-symlink sealed request required")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+        raise ValueError("Sealed request digest mismatch")
+    def pairs(rows):
+        result = {}
+        for key, value in rows:
+            if key in result:
+                raise ValueError("Duplicate sealed JSON key")
+            result[key] = value
+        return result
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+    if (type(payload) is not dict or set(payload) != {"action", "params", "authority"}
+            or payload["action"] != "create_serial_flat_tool_after_mixed_pockets"
+            or type(payload["params"]) is not dict
+            or type(payload["params"].get("process_id")) is not int
+            or payload["params"]["process_id"] != process_id):
+        raise ValueError("Sealed request action or owned process differs")
+    params = payload["params"]
+    authority = payload["authority"]
+    if (type(authority) is not dict or set(authority) != {"creation_receipt_path", "creation_receipt_sha256", "provider_sha256"}):
+        raise ValueError("Exact trusted provider authority required")
+    module = Path(SCRIPTS_DIR) / "sw_cam_serial_flat_finished_context.py"
+    if (not module.is_file() or module.is_symlink()
+            or hashlib.sha256(module.read_bytes()).hexdigest() != authority.get("provider_sha256")):
+        raise ValueError("Installed continuation module digest differs")
+    serial = Path(SCRIPTS_DIR) / "sw_cam_serial_flat_tool.py"
+    if (not serial.is_file() or serial.is_symlink() or hashlib.sha256(serial.read_bytes()).hexdigest() != params.get("module_sha256")):
+        raise ValueError("Installed serial-tool creator digest differs")
+    if (type(params.get("receipt_path")) is not str
+            or Path(params["receipt_path"]).resolve() == path.resolve()):
+        raise ValueError("Diagnostic receipt may not alias its sealed request")
+    return payload
+
+
+@mcp.tool(name="solidworks_cam_create_serial_flat_tool_from_mixed_pockets",
+    title="Create Serial Flat Tool From Saved Mixed Pockets",
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_create_serial_flat_tool_from_mixed_pockets(params: SolidWorksCamSerialFlatMixedInput) -> str:
+    """Create and qualify one serial flat tool from the completed mixed-pocket authority, preserve the existing route, and save once; no assignment, GOP or GTP."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        payload = _cam_serial_flat_finished_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+        from scripts.sw_cam_serial_flat_finished_context import dispatch_request
+        result = dispatch_request(payload)
+        if _cam_serial_flat_finished_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+            raise ValueError("Sealed diagnostic request changed during read")
+        return result
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+
+
+
+class SolidWorksCamHostIdentityReadInput(BaseInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def absolute_request(self):
+        from pathlib import Path
+        if not Path(self.request_path).is_absolute():
+            raise ValueError("Absolute sealed request path required")
+        return self
+
+
+def _cam_host_identity_read_sealed_payload(request_path, request_sha256, process_id):
+    import hashlib
+    import json
+    from pathlib import Path
+    path = Path(request_path)
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+        raise ValueError("Bounded existing non-symlink sealed request required")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+        raise ValueError("Sealed request digest differs")
+    def pairs(rows):
+        result = {}
+        for key, value in rows:
+            if key in result:
+                raise ValueError("Duplicate sealed JSON key")
+            result[key] = value
+        return result
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+            or payload["action"] != "read_existing_host_identity"
+            or type(payload["params"]) is not dict
+            or type(process_id) is not int or not 0 < process_id < 2**31
+            or type(payload["params"].get("process_id")) is not int
+            or payload["params"]["process_id"] != process_id):
+        raise ValueError("Exact action and owned process required")
+    p = payload["params"]
+    module = Path(SCRIPTS_DIR) / "sw_cam_host_identity_read.py"
+    if (not module.is_file() or module.is_symlink()
+            or hashlib.sha256(module.read_bytes()).hexdigest() != p.get("module_sha256")):
+        raise ValueError("Installed identity diagnostic implementation differs")
+    protected = {path.resolve(), module.resolve()}
+    outputs = []
+    for field in ("receipt_path",):
+        value = p.get(field)
+        if type(value) is not str or not value or not Path(value).is_absolute():
+            raise ValueError("Absolute identity diagnostic output required")
+        output = Path(value).resolve()
+        if output in protected or output in outputs:
+            raise ValueError("Diagnostic outputs must be distinct and not alias request or implementation")
+        outputs.append(output)
+    return payload
+
+
+@mcp.tool(name="solidworks_cam_read_existing_reader_host_identity",
+    title="Read Existing Reader Host Identity",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_read_existing_reader_host_identity(params: SolidWorksCamHostIdentityReadInput) -> str:
+    """Read one existing host identity through the fixed TURN empty request; no CAM getters, host load, registration, Save or generation."""
+    def op():
+        from copy import deepcopy
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        payload = _cam_host_identity_read_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+        from scripts.sw_cam_host_identity_read import dispatch_request
+        result = dispatch_request(deepcopy(payload))
+        if _cam_host_identity_read_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+            raise ValueError("Sealed identity request changed during dispatch")
+        return result
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+
+
+class SolidWorksCamLocalOperationGroupInput(BaseInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def absolute_request(self):
+        from pathlib import Path
+        if not Path(self.request_path).is_absolute():
+            raise ValueError("Absolute sealed request path required")
+        return self
+
+
+def _cam_local_operation_group_sealed_payload(request_path, request_sha256, process_id):
+    import hashlib
+    import json
+    from pathlib import Path
+    path = Path(request_path)
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+        raise ValueError("Bounded existing non-symlink sealed request required")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+        raise ValueError("Sealed request digest differs")
+    def pairs(rows):
+        result = {}
+        for key, value in rows:
+            if key in result:
+                raise ValueError("Duplicate sealed JSON key")
+            result[key] = value
+        return result
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+            or payload["action"] != "create_local_rough_finish_group"
+            or type(payload["params"]) is not dict
+            or type(process_id) is not int or not 0 < process_id < 2**31
+            or type(payload["params"].get("process_id")) is not int
+            or payload["params"]["process_id"] != process_id):
+        raise ValueError("Exact action and owned process required")
+    p = payload["params"]
+    module = Path(SCRIPTS_DIR) / "sw_cam_local_operation_packet.py"
+    if (not module.is_file() or module.is_symlink()
+            or hashlib.sha256(module.read_bytes()).hexdigest() != p.get("module_sha256")):
+        raise ValueError("Installed operation packet implementation differs")
+    protected = {path.resolve(), module.resolve()}
+    outputs = []
+    for field in ("receipt_path", "progress_path", "saved_cl_path"):
+        value = p.get(field)
+        if type(value) is not str or not value or not Path(value).is_absolute():
+            raise ValueError("Absolute operation packet output required")
+        output = Path(value).resolve()
+        if output in protected or output in outputs:
+            raise ValueError("Operation outputs must be distinct and not alias request or implementation")
+        outputs.append(output)
+    return payload
+
+
+@mcp.tool(name="solidworks_cam_create_local_rough_finish_group",
+    title="Create Local Rough and Finish Group",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_create_local_rough_finish_group(params: SolidWorksCamLocalOperationGroupInput) -> str:
+    """Create and configure four local operations from saved native features, preserve the existing route, generate once per new operation and save once."""
+    def op():
+        from copy import deepcopy
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        payload = _cam_local_operation_group_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+        from scripts.sw_cam_local_operation_packet import dispatch_request
+        result = dispatch_request(deepcopy(payload))
+        if _cam_local_operation_group_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+            raise ValueError("Sealed operation request changed during dispatch")
+        return result
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+
+class SolidWorksCamLocalOperationContinuationInput(BaseInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def absolute_request(self):
+        from pathlib import Path
+        if not Path(self.request_path).is_absolute():
+            raise ValueError("Absolute sealed request path required")
+        return self
+
+
+def _cam_local_operation_continuation_sealed_payload(request_path, request_sha256, process_id):
+    import hashlib
+    import json
+    from pathlib import Path
+    path = Path(request_path)
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+        raise ValueError("Bounded existing non-symlink sealed request required")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+        raise ValueError("Sealed request digest differs")
+    def pairs(rows):
+        result = {}
+        for key, value in rows:
+            if key in result:
+                raise ValueError("Duplicate sealed JSON key")
+            result[key] = value
+        return result
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+            or payload["action"] != "continue_local_group_definitions"
+            or type(payload["params"]) is not dict
+            or type(process_id) is not int or not 0 < process_id < 2**31
+            or type(payload["params"].get("process_id")) is not int
+            or payload["params"]["process_id"] != process_id):
+        raise ValueError("Exact action and owned process required")
+    p = payload["params"]
+    module = Path(SCRIPTS_DIR) / "sw_cam_local_operation_continue.py"
+    if (not module.is_file() or module.is_symlink()
+            or hashlib.sha256(module.read_bytes()).hexdigest() != p.get("module_sha256")):
+        raise ValueError("Installed operation packet implementation differs")
+    protected = {path.resolve(), module.resolve()}
+    for field in ("expected_document_path", "failed_receipt_path", "failed_marker_path"):
+        value = p.get(field)
+        if type(value) is not str or not value or not Path(value).is_absolute():
+            raise ValueError("Absolute continuation input required")
+        protected.add(Path(value).resolve())
+    outputs = []
+    for field in ("receipt_path", "progress_path", "saved_cl_path"):
+        value = p.get(field)
+        if type(value) is not str or not value or not Path(value).is_absolute():
+            raise ValueError("Absolute operation packet output required")
+        output = Path(value).resolve()
+        if output in protected or output in outputs:
+            raise ValueError("Operation outputs must be distinct and not alias request or implementation")
+        outputs.append(output)
+    return payload
+
+
+@mcp.tool(name="solidworks_cam_continue_local_group_definitions",
+    title="Continue Existing Local Operations",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_continue_local_group_definitions(params: SolidWorksCamLocalOperationContinuationInput) -> str:
+    """Adopt four verified existing operation definitions, assign and configure them, generate each once, preserve the previous route and save once without inserting operations."""
+    def op():
+        from copy import deepcopy
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        payload = _cam_local_operation_continuation_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+        from scripts.sw_cam_local_operation_continue import dispatch_request
+        result = dispatch_request(deepcopy(payload))
+        if _cam_local_operation_continuation_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+            raise ValueError("Sealed operation request changed during dispatch")
+        return result
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+
 if __name__ == "__main__":
     main()
