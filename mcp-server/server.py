@@ -12731,5 +12731,471 @@ def solidworks_cam_offline_reconcile_local_generation(params: SolidWorksCamLocal
         return result
     return _run_locked(op, params.response_format, load_automation=False, desktop_guard=False)
 
+class SolidWorksCamSaved18PrecloseInput(BaseInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def absolute_request(self):
+        from pathlib import Path
+        if not Path(self.request_path).is_absolute():
+            raise ValueError("Absolute sealed request path required")
+        return self
+
+
+def _cam_saved18_preclose_sealed_payload(request_path, request_sha256, process_id):
+    import hashlib
+    import json
+    from pathlib import Path
+    path = Path(request_path)
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+        raise ValueError("Bounded existing non-symlink sealed request required")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+        raise ValueError("Sealed request digest differs")
+    def pairs(rows):
+        result = {}
+        for key, value in rows:
+            if key in result:
+                raise ValueError("Duplicate sealed JSON key")
+            result[key] = value
+        return result
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+            or payload["action"] != "close_saved_eighteen_for_owned_restart"
+            or type(payload["params"]) is not dict
+            or type(process_id) is not int or not 0 < process_id < 2**31
+            or type(payload["params"].get("process_id")) is not int
+            or payload["params"]["process_id"] != process_id):
+        raise ValueError("Exact action and owned process required")
+    p = payload["params"]
+    module = Path(SCRIPTS_DIR) / "sw_cam_saved18_preclose.py"
+    if (not module.is_file() or module.is_symlink()
+            or hashlib.sha256(module.read_bytes()).hexdigest() != p.get("module_sha256")):
+        raise ValueError("Installed identity diagnostic implementation differs")
+    protected = {path.resolve(), module.resolve()}
+    outputs = []
+    for field in ("receipt_path",):
+        value = p.get(field)
+        if type(value) is not str or not value or not Path(value).is_absolute():
+            raise ValueError("Absolute identity diagnostic output required")
+        output = Path(value).resolve()
+        if output in protected or output in outputs:
+            raise ValueError("Diagnostic outputs must be distinct and not alias request or implementation")
+        outputs.append(output)
+    return payload
+
+
+@mcp.tool(name="solidworks_cam_close_saved_eighteen_for_restart",
+    title="Close Verified Saved Eighteen Part",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_close_saved_eighteen_for_restart(params: SolidWorksCamSaved18PrecloseInput) -> str:
+    """Verify the current21 binding and close one clean saved part once; no Save, generation, exit or launch."""
+    def op():
+        from copy import deepcopy
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        payload = _cam_saved18_preclose_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+        from scripts.sw_cam_saved18_preclose import dispatch_request
+        result = dispatch_request(deepcopy(payload))
+        if _cam_saved18_preclose_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+            raise ValueError("Sealed identity request changed during dispatch")
+        return result
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+class SolidWorksCamSaved18RestartInput(BaseInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def absolute_request(self):
+        from pathlib import Path
+        if not Path(self.request_path).is_absolute():
+            raise ValueError("Absolute sealed request path required")
+        return self
+
+
+def _cam_saved18_restart_sealed_payload(request_path, request_sha256, process_id):
+    import hashlib
+    import json
+    from pathlib import Path
+    path = Path(request_path)
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+        raise ValueError("Bounded existing non-symlink sealed request required")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+        raise ValueError("Sealed request digest differs")
+    def pairs(rows):
+        result = {}
+        for key, value in rows:
+            if key in result:
+                raise ValueError("Duplicate sealed JSON key")
+            result[key] = value
+        return result
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+            or payload["action"] != "verify_saved_eighteen_after_owned_restart"
+            or type(payload["params"]) is not dict
+            or type(process_id) is not int or not 0 < process_id < 2**31
+            or type(payload["params"].get("process_id")) is not int
+            or payload["params"]["process_id"] != process_id):
+        raise ValueError("Exact action and owned process required")
+    p = payload["params"]
+    module = Path(SCRIPTS_DIR) / "sw_cam_saved18_restarted_verify.py"
+    if (not module.is_file() or module.is_symlink()
+            or hashlib.sha256(module.read_bytes()).hexdigest() != p.get("module_sha256")):
+        raise ValueError("Installed identity diagnostic implementation differs")
+    protected = {path.resolve(), module.resolve()}
+    outputs = []
+    for field in ("receipt_path", "saved_cl_path"):
+        value = p.get(field)
+        if type(value) is not str or not value or not Path(value).is_absolute():
+            raise ValueError("Absolute identity diagnostic output required")
+        output = Path(value).resolve()
+        if output in protected or output in outputs:
+            raise ValueError("Diagnostic outputs must be distinct and not alias request or implementation")
+        outputs.append(output)
+    return payload
+
+
+@mcp.tool(name="solidworks_cam_verify_saved_eighteen_after_restart",
+    title="Verify Saved Eighteen After Owned Restart",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_verify_saved_eighteen_after_restart(params: SolidWorksCamSaved18RestartInput) -> str:
+    """Verify new owned host identity before one current21/12 snapshot and one saved18 CL export; no Save, generation, host activation or process changes."""
+    def op():
+        from copy import deepcopy
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        payload = _cam_saved18_restart_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+        from scripts.sw_cam_saved18_restarted_verify import dispatch_request
+        result = dispatch_request(deepcopy(payload))
+        if _cam_saved18_restart_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+            raise ValueError("Sealed identity request changed during dispatch")
+        return result
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+class SolidWorksCamSaved18DirtyRestartInput(BaseInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def absolute_request(self):
+        from pathlib import Path
+        if not Path(self.request_path).is_absolute():
+            raise ValueError("Absolute sealed request path required")
+        return self
+
+
+def _cam_saved18_dirty_restart_sealed_payload(request_path, request_sha256, process_id):
+    import hashlib
+    import json
+    from pathlib import Path
+    path = Path(request_path)
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+        raise ValueError("Bounded existing non-symlink sealed request required")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+        raise ValueError("Sealed request digest differs")
+    def pairs(rows):
+        result = {}
+        for key, value in rows:
+            if key in result:
+                raise ValueError("Duplicate sealed JSON key")
+            result[key] = value
+        return result
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+            or payload["action"] != "verify_saved_eighteen_observed_dirty"
+            or type(payload["params"]) is not dict
+            or type(process_id) is not int or not 0 < process_id < 2**31
+            or type(payload["params"].get("process_id")) is not int
+            or payload["params"]["process_id"] != process_id):
+        raise ValueError("Exact action and owned process required")
+    p = payload["params"]
+    module = Path(SCRIPTS_DIR) / "sw_cam_saved18_restarted_dirty_verify.py"
+    if (not module.is_file() or module.is_symlink()
+            or hashlib.sha256(module.read_bytes()).hexdigest() != p.get("module_sha256")):
+        raise ValueError("Installed identity diagnostic implementation differs")
+    protected = {path.resolve(), module.resolve()}
+    outputs = []
+    for field in ("receipt_path", "saved_cl_path"):
+        value = p.get(field)
+        if type(value) is not str or not value or not Path(value).is_absolute():
+            raise ValueError("Absolute identity diagnostic output required")
+        output = Path(value).resolve()
+        if output in protected or output in outputs:
+            raise ValueError("Diagnostic outputs must be distinct and not alias request or implementation")
+        outputs.append(output)
+    return payload
+
+
+@mcp.tool(name="solidworks_cam_verify_saved_eighteen_observed_dirty",
+    title="Verify Observed Dirty Saved Eighteen",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_verify_saved_eighteen_observed_dirty(params: SolidWorksCamSaved18DirtyRestartInput) -> str:
+    """Verify new owned host identity before one current21/12 snapshot and one saved18 CL export; no Save, generation, host activation or process changes."""
+    def op():
+        from copy import deepcopy
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        payload = _cam_saved18_dirty_restart_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+        from scripts.sw_cam_saved18_restarted_dirty_verify import dispatch_request
+        result = dispatch_request(deepcopy(payload))
+        if _cam_saved18_dirty_restart_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+            raise ValueError("Sealed identity request changed during dispatch")
+        return result
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+class SolidWorksCamSaved18SerialDirtyInput(BaseInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def absolute_request(self):
+        from pathlib import Path
+        if not Path(self.request_path).is_absolute():
+            raise ValueError("Absolute sealed request path required")
+        return self
+
+
+def _cam_saved18_serial_dirty_sealed_payload(request_path, request_sha256, process_id):
+    import hashlib
+    import json
+    from pathlib import Path
+    path = Path(request_path)
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+        raise ValueError("Bounded existing non-symlink sealed request required")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+        raise ValueError("Sealed request digest differs")
+    def pairs(rows):
+        result = {}
+        for key, value in rows:
+            if key in result:
+                raise ValueError("Duplicate sealed JSON key")
+            result[key] = value
+        return result
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+            or payload["action"] != "verify_saved_eighteen_serial_dirty"
+            or type(payload["params"]) is not dict
+            or type(process_id) is not int or not 0 < process_id < 2**31
+            or type(payload["params"].get("process_id")) is not int
+            or payload["params"]["process_id"] != process_id):
+        raise ValueError("Exact action and owned process required")
+    p = payload["params"]
+    module = Path(SCRIPTS_DIR) / "sw_cam_saved18_serial_dirty_verify.py"
+    if (not module.is_file() or module.is_symlink()
+            or hashlib.sha256(module.read_bytes()).hexdigest() != p.get("module_sha256")):
+        raise ValueError("Installed serial verification implementation differs")
+    protected = {path.resolve(), module.resolve()}
+    outputs = []
+    for field in ("receipt_path", "saved_cl_path"):
+        value = p.get(field)
+        if type(value) is not str or not value or not Path(value).is_absolute():
+            raise ValueError("Absolute serial verification output required")
+        output = Path(value).resolve()
+        if output in protected or output in outputs:
+            raise ValueError("Diagnostic outputs must be distinct and not alias request or implementation")
+        outputs.append(output)
+    return payload
+
+
+@mcp.tool(name="solidworks_cam_verify_saved_eighteen_serial_dirty",
+    title="Verify Serial Observed Dirty Saved Eighteen",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_verify_saved_eighteen_serial_dirty(params: SolidWorksCamSaved18SerialDirtyInput) -> str:
+    """Read one complete current21/12 CAM snapshot and one exact saved18 CL export in the owned dirty document; no Save, GTP, setters, host call or process change."""
+    def op():
+        from copy import deepcopy
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        payload = _cam_saved18_serial_dirty_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+        from scripts.sw_cam_saved18_serial_dirty_verify import dispatch_request
+        result = dispatch_request(deepcopy(payload))
+        if _cam_saved18_serial_dirty_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+            raise ValueError("Sealed serial verification request changed during dispatch")
+        return result
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+class SolidWorksCamExistingLocalOptimizationInput(BaseInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def absolute_request(self):
+        from pathlib import Path
+        if not Path(self.request_path).is_absolute():
+            raise ValueError("Absolute sealed request path required")
+        return self
+
+
+def _cam_existing_local_optimization_sealed_payload(request_path, request_sha256, process_id):
+    import hashlib
+    import json
+    from pathlib import Path
+    path = Path(request_path)
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+        raise ValueError("Bounded existing non-symlink sealed request required")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+        raise ValueError("Sealed request digest differs")
+    def pairs(rows):
+        result = {}
+        for key, value in rows:
+            if key in result:
+                raise ValueError("Duplicate sealed JSON key")
+            result[key] = value
+        return result
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+            or payload["action"] != "optimize_existing_local_group"
+            or type(payload["params"]) is not dict
+            or type(process_id) is not int or not 0 < process_id < 2**31
+            or type(payload["params"].get("process_id")) is not int
+            or payload["params"]["process_id"] != process_id):
+        raise ValueError("Exact action and owned process required")
+    p = payload["params"]
+    module = Path(SCRIPTS_DIR) / "sw_cam_local_serial_optimization.py"
+    if (not module.is_file() or module.is_symlink()
+            or hashlib.sha256(module.read_bytes()).hexdigest() != p.get("module_sha256")):
+        raise ValueError("Installed operation packet implementation differs")
+    protected = {path.resolve(), module.resolve()}
+    for field in ("expected_document_path", "qualified_receipt_path", "rebind_receipt_path", "recipe_path"):
+        value = p.get(field)
+        if type(value) is not str or not value or not Path(value).is_absolute():
+            raise ValueError("Absolute continuation input required")
+        protected.add(Path(value).resolve())
+    outputs = []
+    for field in ("receipt_path", "progress_path", "saved_cl_path"):
+        value = p.get(field)
+        if type(value) is not str or not value or not Path(value).is_absolute():
+            raise ValueError("Absolute operation packet output required")
+        output = Path(value).resolve()
+        if output in protected or output in outputs:
+            raise ValueError("Operation outputs must be distinct and not alias request or implementation")
+        outputs.append(output)
+    return payload
+
+
+@mcp.tool(name="solidworks_cam_optimize_existing_local_group",
+    title="Optimize Existing Local Operation Group",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_optimize_existing_local_group(params: SolidWorksCamExistingLocalOptimizationInput) -> str:
+    """Apply only twelve sealed depth/pitch settings to four existing operations, regenerate each once, preserve fourteen other paths, save once and export eighteen streams. No feature/operation/tool creation, assignment or feed mutation; machining qualification remains separate."""
+    def op():
+        from copy import deepcopy
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        payload = _cam_existing_local_optimization_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+        from scripts.sw_cam_local_serial_optimization import dispatch_request
+        result = dispatch_request(deepcopy(payload))
+        if _cam_existing_local_optimization_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+            raise ValueError("Sealed operation request changed during dispatch")
+        return result
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
+class SolidWorksCamLocalUlpSaveInput(BaseInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def absolute_request(self):
+        from pathlib import Path
+        if not Path(self.request_path).is_absolute():
+            raise ValueError("Absolute sealed request path required")
+        return self
+
+
+def _cam_local_ulp_save_sealed_payload(request_path, request_sha256, process_id):
+    import hashlib
+    import json
+    from pathlib import Path
+    path = Path(request_path)
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.stat().st_size > 1048576:
+        raise ValueError("Bounded existing non-symlink sealed request required")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != request_sha256:
+        raise ValueError("Sealed request digest differs")
+    def pairs(rows):
+        result = {}
+        for key, value in rows:
+            if key in result:
+                raise ValueError("Duplicate sealed JSON key")
+            result[key] = value
+        return result
+    payload = json.loads(data.decode("utf-8-sig"), object_pairs_hook=pairs,
+        parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON value")))
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+            or payload["action"] != "save_generated_local_ulp"
+            or type(payload["params"]) is not dict
+            or type(process_id) is not int or not 0 < process_id < 2**31
+            or type(payload["params"].get("process_id")) is not int
+            or payload["params"]["process_id"] != process_id):
+        raise ValueError("Exact action and owned process required")
+    p = payload["params"]
+    module = Path(SCRIPTS_DIR) / "sw_cam_local_ulp_save.py"
+    if (not module.is_file() or module.is_symlink()
+            or hashlib.sha256(module.read_bytes()).hexdigest() != p.get("module_sha256")):
+        raise ValueError("Installed operation packet implementation differs")
+    protected = {path.resolve(), module.resolve()}
+    for field in ("expected_document_path", "optimizer_receipt_path", "optimizer_request_path"):
+        value = p.get(field)
+        if type(value) is not str or not value or not Path(value).is_absolute():
+            raise ValueError("Absolute continuation input required")
+        protected.add(Path(value).resolve())
+    outputs = []
+    for field in ("receipt_path", "saved_cl_path"):
+        value = p.get(field)
+        if type(value) is not str or not value or not Path(value).is_absolute():
+            raise ValueError("Absolute operation packet output required")
+        output = Path(value).resolve()
+        if output in protected or output in outputs:
+            raise ValueError("Operation outputs must be distinct and not alias request or implementation")
+        outputs.append(output)
+    return payload
+
+
+@mcp.tool(name="solidworks_cam_save_generated_local_ulp",
+    title="Save Already Generated Local Paths",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_save_generated_local_ulp(params: SolidWorksCamLocalUlpSaveInput) -> str:
+    """Adopt exact completed GTP4 with eight fixed-anchor one-ULP NC observations, save once and export eighteen streams. No setters, GTP, NC restore or process changes; raw observations remain preserved."""
+    def op():
+        from copy import deepcopy
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Explicit owned process connection required")
+        payload = _cam_local_ulp_save_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+        from scripts.sw_cam_local_ulp_save import dispatch_request
+        result = dispatch_request(deepcopy(payload))
+        if _cam_local_ulp_save_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+            raise ValueError("Sealed operation request changed during dispatch")
+        return result
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
 if __name__ == "__main__":
     main()
