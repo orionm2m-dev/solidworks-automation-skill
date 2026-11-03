@@ -13794,5 +13794,34 @@ def solidworks_cam_qualify_turn_holder_write_through(params: SolidWorksCamTurnHo
     return _run_locked(op, params.response_format)
 
 
+class SolidWorksCamTurnToolContoursInput(SolidWorksCamVariableAllowanceInput):
+    """Exact read-only own-tool contours for an existing bore rough/finish operation."""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    expected_process_create_time: float = Field(gt=0, strict=True, allow_inf_nan=False)
+    expected_operation_type: int = Field(ge=5, le=6, strict=True)
+    expected_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_linked_feature_ids: list[int] = Field(min_length=1, max_length=64)
+    expected_tool_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    action: Literal["read"] = "read"
+
+
+@mcp.tool(name="solidworks_cam_inspect_turn_tool_contours", title="Inspect Existing TURN Bore Tool Contours",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_inspect_turn_tool_contours(params: SolidWorksCamTurnToolContoursInput) -> str:
+    """Read both own-tool contours twice; no operation options, THREAD catalogue or changes."""
+    def op():
+        _runtime_identity.assert_current()
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_turn_variable_allowance import inspect_turn_tool_contours
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        result = inspect_turn_tool_contours(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+        _runtime_identity.assert_current()
+        return result
+    return _run_locked(op, params.response_format)
+
+
 if __name__ == "__main__":
     main()

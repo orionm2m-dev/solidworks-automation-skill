@@ -1,0 +1,11 @@
+# Existing TURN bore tool contours
+
+`solidworks_cam_inspect_turn_tool_contours` reads the selected operation's own diamond insert and boring-bar holder for an existing rough-bore type 5 or finish-bore type 6. It requires the exact process ID and creation time, saved document path and SHA-256, operation index/type/native ID, linked feature IDs and tool native ID. Only `action="read"` and `message_policy="vendor_default"` are supported.
+
+The tool reuses the existing bore reader's two complete captures under one active CAM event subscription. Each capture reads both `ICWTool.GetToolProfile()` and `ICWTurnToolHolder.GetHolderProfile(operation)`, together with the operation orientation, insert dimensions and X/Z offsets. The existing decoder limits each contour to 32 chains and 512 line/arc curves. Unsupported tool/holder kinds, missing or incomplete contours, identity drift, inventory change, events and cleanup failures stop the read. No further CAM getter follows an observed event.
+
+This dedicated endpoint reads no rough-bore options, variable allowances, linked-feature profiles or THREAD catalogue. It performs no setter, tool assignment, generation, CL read or Save. The existing rough-bore-options endpoint and its default behavior are unchanged.
+
+A successful result establishes two matching bounded observations. Stable unsaved CAM state is reported explicitly; the saved-file hash does not identify all RAM data. Inventory equality covers operation metadata and path record counts, not full CL coordinates or all CAM parameters. The process, document and saved file are checked again after event cleanup, with no later CAM reads.
+
+The default insert contour frame is not defined by the method help. The holder contour is operation-specific; raw orientation and offsets do not establish a common insert/holder/CL frame, tool program point, physical assembly or swept clearance. Units, frame, program point, full solid geometry and production qualification remain false. A native finish-bore read produced two equal captures: a six-curve insert profile and a ten-curve, two-chain holder profile. No CAM events or collected inventory changes were observed. This verifies the bounded read for that input; physical access and coordinate transformation remain unqualified.
