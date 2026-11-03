@@ -49,6 +49,7 @@ REQUIRED_TOOLS = {
     "solidworks_cam_qualify_thread_operation",
     "solidworks_cam_qualify_turn_feature",
     "solidworks_cam_configure_turn_feature_attribute",
+    "solidworks_cam_inspect_turn_feature_recipe",
     "solidworks_cam_qualify_feature_operation_plan",
     "solidworks_cam_configure_thread_pitch",
     "solidworks_cam_inspect_material_catalogue",

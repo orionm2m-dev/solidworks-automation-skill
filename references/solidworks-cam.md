@@ -1822,3 +1822,12 @@ its class is noncreatable. Reuse that finding before further owner discovery.
 and expose no numeric deviation argument. TURN-specific quality limits do not
 establish MILL behavior. Preserve coarse WIP as evidence; it cannot certify a
 smaller geometric error merely because `FINE` was requested.
+
+
+## Read-only TURN feature recipe metadata
+
+`solidworks_cam_inspect_turn_feature_recipe` reads one exact saved TURN feature through the selected SOLIDWORKS process. Supply the explicit PID, document path and SHA-256, feature setup/index identity, expected feature type, and optional exact strategy name. The part must be clean. Two bounded captures must agree on document identity, source hash, feature and operation IDs, links, types, generated flags, record counts, strategy catalogue, spindle, stock attribute, and min/max diameter.
+
+The returned current `Attribute` and `GetTdbIdForAttribute(name)` are separate raw observations: a default attribute can report zero while its name lookup returns a positive database identifier. The reader preserves this distinction and does not authorize a setter or equate either number with a database row. Catalogue aliases are retained. The stock attribute is distinct from the workpiece geometry type. Diameter units and database-condition matching require separate evidence.
+
+The read does not change the strategy, generate operations or paths, save the part, read full profiles/NC, or verify full model geometry. Its document verification covers path, title, type and dirty state; record counts do not verify cutter coordinates. A successful native qualification confirmed stable metadata and unchanged source bytes. Regeneration and persistence remain separate operations.

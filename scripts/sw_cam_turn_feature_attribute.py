@@ -55,17 +55,20 @@ def _items(raw, typelib_path, read, *, limit=512):
     return [read(collection, "Item", index) for index in range(count)]
 
 
-def _inventory(machine, typelib_path, read):
+def _inventory(machine, typelib_path, read, *, max_features=64, max_operations=512, max_setups=512):
+    for value, upper in ((max_features, 64), (max_operations, 512), (max_setups, 512)):
+        if type(value) is not int or not 1 <= value <= upper:
+            raise ValueError("Invalid strict inventory bound")
     # 与公共 inventory 同一数据结构；每个 Count/Item/getter 都经过本地事件门禁。
     counts = []
-    for raw in _items(read(machine, "IGetEnumSetups"), typelib_path, read):
+    for raw in _items(read(machine, "IGetEnumSetups"), typelib_path, read, limit=max_setups):
         setup = _typed(raw, "ICWBaseSetup", typelib_path)
-        counts.append(len(_items(read(setup, "IGetEnumFeatures"), typelib_path, read, limit=64-sum(counts))))
-    setups = _items(read(machine, "IGetEnumOpSetups"), typelib_path, read)
+        counts.append(len(_items(read(setup, "IGetEnumFeatures"), typelib_path, read, limit=max_features-sum(counts))))
+    setups = _items(read(machine, "IGetEnumOpSetups"), typelib_path, read, limit=max_setups)
     operations = []
     for si, raw in enumerate(setups):
         setup = _typed(raw, "ICWBaseOpSetup", typelib_path)
-        for oi, value in enumerate(_items(read(setup, "IGetEnumOperations"), typelib_path, read, limit=512-len(operations))):
+        for oi, value in enumerate(_items(read(setup, "IGetEnumOperations"), typelib_path, read, limit=max_operations-len(operations))):
             operation = _typed(value, "ICWOperation", typelib_path)
             turn = _typed(value, "ICWTurnOperation", typelib_path)
             generated = read(operation, "GetIsToolpathGenerated")

@@ -13421,5 +13421,42 @@ def solidworks_cam_qualify_turn_bore(params: SolidWorksCamQualifyTurnBoreInput) 
     return _run_locked(op, params.response_format, load_automation=False, desktop_guard=not params.validate_only)
 
 
+class SolidWorksCamTurnFeatureRecipeInput(SolidWorksCamTargetInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    feature_setup_index: int = Field(ge=0, le=63, strict=True)
+    expected_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_turn_feature_type: int = Field(ge=0, le=2147483647, strict=True)
+    attribute_name: Optional[str] = Field(default=None, min_length=1, max_length=1000, strict=True)
+    max_features: int = Field(default=64, ge=1, le=64, strict=True)
+    max_operations: int = Field(default=64, ge=1, le=64, strict=True)
+
+    @field_validator("expected_document_path")
+    @classmethod
+    def recipe_saved_part_path(cls, value):
+        if not absolute_document_path(value) or Path(value).suffix.casefold() != ".sldprt":
+            raise ValueError("An exact absolute saved SLDPRT is required")
+        return value
+
+
+@mcp.tool(name="solidworks_cam_inspect_turn_feature_recipe", title="Inspect One TURN Feature Recipe Metadata",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_inspect_turn_feature_recipe(params: SolidWorksCamTurnFeatureRecipeInput) -> str:
+    """Read exact feature strategy/catalog, stock attribute, spindle and links; no profile/NC/setters."""
+    def op():
+        _runtime_identity.assert_current()
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Recipe process must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_turn_feature_recipe import inspect_turn_feature_recipe
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        result = inspect_turn_feature_recipe(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+        _runtime_identity.assert_current()
+        return result
+    return _run_locked(op, params.response_format)
+
 if __name__ == "__main__":
     main()
