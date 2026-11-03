@@ -13458,5 +13458,146 @@ def solidworks_cam_inspect_turn_feature_recipe(params: SolidWorksCamTurnFeatureR
         return result
     return _run_locked(op, params.response_format)
 
+class SolidWorksCamTurnFeatureRegenerateInput(SolidWorksCamTurnFeatureRecipeInput):
+    expected_process_create_time: float = Field(gt=0, strict=True, allow_inf_nan=False)
+    attribute_name: str = Field(min_length=1, max_length=1000, strict=True)
+    action: Literal["prepare", "apply"] = "prepare"
+    policy: Dict[str, Any]
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+
+    @model_validator(mode="after")
+    def exact_recipe_transaction(self):
+        from scripts.sw_cam_turn_feature_regenerate import validate
+        config = self.model_dump(include={"process_id", "expected_process_create_time", "expected_document_path", "expected_source_sha256",
+            "feature_setup_index", "expected_feature_native_id", "expected_turn_feature_type", "attribute_name",
+            "max_features", "max_operations"})
+        validate(config, self.policy)
+        if self.action == "prepare" and (self.expected_state_sha256 is not None or self.receipt_path is not None):
+            raise ValueError("Prepare cannot include apply inputs")
+        if self.action == "apply" and (self.expected_state_sha256 is None or self.receipt_path is None):
+            raise ValueError("Apply requires the prepared digest and a fresh receipt")
+        if self.receipt_path is not None and (not absolute_document_path(self.receipt_path)
+                or Path(self.receipt_path).suffix.casefold() != ".json"):
+            raise ValueError("An absolute JSON receipt is required")
+        return self
+
+
+@mcp.tool(name="solidworks_cam_qualify_turn_feature_recipe", title="Qualify One TURN Feature Recipe on an Isolated Copy",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_qualify_turn_feature_recipe(params: SolidWorksCamTurnFeatureRegenerateInput) -> str:
+    """Prepare or apply one feature Attribute/GOP2 on a distinct copy; no Save, GTP or tool assignment."""
+    def op():
+        _runtime_identity.assert_current()
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Recipe process must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_turn_feature_regenerate import qualify_turn_feature_recipe
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        result = qualify_turn_feature_recipe(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+        _runtime_identity.assert_current()
+        return result
+    return _run_locked(op, params.response_format)
+
+
+
+class SolidWorksCamTurnRecipeReconcileInput(SolidWorksCamTargetInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    expected_process_create_time: float = Field(gt=0, strict=True, allow_inf_nan=False)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    parent_receipt_path: str = Field(min_length=1, strict=True)
+    parent_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_after_state_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_operation_order: list[int] = Field(min_length=1, max_length=64)
+    receipt_path: str = Field(min_length=1, strict=True)
+    acknowledge_append_definitions_only: bool = Field(strict=True)
+
+    @field_validator("expected_document_path", "parent_receipt_path", "receipt_path")
+    @classmethod
+    def exact_reconcile_path(cls, value):
+        if not absolute_document_path(value):
+            raise ValueError("An absolute exact path is required")
+        return value
+
+    @field_validator("expected_operation_order", mode="before")
+    @classmethod
+    def exact_reconcile_order(cls, value):
+        from scripts.sw_cam_turn_feature_regenerate import ids
+        ids(value)
+        return value
+
+
+@mcp.tool(name="solidworks_cam_reconcile_turn_feature_recipe", title="Reconcile Appended TURN Recipe Definitions",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_reconcile_turn_feature_recipe(params: SolidWorksCamTurnRecipeReconcileInput) -> str:
+    """Read and reconcile an exact completed GOP receipt; never repeat Attribute/GOP or qualify route order."""
+    def op():
+        _runtime_identity.assert_current()
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Reconciliation process must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_turn_recipe_reconcile import reconcile_turn_feature_recipe
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        result = reconcile_turn_feature_recipe(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+        _runtime_identity.assert_current()
+        return result
+    return _run_locked(op, params.response_format)
+
+
+
+
+
+class SolidWorksCamTurnOperationReorderInput(SolidWorksCamTurnFeatureRecipeInput):
+    expected_process_create_time: float = Field(gt=0, strict=True, allow_inf_nan=False)
+    attribute_name: str = Field(min_length=1, max_length=1000, strict=True)
+    action: Literal["inspect", "prepare", "apply"] = "prepare"
+    policy: Dict[str, Any]
+    plan: Dict[str, Any]
+    expected_metadata_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+
+    @model_validator(mode="after")
+    def exact_turn_reorder(self):
+        from scripts.sw_cam_turn_operation_reorder import validate
+        config = self.model_dump(include={"process_id", "expected_process_create_time", "expected_document_path", "expected_source_sha256",
+            "feature_setup_index", "expected_feature_native_id", "expected_turn_feature_type", "attribute_name", "max_features", "max_operations"})
+        validate(config, self.policy, self.plan, self.expected_metadata_sha256)
+        if self.action == "inspect":
+            if self.expected_metadata_sha256 is not None:
+                raise ValueError("Inspect obtains the current metadata digest")
+        elif self.expected_metadata_sha256 is None:
+            raise ValueError("Prepare/apply require the reviewed metadata digest")
+        if self.action != "apply" and (self.expected_state_sha256 is not None or self.receipt_path is not None):
+            raise ValueError("Inspect/prepare cannot include apply inputs")
+        if self.action == "apply" and (self.expected_state_sha256 is None or self.receipt_path is None):
+            raise ValueError("Apply requires the prepared digest and a fresh receipt")
+        if self.receipt_path is not None and (not absolute_document_path(self.receipt_path)
+                or Path(self.receipt_path).suffix.casefold() != ".json"):
+            raise ValueError("An absolute JSON receipt is required")
+        return self
+
+
+@mcp.tool(name="solidworks_cam_reorder_turn_operations", title="Reorder Reviewed Existing TURN Operations",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_reorder_turn_operations(params: SolidWorksCamTurnOperationReorderInput) -> str:
+    """Inspect, prepare or move existing TURN operations on an isolated copy; no copy, GOP, GTP or Save."""
+    def op():
+        _runtime_identity.assert_current()
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Reorder process must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_turn_operation_reorder import reorder_turn_operations
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        result = reorder_turn_operations(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+        _runtime_identity.assert_current()
+        return result
+    return _run_locked(op, params.response_format)
+
 if __name__ == "__main__":
     main()

@@ -49,14 +49,18 @@ def _catalog_ids(turn, requested, read):
             "database_row_id_mapping_qualified": False}
 
 
-def _capture(sw, clsid, typelib_path, config, report):
+def _capture(sw, clsid, typelib_path, config, report, *, require_clean=True,
+             check=lambda: None, native_out=None, extended_metadata=False):
     diagnostic = {"phase": "capture", "features": [], "operations": []}
     report["snapshots"].append(diagnostic)
 
     def read(obj, name, *args):
         diagnostic["stage"] = name
         report["guarded_member_reads"] += 1
-        return _member(obj, name, *args)
+        check()
+        value = _member(obj, name, *args)
+        check()
+        return value
 
     def owner():
         _require(_integer(read(sw, "GetProcessID")) == config["process_id"], "PROCESS_MISMATCH")
@@ -66,7 +70,8 @@ def _capture(sw, clsid, typelib_path, config, report):
     _require(initial_document is not None, "DOCUMENT_ABSENT")
     check_document_target(initial_document["path"], initial_document["title"],
                           expected_path=config["expected_document_path"], required=True)
-    _require(initial_document["type"] == 1 and initial_document["needs_save"] is False, "CLEAN_PART_REQUIRED")
+    _require(initial_document["type"] == 1 and type(initial_document["needs_save"]) is bool
+             and (not require_clean or initial_document["needs_save"] is False), "CLEAN_PART_REQUIRED")
     _require(_file_hash(initial_document["path"]) == config["expected_source_sha256"], "SOURCE_HASH_MISMATCH")
     before, doc, _part, machine, app = _context(sw, clsid, typelib_path, read)
     _require(before == initial_document, "DOCUMENT_CHANGED_DURING_CONTEXT")
@@ -76,6 +81,7 @@ def _capture(sw, clsid, typelib_path, config, report):
     diagnostic["inventory"] = inventory
     features, operations = diagnostic["features"], diagnostic["operations"]
     selected = None
+    operation_handles = {}
     for si, raw_setup in enumerate(_items(read(machine, "IGetEnumSetups"), typelib_path, read, limit=64)):
         setup = _typed(raw_setup, "ICWBaseSetup", typelib_path)
         for raw in _items(read(setup, "IGetEnumFeatures"), typelib_path, read,
@@ -84,6 +90,16 @@ def _capture(sw, clsid, typelib_path, config, report):
             turn = _typed(raw, "ICWTurnFeature", typelib_path)
             kind = _integer(read(turn, "GetTurnFeatureType"))
             features.append(dict(setup_index=si, native_id=feature_id, turn_feature_type_raw=kind))
+            if extended_metadata:
+                base = _typed(raw, "ICWFeature", typelib_path)
+                features[-1].update(name=_text(read(base, "FeatureName"), 1000, "FEATURE_NAME_INVALID"),
+                    feature_type_raw=_integer(read(base, "FeatType")),
+                    attribute_id_raw=_integer(read(turn, "Attribute")),
+                    attribute_name=_text(read(turn, "GetAttributeName"), 1000, "ATTRIBUTE_NAME_INVALID"),
+                    spindle_type_raw=_integer(read(turn, "GetSpindleType")),
+                    diameters_native=list(map(_number, _values(read(turn, "GetMinMaxDiameter"), 2))),
+                    start_native=list(map(_number, _values(read(turn, "GetStartPosition"), 3))),
+                    end_native=list(map(_number, _values(read(turn, "GetEndPosition"), 3))))
             if feature_id == config["expected_feature_native_id"]:
                 _require(selected is None and si == config["feature_setup_index"], "TARGET_FEATURE_ID_OR_SETUP_AMBIGUOUS")
                 _require(kind == config["expected_turn_feature_type"], "TARGET_FEATURE_TYPE_MISMATCH")
@@ -105,6 +121,7 @@ def _capture(sw, clsid, typelib_path, config, report):
             _require(len(set(ids)) == len(ids) and set(ids) <= feature_ids, "INVALID_OPERATION_FEATURE_LINKS")
             operations.append(dict(setup_index=si, operation_index=oi, native_id=_object_id(doc, op, read),
                 turn_operation_type=_integer(read(turn, "OpernType")), linked_feature_ids=ids))
+            operation_handles[operations[-1]["native_id"]] = raw
     _require(len({row["native_id"] for row in operations}) == len(operations), "DUPLICATE_OPERATION_IDS")
     positions = {(row["setup_index"], row["operation_index"]): row for row in inventory["operations"]}
     _require(len(positions) == len(operations) == inventory["operation_count"], "OPERATION_INVENTORY_CHANGED")
@@ -143,6 +160,8 @@ def _capture(sw, clsid, typelib_path, config, report):
     _require(document_snapshot(sw) == before, "DOCUMENT_CHANGED_DURING_INSPECTION")
     _require(_file_hash(before["path"]) == config["expected_source_sha256"], "SOURCE_CHANGED_DURING_INSPECTION")
     diagnostic["stage"] = "complete"
+    if native_out is not None:
+        native_out.update(app=app, doc=doc, machine=machine, turn_feature=selected, operations=operation_handles)
     return state
 
 

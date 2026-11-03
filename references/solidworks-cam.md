@@ -1831,3 +1831,17 @@ smaller geometric error merely because `FINE` was requested.
 The returned current `Attribute` and `GetTdbIdForAttribute(name)` are separate raw observations: a default attribute can report zero while its name lookup returns a positive database identifier. The reader preserves this distinction and does not authorize a setter or equate either number with a database row. Catalogue aliases are retained. The stock attribute is distinct from the workpiece geometry type. Diameter units and database-condition matching require separate evidence.
 
 The read does not change the strategy, generate operations or paths, save the part, read full profiles/NC, or verify full model geometry. Its document verification covers path, title, type and dirty state; record counts do not verify cutter coordinates. A successful native qualification confirmed stable metadata and unchanged source bytes. Regeneration and persistence remain separate operations.
+
+
+
+### Reviewed TURN operation reorder (pilot)
+
+`solidworks_cam_reorder_turn_operations` changes only the order of explicitly reviewed existing operations on one isolated TURN qualification copy. It uses the current process ID and creation time, exact saved source hash, protected original-part pins, TechDB pin, selected feature identity, default-operation catalogue, setup index, complete current/final native-ID order, and an ordered move list. Every move requires `make_copy: false`. No GOP, toolpath generation, tool assignment, insertion, global sorting, model Save, automatic retry, or rollback occurs.
+
+Use `action: inspect` to obtain two matching full collected metadata snapshots and `final_state_sha256`; this action rejects apply inputs and consumes no attempt marker. Review that snapshot, then pass its hash as `expected_metadata_sha256` with `action: prepare`. Apply also requires the separate `prepared_state_sha256` returned by prepare and a fresh JSON receipt. Process selection and runtime identity are checked by the MCP wrapper. The copy must initially be saved and clean.
+
+Each `ICWBaseOpSetup.InsertOperationAfter` call resolves the current setup and operation dispatch handles, records durable intent before dispatch, requires strict integer HRESULT zero, then immediately compares the exact intermediate order and all collected feature, own-tool, two-NC-field, crib, and path metadata. Only operation position indices and the observed Boolean save flag may change. Any failure stops later moves; the per-copy marker prevents replay through another receipt.
+
+Successful readback verifies native order and collected metadata only. The two NC fields are spindle speed and feed rate; full NC parameters, BRep, physical tooling and cutting sequence remain unqualified. Export and compare complete protected CL streams separately, then verify deliberate Save/reopen separately. A false document save flag alone does not establish CAM persistence.
+
+A native reorder qualification completed four moves with HRESULT zero and exact metadata readback after every move. All eleven full CL blocks matched byte-for-byte by native operation identity; only their sequence changed. Later selected drilling and rough-boring generation completed without changing other recorded paths. After explicit Save/reopen, cutter-coordinate bytes persisted, but the new rough-bore CL spindle unit changed from SMM to RPM while retaining its numeric value. Preserve both exports and review spindle mode separately; coordinate persistence does not qualify cutting-speed units or all NC settings.
