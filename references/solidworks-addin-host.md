@@ -26,7 +26,7 @@ powershell -ExecutionPolicy Bypass -File scripts\sw_addin_host.ps1 `
   -SolidWorksApiDir 'C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\api\redist'
 ```
 
-输出为程序集；Machine 注册时还会生成并注册同目录 TLB：
+Build 生成并验证同目录的 x64 DLL 与 TLB；构建本身不执行注册：
 
 ```text
 dotnet\CadStudio.SolidWorks.AddinHost\bin\Release\net48\CadStudio.SolidWorks.AddinHost.dll
@@ -42,7 +42,7 @@ powershell -ExecutionPolicy Bypass -File scripts\sw_addin_host.ps1 -Action Regis
 powershell -ExecutionPolicy Bypass -File scripts\sw_addin_host.ps1 -Action ComSmoke -RegistrationScope CurrentUser
 ```
 
-SolidWorks 进程内加载必须执行 Machine 注册。普通 PowerShell 会自动弹出一次 UAC，
+首次安装的 SolidWorks 发现项需要 Machine 注册；已经存在的发现项不需要每次更新重复创建。普通 PowerShell 会自动弹出一次 UAC，
 提升后的子进程只执行固定 GUID 的构建/注册动作：
 
 ```powershell
@@ -100,3 +100,23 @@ powershell -ExecutionPolicy Bypass -File scripts\sw_addin_host.ps1 -Action Unreg
 - [IPropertyManagerPage2Handler9 Members（SOLIDWORKS API Help 2026）](https://help.solidworks.com/2026/English/api/swpublishedapi/SolidWorks.Interop.swpublished~SolidWorks.Interop.swpublished.IPropertyManagerPage2Handler9_members.html)
 - [LoadAddIn Method（SOLIDWORKS API Help 2026）](https://help.solidworks.com/2026/English/api/sldworksapi/SolidWorks.Interop.sldworks~SolidWorks.Interop.sldworks.ISldWorks~LoadAddIn.html)
 - [FileCloseNotify Delegate（SOLIDWORKS API Help 2026）](https://help.solidworks.com/2026/english/api/sldworksapi/SolidWorks.Interop.sldworks~SolidWorks.Interop.sldworks.DSldWorksEvents_FileCloseNotifyEventHandler.html)
+
+## Updating an existing CAM host
+
+`Build` produces a strong-named assembly and exports its corresponding x64 type library. Inspect both artifacts before `RegisterBuilt`; the latter requires their exact SHA-256 values and does not rebuild them. Set `-RequiredCamInterface` to each needed command interface, including the bore builder when applicable. A strong name is an assembly identity, not Authenticode publisher certification.
+
+Use an unpackaged 64-bit PowerShell process for registration and its readback. The Microsoft Store distribution of Python can read and write a private registry view. A virtual environment based on that distribution retains its package identity. Its apparent registration success therefore does not establish that an ordinary SOLIDWORKS process can see the interface. Python may still inspect the actual DLL/TLB file metadata. Do not clear private package hives or weaken Windows security to resolve the difference.
+
+The CurrentUser installer uses `Get-AddinCodeBase` to preserve the .NET Framework/RegAsm-compatible assembly location. It first uses `AssemblyName.GetAssemblyName(...).CodeBase`; when that metadata value is unavailable, it constructs an unescaped absolute file URI. Spaces remain literal, for example `file:///C:/Program Files/Host/host.dll`. The same value is written to the class and assembly-version `InprocServer32` entries. Do not substitute `[Uri].AbsoluteUri`, which escapes spaces, or apply blanket `%20` replacements that could change a literal filename. The offline formatter tests cover drive paths, UNC paths, spaces and literal `%20`/`#` characters.
+
+A registered file existing on disk and a successful `LoadAddIn` return do not establish COM activation. For a bounded constructor check, `ComSmoke` accepts `-ComSmokeDiagnosticPath` with a fresh, fully qualified output file. It records a limited exception chain, including `FileName`, `FusionLog` and loader exceptions, and preserves a failed exit status. These properties may be empty; their absence does not locate the binding failure. This command activates the host once outside CAD and may update the host diagnostic file; it does not connect to SOLIDWORKS or change Fusion logging settings. The synthetic diagnostic test driver performs no real activation.
+
+When the existing machine registration already names the canonical assembly path and identity, an update can reuse that path. Verify the existing registration instead of assuming a machine-wide rewrite is needed. Keep backups of replaced files and changed own registration values. An obsolete version is not an archive while it remains an active registration; any retirement must target an exact reviewed own leaf after a durable rollback record. Do not retire entries based on a different process's virtual registry view.
+
+Before invoking a new command, confirm the actual loaded assembly path and MVID in the intended owned SOLIDWORKS process. A file hash, `LoadAddIn=0`, or a connected diagnostic file alone is insufficient. Reuse an existing clean saved checkpoint, close only the owned session, and do not repeat failed unload/reload attempts without changed evidence.
+
+The host exposes `ReadTurnSnapshot` and a separate `QualifyCreateBoundTurnBore` command. See [the bounded bore qualification contract](cam-turn-bore-qualification.md). Software tests and metadata validation do not establish native execution, persistence, or machining suitability.
+
+Public COM-visible classes and interfaces use explicit stable GUIDs. In particular, the callback class GUID is fixed independently of strong-name signing; its outgoing event interface remains the vendor's `_IDialogEvents` interface.
+
+References: [Microsoft Store Python known issues](https://docs.python.org/3.10/using/windows.html#known-issues), [MSIX registry virtualization](https://learn.microsoft.com/en-us/windows/msix/desktop/flexible-virtualization).

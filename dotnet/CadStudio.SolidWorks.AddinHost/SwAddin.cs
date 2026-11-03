@@ -13,7 +13,7 @@ namespace CadStudio.SolidWorks.AddinHost
     [ComVisible(true)]
     [Guid(AddinGuid)]
     [ProgId("CadStudio.SolidWorks.AddinHost")]
-    public sealed class SwAddin : ISwAddin, ICamBatchReader
+    public sealed class SwAddin : ISwAddin, ICamBatchReader, ICamTurnBoreBuilder
     {
         public const string AddinGuid = "8EE76E8D-9B47-4DE0-AFA2-B2E36621A134";
         private const int CommandGroupId = 55001;
@@ -119,6 +119,23 @@ namespace CadStudio.SolidWorks.AddinHost
             GC.Collect();
             GC.WaitForPendingFinalizers();
             return released;
+        }
+
+        public string QualifyCreateBoundTurnBore(string requestJson)
+        {
+            if (System.Threading.Interlocked.Exchange(ref camReaderBusy, 1) != 0)
+                throw new InvalidOperationException("CAM_READER_BUSY");
+            try
+            {
+                if (System.Threading.Thread.CurrentThread.ManagedThreadId == camOwnerThread)
+                    return CamTurnBoreBuilder.Execute(swApp, camOwnerThread, requestJson);
+                var dispatcher = taskPaneControl;
+                if (dispatcher == null || dispatcher.IsDisposed || !dispatcher.IsHandleCreated)
+                    throw new InvalidOperationException("CAM_OWNER_DISPATCH_UNAVAILABLE");
+                return (string)dispatcher.Invoke((Func<string>)(() =>
+                    CamTurnBoreBuilder.Execute(swApp, camOwnerThread, requestJson)));
+            }
+            finally { System.Threading.Interlocked.Exchange(ref camReaderBusy, 0); }
         }
 
         public string ReadTurnSnapshot(string requestJson)

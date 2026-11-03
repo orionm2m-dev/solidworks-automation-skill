@@ -45,24 +45,24 @@ internal static class CamBatchReader {
         Require(camName == objectName, "CAM_CONFIGURATION_OBJECT_MISMATCH");
         Require(associatedSwName == expectedSwName, "CAM_SW_CONFIGURATION_MISMATCH");
     }
-    private static string Key(string p) { return Path.GetFullPath(p).TrimEnd('\\', '/').Replace('/', '\\').ToUpperInvariant(); }
-    private static double Number(double v) { Require(!Double.IsNaN(v) && !Double.IsInfinity(v), "NONFINITE_NUMBER"); return v; }
-    private static string Text(string v) { Require(v != null && v.Length <= 4096, "NATIVE_TEXT_LIMIT"); return v; }
-    private static Dictionary<string, object> Document(ISldWorks app, Request request) {
+    internal static string Key(string p) { return Path.GetFullPath(p).TrimEnd('\\', '/').Replace('/', '\\').ToUpperInvariant(); }
+    internal static double Number(double v) { Require(!Double.IsNaN(v) && !Double.IsInfinity(v), "NONFINITE_NUMBER"); return v; }
+    internal static string Text(string v) { Require(v != null && v.Length <= 4096, "NATIVE_TEXT_LIMIT"); return v; }
+    internal static Dictionary<string, object> Document(ISldWorks app, Request request) {
         Require(Process.GetCurrentProcess().Id == request.ProcessId && app.GetProcessID() == request.ProcessId, "PROCESS_MISMATCH");
         var doc = app.ActiveDoc as IModelDoc2; Require(doc != null, "NO_ACTIVE_DOCUMENT");
         string path = doc.GetPathName(); Require(!String.IsNullOrEmpty(path) && Key(path) == Key(request.DocumentPath), "DOCUMENT_MISMATCH");
         Require(doc.GetType() == 1, "PART_REQUIRED");
         return new Dictionary<string, object> { { "path", path }, { "title", doc.GetTitle() }, { "type", doc.GetType() }, { "needs_save", doc.GetSaveFlag() }, { "configuration", Text(doc.ConfigurationManager.ActiveConfiguration.Name) } };
     }
-    private static object[] Items(object raw, int limit) {
+    internal static object[] Items(object raw, int limit) {
         Require(raw != null, "NULL_COLLECTION"); var collection = (ICWDispatchCollection)raw; int count = collection.Count;
         Require(count >= 0 && count <= limit, "COLLECTION_LIMIT"); var result = new object[count];
         for (int i = 0; i < count; i++) { result[i] = collection.Item(i); Require(result[i] != null, "NULL_COLLECTION_ITEM"); }
         return result;
     }
-    private static uint Identity(ICWDoc3 doc, object value) { uint id; Require(doc.GetCWObjectID(value, out id) && id > 0, "NATIVE_ID"); return id; }
-    private static Dictionary<string, object> Inventory(ICWMachine machine, ICWDoc3 doc, Request request, Dictionary<uint, ICWTurnOperation> handles) {
+    internal static uint Identity(ICWDoc3 doc, object value) { uint id; Require(doc.GetCWObjectID(value, out id) && id > 0, "NATIVE_ID"); return id; }
+    internal static Dictionary<string, object> Inventory(ICWMachine machine, ICWDoc3 doc, Request request, Dictionary<uint, ICWTurnOperation> handles) {
         var setups = Items(machine.IGetEnumOpSetups(), 8); var operations = new List<Dictionary<string, object>>(); var ids = new HashSet<uint>();
         for (int si = 0; si < setups.Length; si++) {
             var rawOps = Items(((ICWBaseOpSetup)setups[si]).IGetEnumOperations(), request.MaxOperations - operations.Count);
@@ -77,7 +77,7 @@ internal static class CamBatchReader {
         }
         return new Dictionary<string, object> { { "machine_type", 3 }, { "operation_setup_count", setups.Length }, { "operation_count", operations.Count }, { "operations", operations } };
     }
-    private static List<Dictionary<string, object>> Tools(ICWMachine machine, ICWDoc3 doc, Request request) {
+    internal static List<Dictionary<string, object>> Tools(ICWMachine machine, ICWDoc3 doc, Request request) {
         var crib = (ICWToolcrib4)machine.IGetToolcrib(); var rows = new List<Dictionary<string, object>>(); var ids = new HashSet<uint>();
         foreach (var raw in Items(crib.GetAllTools(), request.MaxTools)) {
             var tool = (ICWTool)raw; uint id = Identity(doc, raw); Require(ids.Add(id), "DUPLICATE_TOOL_ID");

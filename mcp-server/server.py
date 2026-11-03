@@ -13361,5 +13361,65 @@ def solidworks_cam_read_saved_protected_operation_lengths(params: SolidWorksCamS
     return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
 
 
+class SolidWorksCamQualifyTurnBoreInput(BaseInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    request_path: str = Field(min_length=1, max_length=32767, strict=True)
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    validate_only: bool = Field(default=False, strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def absolute_sealed_path(self):
+        from pathlib import Path
+        if not Path(self.request_path).is_absolute():
+            raise ValueError("Absolute sealed request path required")
+        return self
+
+
+def _turn_bore_qualification_payload(request_path, request_sha256, process_id):
+    import hashlib
+    from pathlib import Path
+    from scripts.sw_cam_inprocess_reader import decode
+    path = Path(request_path)
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or not 0 < path.stat().st_size <= 1048576:
+        raise ValueError("Bounded regular sealed request required")
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != request_sha256:
+        raise ValueError("Sealed request hash changed")
+    payload = decode(raw.decode("utf-8-sig"))
+    if (type(payload) is not dict or set(payload) != {"action", "params"}
+            or payload["action"] != "qualify_create_bound_turn_bore"
+            or type(payload["params"]) is not dict
+            or type(payload["params"].get("process_id")) is not int
+            or payload["params"]["process_id"] != process_id):
+        raise ValueError("Fixed action or owned process mismatch")
+    values = payload["params"]
+    module = Path(SCRIPTS_DIR) / "sw_cam_inprocess_turn_bore.py"
+    if not module.is_file() or module.is_symlink() or hashlib.sha256(module.read_bytes()).hexdigest() != values.get("module_sha256"):
+        raise ValueError("Installed qualification module differs")
+    for key in ("receipt_path", "native_receipt_path"):
+        if type(values.get(key)) is not str or Path(values[key]).resolve() == path.resolve():
+            raise ValueError("Receipt may not alias sealed request")
+    return payload
+
+
+@mcp.tool(name="solidworks_cam_qualify_turn_bore",
+    title="Qualify One TURN Bore on a Disposable Copy",
+    annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_cam_qualify_turn_bore(params: SolidWorksCamQualifyTurnBoreInput) -> str:
+    """One owner-STA create/bind/own-NC call; qualification copy only, no Save or GTP. Prepare is offline."""
+    def op():
+        if not params.validate_only and (type(_selected_process_id) is not int or _selected_process_id != params.process_id):
+            raise ValueError("Explicit owned process connection required")
+        payload = _turn_bore_qualification_payload(params.request_path, params.request_sha256, params.process_id)
+        from scripts.sw_cam_inprocess_turn_bore import dispatch_request
+        result = dispatch_request(payload, validate_only=params.validate_only)
+        if _turn_bore_qualification_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+            raise ValueError("Sealed qualification request changed during call")
+        return result
+    return _run_locked(op, params.response_format, load_automation=False, desktop_guard=not params.validate_only)
+
+
 if __name__ == "__main__":
     main()
