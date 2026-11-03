@@ -13599,5 +13599,112 @@ def solidworks_cam_reorder_turn_operations(params: SolidWorksCamTurnOperationReo
         return result
     return _run_locked(op, params.response_format)
 
+
+
+class SolidWorksCamTurnHolderDimensionsInput(SolidWorksCamOperationProfileInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_process_create_time: float = Field(gt=0, strict=True, allow_inf_nan=False)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_operation_type: int = Field(ge=5, le=6, strict=True)
+    expected_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_tool_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_holder_id: int = Field(ge=0, lt=2147483648, strict=True)
+    protected_part_pins: list[dict[str, Any]] = Field(min_length=1, max_length=16)
+    values_native: dict[str, float] = Field(min_length=1, max_length=3)
+    action: Literal["prepare", "apply"] = "prepare"
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    allowed_affected_operations: Optional[list[SolidWorksCamToolReferenceInput]] = Field(default=None, min_length=1, max_length=512)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    qualification_only: Literal[True]
+    message_policy: Literal["vendor_default"]
+
+    @field_validator("qualification_only", mode="before")
+    @classmethod
+    def holder_qualification_boolean(cls, value):
+        if type(value) is not bool:
+            raise ValueError("qualification_only must be a Boolean")
+        return value
+
+    @field_validator("values_native", mode="before")
+    @classmethod
+    def holder_scalar_values(cls, value):
+        fields = {"BoringBarDiameter", "ShankLength", "LeadAngle"}
+        if type(value) is not dict or not 1 <= len(value) <= 3 or any(type(k) is not str or k not in fields for k in value):
+            raise ValueError("Only three documented holder dimensions supported")
+        for key, number in value.items():
+            if type(number) not in (int, float) or not math.isfinite(number) or (key != "LeadAngle" and number <= 0):
+                raise ValueError("Finite native dimensions required; diameter and length must be positive")
+        return value
+
+    @model_validator(mode="after")
+    def holder_exact_action(self):
+        from scripts.sw_cam_turn_holder_dimensions import validate
+        fields = {"process_id", "expected_process_create_time", "expected_document_path", "expected_source_sha256",
+            "setup_index", "operation_index", "expected_operation_type", "expected_operation_native_id", "expected_tool_native_id", "expected_holder_id"}
+        validate(self.model_dump(include=fields), self.values_native, self.protected_part_pins)
+        guards = (self.expected_state_sha256, self.allowed_affected_operations, self.receipt_path)
+        if self.action == "prepare":
+            if any(x is not None for x in guards):
+                raise ValueError("Prepare rejects apply guards and receipt")
+        else:
+            if any(x is None for x in guards):
+                raise ValueError("Apply requires prepared state, exact sharing references and receipt")
+            refs = [(x.setup_index, x.operation_index, x.expected_operation_type) for x in self.allowed_affected_operations]
+            if len(set((x[0], x[1]) for x in refs)) != len(refs) or (self.setup_index, self.operation_index, self.expected_operation_type) not in refs:
+                raise ValueError("Unique references must include the selected operation")
+            if not absolute_document_path(self.receipt_path) or Path(self.receipt_path).suffix.casefold() != ".json":
+                raise ValueError("Absolute JSON receipt required")
+        return self
+
+
+@mcp.tool(name="solidworks_cam_configure_turn_holder_dimensions", title="Configure Existing TURN Boring Holder Dimensions",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_configure_turn_holder_dimensions(params: SolidWorksCamTurnHolderDimensionsInput) -> str:
+    """Prepare/apply three documented scalars on an existing diamond boring holder; no rebind, generation or Save."""
+    def op():
+        _runtime_identity.assert_current()
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Holder process must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_turn_holder_dimensions import configure_turn_holder_dimensions
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        result = configure_turn_holder_dimensions(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+        _runtime_identity.assert_current()
+        return result
+    return _run_locked(op, params.response_format)
+
+
+
+
+class SolidWorksCamTurnBoreOptionsInput(SolidWorksCamVariableAllowanceInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    expected_process_create_time: float = Field(gt=0, strict=True, allow_inf_nan=False)
+    expected_operation_type: int = Field(ge=5, le=5, strict=True)
+    expected_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_linked_feature_ids: list[int] = Field(min_length=1, max_length=64)
+    action: Literal["read"] = "read"
+
+
+@mcp.tool(name="solidworks_cam_inspect_turn_bore_options", title="Inspect Existing TURN Bore Rough Options",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_inspect_turn_bore_options(params: SolidWorksCamTurnBoreOptionsInput) -> str:
+    """Read eleven native Bore Rough options twice; no setters, tool reads, generation or Save."""
+    def op():
+        _runtime_identity.assert_current()
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_turn_variable_allowance import inspect_turn_bore_options
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        result = inspect_turn_bore_options(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+        _runtime_identity.assert_current()
+        return result
+    return _run_locked(op, params.response_format)
+
+
 if __name__ == "__main__":
     main()

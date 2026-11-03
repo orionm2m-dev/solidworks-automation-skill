@@ -1,4 +1,4 @@
-"""Read-only operation-owned turning variable allowance inspection.
+"""Read-only operation-owned turning allowances and bounded bore rough options.
 No setter, tool getter, CL read, GTP, GOP, save or inferred unit conversion.
 """
 from __future__ import annotations
@@ -10,12 +10,57 @@ import re
 from scripts.sw_cam import _member, _error, document_snapshot
 from scripts.sw_cam_generation import _typed
 from scripts.sw_cam_events import CamMessageSession
-from scripts.sw_cam_operation_profile import _integer, _read_profile
+from scripts.sw_cam_operation_profile import _integer, _number, _read_profile
+from scripts.sw_executable_launch import _process_identity
+from scripts.sw_cam_comtypes import _interface_class
 from scripts.sw_cam_thread import _file_hash, _object_id
 from scripts.sw_cam_turn_feature_attribute import _context, _items, _inventory
 from scripts.sw_operation_guard import absolute_document_path, check_document_target, solidworks_operation_lock
 
 _MODE_INTERFACES={1:'ICWTurnRoughOp',2:'ICWTurnFinishOp'}
+
+_BORE_BOOL = {"RadialCut": 8, "AxialCut": 9, "ReverseCut": 10,
+              "MirrorAboutCenterline": 11, "Undercut": 20}
+_BORE_NUMBER = {"FirstCutAmt": 12, "MaxCutAmt": 13, "FinalCutAmt": 14,
+                "RadialStockAmt": 25, "AxialStockAmt": 26}
+
+
+def _bore_options_abi(typelib_path):
+    """Metadata-only exact getter contract; no activation, QI or setters."""
+    from ctypes import HRESULT, POINTER, c_int, c_double
+    from ctypes.wintypes import VARIANT_BOOL
+    interface = _interface_class("ICWTurnBoreRoughOp", typelib_path)
+    specifications = [("_get_"+name, dispid, VARIANT_BOOL) for name,dispid in _BORE_BOOL.items()]
+    specifications += [("_get_"+name, dispid, c_double) for name,dispid in _BORE_NUMBER.items()]
+    specifications += [("GetAllowanceMethodVariable", 23, c_int)]
+    for name,dispid,scalar in specifications:
+        methods = [m for m in interface._methods_ if m.name == name]
+        if len(methods) != 1:
+            raise ValueError("Unique exact bore getter required: "+name)
+        method = methods[0]
+        if (method.restype is not HRESULT or method.idlflags[0] != dispid
+                or method.argtypes != (POINTER(scalar),)
+                or tuple(x[0] for x in method.paramflags) != (10,)
+                or (name.startswith("_get_") and "propget" not in method.idlflags)):
+            raise ValueError("Exact bore getter ABI differs: "+name)
+    return dict(interface="ICWTurnBoreRoughOp", iid=str(interface._iid_).upper(),
+                getter_count=len(specifications), native_calls=0)
+
+
+def _read_bore_options(raw, typelib_path, read, result):
+    interface = _typed(raw, "ICWTurnBoreRoughOp", typelib_path)
+    for name in _BORE_BOOL:
+        value = read(interface,name)
+        if type(value) is not bool:
+            raise ValueError("Bore option must be a strict Boolean: "+name)
+        result[name] = value
+    for name in _BORE_NUMBER:
+        result[name] = _number(read(interface,name))
+    mode = read(interface,"GetAllowanceMethodVariable")
+    if type(mode) is not int or not -(2**31) <= mode < 2**31:
+        raise ValueError("Bore allowance method must be exact native LONG")
+    result["GetAllowanceMethodVariable"] = mode
+
 
 
 def _digest(value):
@@ -84,6 +129,14 @@ def _snapshot(sw,clsid,typelib_path,config,read,check,identity,diagnostic=None):
         return result
     if not ids or sorted(ids)!=config['expected_linked_feature_ids']:
         raise ValueError('Exact linked feature IDs changed')
+    if config.get('inspection_scope') == 'bore_rough_options':
+        result['bore_options_native'] = {}
+        _read_bore_options(raw,typelib_path,read,result['bore_options_native'])
+        check()
+        if identity()!=current_doc or _inventory(machine,typelib_path,read)!=result['inventory']:
+            raise ValueError('Document, saved file or complete inventory changed during bore read')
+        result['capture_complete']=True
+        return result
     for fid,value in zip(ids,linked):
         profile={}
         profiles.append({'native_id':fid,'profile':profile})
@@ -103,17 +156,18 @@ def _snapshot(sw,clsid,typelib_path,config,read,check,identity,diagnostic=None):
     return result
 
 
-def inspect_turn_variable_allowance(sw,clsid,typelib_path,*,process_id,expected_document_path,
+def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expected_document_path,
         setup_index,operation_index,expected_operation_type,expected_source_sha256,
         expected_operation_native_id=None,expected_linked_feature_ids=None,
-        action='read',message_policy='vendor_default'):
+        action='read',message_policy='vendor_default',inspection_scope='profile_and_variable_allowance',
+        expected_process_create_time=None):
     """Exact current saved part (may contain unchanged unsaved RAM data), one operation.
 
     Bootstrap obtains add-in/app only so events can be subscribed. All subsequent
     CAM getters, Count and Item calls, including both snapshots, run under active
     CamMessageSession. After disconnect only SW identity and saved file hash read.
     """
-    report={'action':action,'inspection_scope':'identity_only' if action=='identify' else 'profile_and_variable_allowance',
+    report={'action':action,'inspection_scope':'identity_only' if action=='identify' else inspection_scope,
             'status':'error','phase':'validation','may_continue':False,'mutation_attempted':False,
             'GOP_attempted':False,'GTP_attempted':False,'model_saved':False,'tool_readers_used':False,
             'CL_read_attempted':False,'units_verified':False,'radius_vs_diameter_scaling_verified':False,
@@ -126,14 +180,22 @@ def inspect_turn_variable_allowance(sw,clsid,typelib_path,*,process_id,expected_
                ('operation_index',operation_index,0,511)]:
             if type(value) is not int or not lo<=value<=hi: raise ValueError('Invalid strict selector '+name)
         if action not in ('read','identify'): raise ValueError('Only read or identify action allowed')
+        if inspection_scope not in ('profile_and_variable_allowance','bore_rough_options'):
+            raise ValueError('Unknown operation parameter inspection scope')
+        if inspection_scope=='bore_rough_options':
+            if action!='read' or type(expected_process_create_time) not in (int,float) or not math.isfinite(expected_process_create_time) or expected_process_create_time<=0:
+                raise ValueError('Bore options require read-only action and exact process lifetime')
+        elif expected_process_create_time is not None:
+            raise ValueError('Legacy allowance scope does not accept process lifetime extension')
         if expected_operation_native_id is not None and (type(expected_operation_native_id) is not int or not 1<=expected_operation_native_id<2**32):
             raise ValueError('Invalid strict selector expected_operation_native_id')
         if action=='read' and expected_operation_native_id is None:
             raise ValueError('Allowance read requires exact expected operation native ID')
         if action=='identify' and expected_linked_feature_ids is not None:
             raise ValueError('Identify discovers linked IDs; expected linked IDs belong to strict read only')
-        if type(expected_operation_type) is not int or expected_operation_type not in _MODE_INTERFACES:
-            raise ValueError('Only exact OD ROUGH type1 or FINISH type2 mode interfaces supported')
+        allowed_types=(5,) if inspection_scope=='bore_rough_options' else _MODE_INTERFACES
+        if type(expected_operation_type) is not int or expected_operation_type not in allowed_types:
+            raise ValueError('Exact operation type does not match the parameter inspection scope')
         if type(expected_document_path) is not str or not absolute_document_path(expected_document_path) or Path(expected_document_path).suffix.casefold()!='.sldprt':
             raise ValueError('Exact absolute saved part path required')
         if type(expected_source_sha256) is not str or not re.fullmatch(r'[0-9a-f]{64}',expected_source_sha256):
@@ -147,7 +209,20 @@ def inspect_turn_variable_allowance(sw,clsid,typelib_path,*,process_id,expected_
              expected_operation_native_id=expected_operation_native_id,expected_operation_type=expected_operation_type,
              expected_linked_feature_ids=sorted(expected_linked_feature_ids) if expected_linked_feature_ids is not None else None,
              expected_source_sha256=expected_source_sha256)
+        if inspection_scope=='bore_rough_options':
+            config['inspection_scope']=inspection_scope
+            report['getter_abi']=_bore_options_abi(typelib_path)
+            report.update(full_model_geometry_verified=False,all_nc_parameters_verified=False,
+                tool_geometry_verified=False,production_qualified=False,
+                parameter_interpretation='Raw current Boolean/double/LONG values; no undercut, tool access or physical cutting qualification',
+                process_identity=dict(process_id=process_id,expected_process_create_time=expected_process_create_time))
         def identity():
+            if expected_process_create_time is not None:
+                process=_process_identity(process_id)
+                if (process.get('alive') is not True or process.get('process_id')!=process_id
+                        or process.get('create_time')!=expected_process_create_time
+                        or Path(process.get('executable','')).name.casefold()!='sldworks.exe'):
+                    raise ValueError('Exact SOLIDWORKS process lifetime changed')
             if _integer(_member(sw,'GetProcessID'))!=process_id: raise ValueError('Exact PID mismatch')
             state=document_snapshot(sw)
             if state is None or state['type']!=1 or not state['path']: raise ValueError('Saved part required')
@@ -182,9 +257,34 @@ def inspect_turn_variable_allowance(sw,clsid,typelib_path,*,process_id,expected_
             if identity()!=initial_doc: raise ValueError('SW document changed after event cleanup')
             report.update(status='ok',phase='finished',readback_verified=True,post_cleanup_document_file_verified=True,
                           interpretation=('Current document-scoped IDs only; no profiles, tools, mode or allowances read' if action=='identify'
-                            else 'Raw operation-owned values only; no safe allowance write or units/mode mapping claimed'))
+                            else 'Raw operation-owned values only; no safe parameter write or units/mode mapping claimed'))
     except Exception as error:
         report.update(status='error',failed_phase=report['phase'],phase='finished',issue=_error(error),readback_verified=False)
     finally:
         if session is not None: report['messages']=session.summary()
     return report
+
+
+def inspect_turn_variable_allowance(sw,clsid,typelib_path,*,process_id,expected_document_path,
+        setup_index,operation_index,expected_operation_type,expected_source_sha256,
+        expected_operation_native_id=None,expected_linked_feature_ids=None,
+        action='read',message_policy='vendor_default'):
+    """Existing OD allowance interface; its inputs and read/identify scopes are unchanged."""
+    return _inspect_turn_operation_parameters(sw,clsid,typelib_path,process_id=process_id,
+        expected_document_path=expected_document_path,setup_index=setup_index,operation_index=operation_index,
+        expected_operation_type=expected_operation_type,expected_source_sha256=expected_source_sha256,
+        expected_operation_native_id=expected_operation_native_id,expected_linked_feature_ids=expected_linked_feature_ids,
+        action=action,message_policy=message_policy)
+
+
+def inspect_turn_bore_options(sw,clsid,typelib_path,*,process_id,expected_process_create_time,
+        expected_document_path,expected_source_sha256,setup_index,operation_index,
+        expected_operation_native_id,expected_operation_type,expected_linked_feature_ids,
+        action='read',message_policy='vendor_default'):
+    """Read eleven Bore Rough scalars twice, with source/operation/process lifetime guards."""
+    return _inspect_turn_operation_parameters(sw,clsid,typelib_path,process_id=process_id,
+        expected_process_create_time=expected_process_create_time,expected_document_path=expected_document_path,
+        expected_source_sha256=expected_source_sha256,setup_index=setup_index,operation_index=operation_index,
+        expected_operation_native_id=expected_operation_native_id,expected_operation_type=expected_operation_type,
+        expected_linked_feature_ids=expected_linked_feature_ids,action=action,message_policy=message_policy,
+        inspection_scope='bore_rough_options')

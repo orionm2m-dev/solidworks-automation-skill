@@ -82,7 +82,8 @@ def probe(tmp_path, monkeypatch):
 @pytest.mark.parametrize('action',['inspect','prepare'])
 def test_readonly_scope_and_no_events_or_write(probe,action):
     out=probe.prepare(action=action)
-    assert out['status']=='ok' and out['apply_eligible']
+    assert out['status']=='ok' and out['apply_eligible'] is (action == 'prepare')
+    assert probe.snapshots.call_args.kwargs.get('scalar_inspect', False) is (action == 'inspect')
     assert out['affected_operations']==[ref(0),ref(1),ref(2)]
     assert not out['may_continue'] and not probe.state['writes'] and not probe.receipt.exists()
     events.CamMessageSession.assert_called_once()

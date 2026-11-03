@@ -74,7 +74,9 @@ def _bootstrap(sw,clsid,typelib_path,expected_path):
     return _typed(_member(addin,'GetCWApp'),'ICWApp4',typelib_path)
 
 
-def _snapshot(sw, clsid, typelib_path, selected, *, check=lambda: None, diagnostics=None):
+def _snapshot(sw, clsid, typelib_path, selected, *, check=lambda: None, diagnostics=None, scalar_inspect=False):
+    if type(scalar_inspect) is not bool or (scalar_inspect and selected is None):
+        raise ValueError("Scalar inspection requires an exact selected operation")
     diagnostic = {} if diagnostics is None else diagnostics
     def read(obj, name, *args):
         diagnostic['stage'] = name
@@ -90,12 +92,13 @@ def _snapshot(sw, clsid, typelib_path, selected, *, check=lambda: None, diagnost
         raise ValueError('This bounded writer requires a native TURN machine (type3)')
     # RPC failure/process loss was observed at this getter; causality is unproven. Never retry.
     unit_record = None
-    workpiece = _typed(read(machine, 'IGetWorkpiece'), 'ICWWorkpiece', typelib_path)
-    material = _read_bstr(read(workpiece, 'Material'))
+    workpiece = None if scalar_inspect else _typed(read(machine, 'IGetWorkpiece'), 'ICWWorkpiece', typelib_path)
+    material = None if scalar_inspect else _read_bstr(read(workpiece, 'Material'))
     inventory = _inventory(machine, typelib_path, read)
     check()
     groups, handles, identities, uses = [], [], [], []
     operation_ids, tool_ids = [], {}
+    inspected_tool_types = {}
     catalogue = None
     def native_id(obj):
         raw = read(doc, 'GetCWObjectID', obj)
@@ -127,6 +130,14 @@ def _snapshot(sw, clsid, typelib_path, selected, *, check=lambda: None, diagnost
             kind = read(tool, 'ToolType')
             if type(kind) is not int:
                 raise ValueError('Tool type must be a strict integer')
+            if scalar_inspect:
+                previous_kind = inspected_tool_types.setdefault(tid, kind)
+                if previous_kind != kind:
+                    raise ValueError('One native tool ID returned inconsistent types')
+                if ref != selected:
+                    uses.append({'operation': ref, 'operation_native_id': oid, 'tool_native_id': tid,
+                                 'tool_type_raw': kind, 'cutting_group': None})
+                    continue
             if kind == 15:
                 turning = _typed(raw_tool, 'ICWTurnTool', typelib_path)
                 subtype = read(turning, 'ToolType')
@@ -140,11 +151,13 @@ def _snapshot(sw, clsid, typelib_path, selected, *, check=lambda: None, diagnost
                 param = _typed(read(turning, 'IGetActiveTurnCuttingParam'), 'ICWTurnCuttingParam', typelib_path)
                 values = {n: _finite(read(param, 'Get' + n)) for n in sorted(NUMERIC_FIELDS)}
                 values.update({n: _boolean(read(param, 'Get' + n)) for n in sorted(BOOLEAN_FIELDS)})
-                stock_material = _read_bstr(read(param, 'GetCurrentTurnStockMaterial'))
-                if catalogue is None:
+                stock_material = None if scalar_inspect else _read_bstr(read(param, 'GetCurrentTurnStockMaterial'))
+                if not scalar_inspect and catalogue is None:
                     catalogue = _safe_variant(read(param, 'GetAllStockMaterialsList'))
                 group_kind = 'turning'
             else:
+                if scalar_inspect:
+                    raise ValueError('Selected operation requires a turning single-point tool')
                 # Generic cutting parameters are inspected so material changes cannot
                 # silently alter a drilling tool sharing the same TURN document.
                 param = _typed(read(tool, 'IGetActiveCuttingParam'), 'ICWToolCutParam', typelib_path)
@@ -184,12 +197,16 @@ def _snapshot(sw, clsid, typelib_path, selected, *, check=lambda: None, diagnost
     check()
     if file_sha != _file_sha(before['path']):
         raise ValueError('Saved file changed during native snapshot')
-    if before != after or inventory != after_inventory or read(workpiece, 'Material') != material:
+    if before != after or inventory != after_inventory or (not scalar_inspect and read(workpiece, 'Material') != material):
         raise ValueError('Document/inventory/material changed during read')
     state = {'document': before, 'saved_file_sha256': file_sha, 'inventory': inventory, 'unit_record_raw': unit_record, 'unit_record_status': 'unavailable_native_getter_disabled_after_RPC_failure',
              'material_raw': material, 'material_catalogue_raw': catalogue,
              'operation_uses': uses, 'cutting_groups': groups, 'selected_group': target,
              'identity_scope': 'native_ID_and_IUnknown_grouping_current_document_not_persistent_across_reopen'}
+    if scalar_inspect:
+        state.update(parameter_scope='selected_turn_tool_cutting_scalars_only',
+                     material_scope='not_requested_for_scalar_inspection',
+                     all_parameter_aliases_inspected=False, write_preparation_qualified=False)
     diagnostic['stage'] = 'complete'
     return state, {'app': app, 'workpiece': workpiece, 'parameter': handles[target] if target is not None else None}
 
@@ -345,9 +362,13 @@ def configure_cutting_conditions(sw, clsid, typelib_path, *, expected_document_p
     if receipt:
         _write_receipt(receipt, report, create=True)
     session = None
+    scalar_inspect = action == 'inspect' and field != 'Material'
+    report['inspection_scope'] = ('selected_turn_tool_scalars_no_material_or_alias_authority'
+                                  if scalar_inspect else 'complete_material_and_cutting_parameter_scope')
     def capture(phase, check=lambda: None):
         diag = {'phase': phase}; report['snapshot_diagnostics'].append(diag)
-        return _snapshot(sw, clsid, typelib_path, selected, check=check, diagnostics=diag)
+        options = {'scalar_inspect': True} if scalar_inspect else {}
+        return _snapshot(sw, clsid, typelib_path, selected, check=check, diagnostics=diag, **options)
     try:
         session = CamMessageSession(_bootstrap(sw,clsid,typelib_path,expected_document_path), typelib_path)
         def check():
@@ -371,7 +392,7 @@ def configure_cutting_conditions(sw, clsid, typelib_path, *, expected_document_p
             report['affected_generated_operations'] = generated
             links = [i for i, g in enumerate(initial['cutting_groups']) if g['values_native']['IsAssociateWithStockMaterial']]
             report['material_linked_groups'] = links
-            report['apply_eligible'] = (bool(affected) or field == 'Material') and not generated and not (field == 'Material' and links)
+            report['apply_eligible'] = not scalar_inspect and (bool(affected) or field == 'Material') and not generated and not (field == 'Material' and links)
             if action == 'apply':
                 if not report['apply_eligible']:
                     raise ValueError('Generated affected paths, empty scope or automatic material links block this write')
