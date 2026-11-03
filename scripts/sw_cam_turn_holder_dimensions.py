@@ -74,7 +74,8 @@ def _holder_dimensions(holder, kind, read):
     return dict(available=True,dimensions_native=values)
 
 
-def snapshot(sw, clsid, typelib, config, report, check):
+def snapshot(sw, clsid, typelib, config, report, check, *, probe_identity=False):
+    require(type(probe_identity) is bool, "Strict private identity policy required")
     selected = {k:config[k] for k in ("setup_index","operation_index","expected_operation_type")}
     diagnostic = {}; report["snapshot_diagnostics"].append(diagnostic)
     state,native = single._snapshot(sw,clsid,typelib,selected,check=check,diagnostics=diagnostic,guarded_readers=True)
@@ -120,9 +121,16 @@ def snapshot(sw, clsid, typelib, config, report, check):
         all_com_references_retained_during_comparison=True,
         scalar_equality_proves_identity=False,storage_independence_verified=False)
     diagnostic["holder_inventory_stage"] = "canonical_identity_guards"
-    require(target in holders and identities[target] == holder_identity, "Own holder differs from its current crib holder")
+    require(target in holders, "Selected tool has no current crib holder")
+    if not probe_identity:
+        require(identities[target] == holder_identity, "Own holder differs from its current crib holder")
+    if probe_identity:
+        require(not any(i != target and v == identities[target] for i,v in identities.items()),
+            "Selected crib holder COM object is shared by different tool IDs")
     aliases = sorted(i for i,v in identities.items() if v == holder_identity)
-    require(aliases == [target], "Selected holder COM object is shared by different tool IDs")
+    require(not any(i != target for i in aliases), "Selected holder COM object is shared by different tool IDs")
+    if not probe_identity:
+        require(aliases == [target], "Selected holder COM object is shared by different tool IDs")
     catalogue_aliases=[]
     for row in rows:
         ident=row["native_id"]
@@ -269,4 +277,199 @@ def configure_turn_holder_dimensions(sw,clsid,typelib_path,*,process_id,expected
         if session is not None:report["messages"]=session.summary()
         try:persist()
         except Exception as exc:report.update(status="uncertain" if report["mutation_attempted"] else "error",readback_verified=False,apply_eligible=False,receipt_write_error=_error(exc))
+    return report
+
+
+PROBE_SCOPE = "TURN_HOLDER_SINGLE_SHANK_LENGTH_WRITE_THROUGH_PROBE_V1"
+
+
+def _probe_comparable(state):
+    result=deepcopy(state)
+    # Fresh getters may expose different COM objects; record this outside scalar authority.
+    result["holder_alias_observation"]["selected_same_com_tool_ids"] = []
+    return result
+
+
+def _verify_probe_delta(before,after,value,tool_id):
+    expected=_probe_comparable(before);actual=_probe_comparable(after)
+    require(type(actual["document"]["needs_save"]) is bool,"Strict observed save flag required")
+    expected["document"]["needs_save"] = actual["document"]["needs_save"]
+    expected["selected_tool"]["holder"]["dimensions_native"]["ShankLength"] = value
+    row=next(x for x in expected["toolcrib"] if x["native_id"] == tool_id)
+    row["holder_dimensions_native"]["ShankLength"] = value
+    row["observed_holder"]["dimensions_native"]["ShankLength"] = value
+    require(actual == expected,"Probe changed more than selected ShankLength")
+
+
+def _retained_probe_holders(native, read):
+    def capture(holder):
+        kind=profile._integer(read(holder,"GetHolderType"))
+        return dict(holder_type_raw=kind,holder_id_raw=profile._integer(read(holder,"GetHolderId")),
+            observed_holder=_holder_dimensions(holder,kind,read))
+    return dict(own=capture(native["holder"]),crib=[dict(tool_native_id=ident,**capture(holder))
+        for ident,holder in sorted(native["held_crib_holders"].items())])
+
+
+def _verify_retained_probe_delta(before, after, value, tool_id):
+    expected=deepcopy(before)
+    expected["own"]["observed_holder"]["dimensions_native"]["ShankLength"]=value
+    next(x for x in expected["crib"] if x["tool_native_id"] == tool_id)["observed_holder"]["dimensions_native"]["ShankLength"]=value
+    require(after == expected,"Retained holder views changed beyond selected ShankLength or failed write-through")
+
+
+def qualify_turn_holder_write_through(sw,clsid,typelib_path,*,process_id,expected_process_create_time,
+        expected_document_path,expected_source_sha256,copy_source_path,copy_source_sha256,
+        setup_index,operation_index,expected_operation_type,expected_operation_native_id,expected_tool_native_id,
+        expected_holder_id,protected_part_pins,expected_shank_length_native,shank_length_native,
+        action="prepare",expected_state_sha256=None,allowed_affected_operations=None,receipt_path=None,
+        qualification_only,message_policy):
+    """One property-put on an isolated saved copy; attached-view behavior is unproven."""
+    config=dict(process_id=process_id,expected_process_create_time=expected_process_create_time,
+        expected_document_path=expected_document_path,expected_source_sha256=expected_source_sha256,
+        setup_index=setup_index,operation_index=operation_index,expected_operation_type=expected_operation_type,
+        expected_operation_native_id=expected_operation_native_id,expected_tool_native_id=expected_tool_native_id,
+        expected_holder_id=expected_holder_id)
+    report=dict(scope=PROBE_SCOPE,status="error",phase="preflight",mutation_attempted=False,
+        native_dispatch_pending=False,native_calls_returned_count=0,readback_verified=False,apply_eligible=False,
+        owner_write_through_verified=False,write_through_outcome="not_attempted",model_saved=False,
+        persistence_verified=False,GOP_attempted=False,GTP_attempted=False,tool_assignment_attempted=False,
+        database_save_attempted=False,automatic_retry=False,automatic_rollback=False,physical_tool_qualified=False,
+        native_units_verified=False,all_holder_sharing_qualified=False,storage_independence_verified=False,
+        protected_CL_bytes_compared=False,all_nc_parameters_verified=False,full_model_geometry_verified=False,
+        production_qualified=False,setters=[],snapshot_diagnostics=[])
+    receipt=None;created=False;session=None
+    def persist():
+        if created:_write_receipt(receipt,report)
+    try:
+        value=validate(config,{"ShankLength":shank_length_native},protected_part_pins)["ShankLength"]
+        old=profile._number(expected_shank_length_native)
+        require(old > 0 and old != value,"Distinct positive expected and proposed lengths required")
+        require(qualification_only is True and message_policy == "vendor_default","Explicit qualification/default-message policy required")
+        require(action in ("prepare","probe"),"Only prepare/probe supported")
+        require(action == "probe" or all(x is None for x in (expected_state_sha256,allowed_affected_operations,receipt_path)),"Prepare rejects probe inputs")
+        require(type(copy_source_path) is str and absolute_document_path(copy_source_path)
+            and Path(copy_source_path).suffix.casefold() == ".sldprt"
+            and guard.sha(copy_source_sha256) and copy_source_sha256 == expected_source_sha256,"Exact saved copy-source pin required")
+        require(len(protected_part_pins) >= 2 and any(guard.key(x["path"]) == guard.key(copy_source_path)
+            and x["sha256"] == copy_source_sha256 for x in protected_part_pins),"Protect copy source and an additional original file")
+        identity=files(config,protected_part_pins);marker=marker_path(identity,expected_tool_native_id)
+        require(not marker.exists() and not marker.is_symlink(),"Earlier holder attempt exists; no replay")
+        if action == "probe":
+            require(guard.sha(expected_state_sha256),"Exact prepared probe state required")
+            require(type(allowed_affected_operations) is list and 1 <= len(allowed_affected_operations) <= 512,"Exact affected references required")
+            refs=[single._reference(x) for x in allowed_affected_operations]
+            require(len({single._ref_key(x) for x in refs}) == len(refs),"Duplicate affected reference")
+            require(type(receipt_path) is str and absolute_document_path(receipt_path),"Fresh absolute receipt required")
+            receipt=Path(receipt_path)
+            require(receipt.suffix.casefold() == ".json" and receipt.parent.is_dir() and not receipt.exists()
+                and not receipt.is_symlink() and guard.key(receipt) != guard.key(marker),"Fresh nonaliased receipt required")
+            _write_receipt(receipt,report,create=True);created=True
+        report["request"]=dict(config,copy_source_path=copy_source_path,copy_source_sha256=copy_source_sha256,
+            protected_part_pins=deepcopy(protected_part_pins),expected_shank_length_native=old,shank_length_native=value,action=action)
+        guard.isolated(sw,config,lambda:None)
+        app=_bootstrap(sw,clsid,typelib_path,expected_document_path);session=CamMessageSession(app,typelib_path)
+        def check():
+            m=session.summary();report["messages"]=m
+            require(m.get("subscribed") is True and m.get("active") is True and not any(m.get(k) for k in guard.EVENT_ERRORS),"CAM event requires stop")
+        def boundary(document=None):
+            check();guard.isolated(sw,config,check)
+            require(files(config,protected_part_pins) == identity,"Copy/protected file identity changed")
+            if document is not None:require(document_snapshot(sw) == document,"Document changed before probe")
+        def read(obj,name,*args):
+            check();result=_member(obj,name,*args);check();return result
+        with session:
+            boundary();report["phase"]="before"
+            before,retained=snapshot(sw,clsid,typelib_path,config,report,check,probe_identity=True)
+            report["before"]=before;current=before
+            require(before["document"]["needs_save"] is False,"Initially clean saved qualification copy required")
+            require(before["selected_tool"]["holder"]["dimensions_native"]["ShankLength"] == old,"Expected original length differs")
+            affected=before["affected_operations"]
+            generated=[x for x in before["inventory"]["operations"] if x["toolpath_generated"] and
+                any((x["setup_index"],x["operation_index"]) == (a["setup_index"],a["operation_index"]) for a in affected)]
+            retained_before=_retained_probe_holders(retained,read)
+            report["retained_holders_before"]=retained_before
+            require(retained_before["own"]["observed_holder"]["dimensions_native"] ==
+                dict(before["selected_tool"]["holder"]["dimensions_native"],HolderShape=before["selected_tool"]["holder"]["shape_raw"]),
+                "Retained own holder differs from selected profile")
+            for held in retained_before["crib"]:
+                row=next(x for x in before["toolcrib"] if x["native_id"] == held["tool_native_id"])
+                require(held["holder_type_raw"] == row["holder_type_raw"] and held["holder_id_raw"] == row["holder_id_raw"]
+                    and held["observed_holder"] == row["observed_holder"],"Retained crib holder changed during collection")
+            digest=single._digest(dict(scope=PROBE_SCOPE,request=report["request"] | {"action":"prepared_recipe"},
+                copy_file_identity=identity,state=_probe_comparable(before),retained_holders=retained_before))
+            report.update(state_sha256=digest,affected_operations=affected,affected_generated_operations=generated)
+            boundary(before["document"])
+            if action == "probe":
+                require(digest == expected_state_sha256,"Prepared probe source/recipe/state changed")
+                require(sorted(refs,key=single._ref_key) == sorted(affected,key=single._ref_key),"All and only affected refs required")
+                require(not generated,"Generated operation shares selected tool")
+                # Write only the retained own-holder object, without a rebind or commit call.
+                require(_object_id(retained["native_doc"],retained["operation"],read) == expected_operation_native_id,"Retained operation changed")
+                require(_object_id(retained["native_doc"],retained["tool"],read) == expected_tool_native_id,"Retained tool changed")
+                fresh_tool=_typed(read(retained["operation"],"IGetTool"),"ICWTool",typelib_path)
+                require(_object_id(retained["native_doc"],fresh_tool,read) == expected_tool_native_id,"Own tool assignment changed")
+                holder=retained["holder"]
+                require(profile._integer(read(holder,"GetHolderType")) == 2 and profile._integer(read(holder,"GetHolderId")) == expected_holder_id,"Retained holder classification changed")
+                require(_holder_dimensions(holder,2,read)["dimensions_native"] == dict(before["selected_tool"]["holder"]["dimensions_native"],HolderShape=before["selected_tool"]["holder"]["shape_raw"]),"Retained own holder scalars differ before probe")
+                report["marker_path"]=str(marker)
+                _write_receipt(marker,dict(scope=PROBE_SCOPE,status="claimed_no_replay",copy_file_identity=identity,
+                    source_sha256=expected_source_sha256,tool_native_id=expected_tool_native_id,state_sha256=digest,
+                    receipt_path=str(receipt)),create=True)
+                item=dict(field="ShankLength",old_value_native=old,value_native=value,attempted=True,returned=False,readback_verified=False)
+                report["setters"].append(item);report.update(phase="property_put",mutation_attempted=True,native_dispatch_pending=True)
+                persist();boundary(before["document"])
+                setattr(holder,"ShankLength",value)
+                item["returned"]=True;report.update(native_dispatch_pending=False,native_calls_returned_count=1,phase="property_put_returned")
+                persist();check()
+                report["phase"]="retained_holder_readback"
+                retained_after=_retained_probe_holders(retained,read)
+                report["retained_holders_after"]=retained_after
+                observed=retained_after["own"]["observed_holder"]["dimensions_native"]["ShankLength"]
+                item["retained_value_native"]=observed;persist()
+                report["phase"]="fresh_owner_and_crib_readback"
+                after,fresh=snapshot(sw,clsid,typelib_path,config,report,check,probe_identity=True)
+                report["after"]=after;item["after"]=after;current=after;persist()
+                own=after["selected_tool"]["holder"]["dimensions_native"]["ShankLength"]
+                crib=next(x for x in after["toolcrib"] if x["native_id"] == expected_tool_native_id)["holder_dimensions_native"]["ShankLength"]
+                report["length_readback_native"]=dict(retained_holder=observed,fresh_own_holder=own,current_crib_holder=crib)
+                if own == old and crib == old:
+                    _verify_probe_delta(before,after,old,expected_tool_native_id)
+                    negative_expected=deepcopy(retained_before)
+                    require(observed in (old,value),"Retained holder returned an unexpected length")
+                    negative_expected["own"]["observed_holder"]["dimensions_native"]["ShankLength"]=observed
+                    held_crib=next(x for x in retained_after["crib"] if x["tool_native_id"] == expected_tool_native_id)
+                    held_length=held_crib["observed_holder"]["dimensions_native"]["ShankLength"]
+                    require(held_length in (old,value),"Retained selected crib returned an unexpected length")
+                    next(x for x in negative_expected["crib"] if x["tool_native_id"] == expected_tool_native_id)["observed_holder"]["dimensions_native"]["ShankLength"]=held_length
+                    require(retained_after == negative_expected,"Retained holder coupling makes negative result uncertain")
+                    report["write_through_outcome"]="not_persisted_to_observed_owner"
+                    require(False,"Property put did not persist to fresh owner and crib observations")
+                require(observed == value and own == value and crib == value,"Holder views disagree after property put")
+                _verify_probe_delta(before,after,value,expected_tool_native_id)
+                _verify_retained_probe_delta(retained_before,retained_after,value,expected_tool_native_id)
+                item["readback_verified"]=True
+                report["write_through_outcome"]="observed_in_fresh_owner_and_crib"
+                boundary(after["document"]);persist()
+            report["after"]=current;check()
+        m=session.summary();report["messages"]=m
+        require(m.get("subscribed") is True and m.get("disconnected") is True and m.get("active") is False
+            and not any(m.get(k) for k in guard.EVENT_ERRORS),"Event cleanup uncertain")
+        require(document_snapshot(sw) == current["document"] and files(config,protected_part_pins) == identity,"Post-cleanup document/source changed")
+        guard.isolated(sw,config,lambda:None)
+        report.update(status="prepared" if action == "prepare" else "review_required",phase="finished",
+            apply_eligible=action == "prepare" and not generated,readback_verified=action == "probe",
+            owner_write_through_verified=action == "probe",final_state=current,final_state_sha256=single._digest(current),
+            reason="SINGLE_PROPERTY_RAM_QUALIFICATION_ONLY_SAVE_REOPEN_PHYSICAL_AND_STORAGE_SCOPE_UNQUALIFIED")
+    except Exception as exc:
+        if report["mutation_attempted"] and report["write_through_outcome"] != "not_persisted_to_observed_owner":
+            report["write_through_outcome"]="uncertain"
+        report.update(status="uncertain" if report["mutation_attempted"] else "error",failed_phase=report["phase"],phase="finished",
+            readback_verified=False,owner_write_through_verified=False,apply_eligible=False,issue=_error(exc))
+    finally:
+        if session is not None:report["messages"]=session.summary()
+        try:persist()
+        except Exception as exc:
+            report.update(status="uncertain" if report["mutation_attempted"] else "error",readback_verified=False,
+                owner_write_through_verified=False,apply_eligible=False,receipt_write_error=_error(exc))
+            if report["write_through_outcome"] != "not_persisted_to_observed_owner":report["write_through_outcome"]="uncertain"
     return report

@@ -13686,12 +13686,19 @@ class SolidWorksCamTurnBoreOptionsInput(SolidWorksCamVariableAllowanceInput):
     expected_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
     expected_linked_feature_ids: list[int] = Field(min_length=1, max_length=64)
     action: Literal["read"] = "read"
+    include_tool_contours: bool = Field(default=False, strict=True)
+    expected_tool_native_id: int | None = Field(default=None, gt=0, le=4294967295, strict=True)
 
+    @model_validator(mode="after")
+    def exact_tool_for_contours(self):
+        if self.include_tool_contours != (self.expected_tool_native_id is not None):
+            raise ValueError("Tool contours require an exact tool ID; unused tool IDs are rejected")
+        return self
 
 @mcp.tool(name="solidworks_cam_inspect_turn_bore_options", title="Inspect Existing TURN Bore Rough Options",
           annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
 def solidworks_cam_inspect_turn_bore_options(params: SolidWorksCamTurnBoreOptionsInput) -> str:
-    """Read eleven native Bore Rough options twice; no setters, tool reads, generation or Save."""
+    """Read bore options and optional exact own-tool contours twice; no setters, generation or Save."""
     def op():
         _runtime_identity.assert_current()
         if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
@@ -13700,6 +13707,87 @@ def solidworks_cam_inspect_turn_bore_options(params: SolidWorksCamTurnBoreOption
         sw, registration = _cam_target(params)
         values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
         result = inspect_turn_bore_options(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+        _runtime_identity.assert_current()
+        return result
+    return _run_locked(op, params.response_format)
+
+
+
+class SolidWorksCamTurnHolderWriteThroughInput(SolidWorksCamOperationProfileInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_process_create_time: float = Field(gt=0, strict=True, allow_inf_nan=False)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    copy_source_path: str = Field(min_length=1, strict=True)
+    copy_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_operation_type: int = Field(ge=5, le=6, strict=True)
+    expected_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_tool_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_holder_id: int = Field(ge=0, lt=2147483648, strict=True)
+    protected_part_pins: list[dict[str, Any]] = Field(min_length=2, max_length=16)
+    expected_shank_length_native: float = Field(gt=0, strict=True, allow_inf_nan=False)
+    shank_length_native: float = Field(gt=0, strict=True, allow_inf_nan=False)
+    action: Literal["prepare", "probe"] = "prepare"
+    expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    allowed_affected_operations: Optional[list[SolidWorksCamToolReferenceInput]] = Field(default=None, min_length=1, max_length=512)
+    receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
+    qualification_only: Literal[True]
+    message_policy: Literal["vendor_default"]
+
+    @field_validator("qualification_only", mode="before")
+    @classmethod
+    def write_through_qualification_boolean(cls, value):
+        if type(value) is not bool:
+            raise ValueError("qualification_only must be a Boolean")
+        return value
+
+    @model_validator(mode="after")
+    def write_through_exact_action(self):
+        from scripts.sw_cam_turn_holder_dimensions import validate
+        fields = {"process_id", "expected_process_create_time", "expected_document_path", "expected_source_sha256",
+            "setup_index", "operation_index", "expected_operation_type", "expected_operation_native_id", "expected_tool_native_id", "expected_holder_id"}
+        validate(self.model_dump(include=fields), {"ShankLength": self.shank_length_native}, self.protected_part_pins)
+        if self.shank_length_native == self.expected_shank_length_native:
+            raise ValueError("A distinct expected and proposed length is required")
+        if (not absolute_document_path(self.copy_source_path) or Path(self.copy_source_path).suffix.casefold() != ".sldprt"
+                or self.copy_source_sha256 != self.expected_source_sha256):
+            raise ValueError("Exact same-hash copy-source part required")
+        from scripts.sw_cam_turn_feature_regenerate import key
+        if (key(self.copy_source_path) == key(self.expected_document_path) or not any(
+                key(pin["path"]) == key(self.copy_source_path) and pin["sha256"] == self.copy_source_sha256
+                for pin in self.protected_part_pins)):
+            raise ValueError("The separate copy source must be protected")
+        guards = (self.expected_state_sha256, self.allowed_affected_operations, self.receipt_path)
+        if self.action == "prepare":
+            if any(value is not None for value in guards):
+                raise ValueError("Prepare rejects probe guards and receipt")
+        else:
+            if any(value is None for value in guards):
+                raise ValueError("Probe requires prepared state, exact sharing references and fresh receipt")
+            refs = [(value.setup_index, value.operation_index, value.expected_operation_type)
+                for value in self.allowed_affected_operations]
+            if len(set((value[0], value[1]) for value in refs)) != len(refs) or (
+                    self.setup_index, self.operation_index, self.expected_operation_type) not in refs:
+                raise ValueError("Unique references must include the selected operation")
+            if not absolute_document_path(self.receipt_path) or Path(self.receipt_path).suffix.casefold() != ".json":
+                raise ValueError("Absolute JSON receipt required")
+        return self
+
+
+@mcp.tool(name="solidworks_cam_qualify_turn_holder_write_through", title="Qualify TURN Holder Single Length Write-through on Copy",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_qualify_turn_holder_write_through(params: SolidWorksCamTurnHolderWriteThroughInput) -> str:
+    """Prepare/probe one retained-holder ShankLength put on a distinct saved copy; no Save, rebind or generation."""
+    def op():
+        _runtime_identity.assert_current()
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Holder probe process must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_turn_holder_dimensions import qualify_turn_holder_write_through
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        result = qualify_turn_holder_write_through(sw, registration["clsid"],
             typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
         _runtime_identity.assert_current()
         return result

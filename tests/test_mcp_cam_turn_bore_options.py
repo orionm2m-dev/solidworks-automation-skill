@@ -53,3 +53,31 @@ def test_bound_process_mismatch_before_connection(context,core,monkeypatch,pid):
 
 def test_legacy_schema_stays_od_only(context):
     with pytest.raises(ValueError):server.SolidWorksCamVariableAllowanceInput(**params(context).model_dump(exclude={"expected_process_create_time"}))
+
+
+def test_contour_route_requires_and_forwards_exact_tool(context, core):
+    p = params(context, include_tool_contours=True, expected_tool_native_id=322)
+    result = json.loads(server.solidworks_cam_inspect_turn_bore_options(p))
+    assert result == core.return_value
+    assert core.call_args.kwargs["include_tool_contours"] is True
+    assert core.call_args.kwargs["expected_tool_native_id"] == 322
+
+
+def test_default_scalar_route_keeps_contours_disabled(context, core):
+    p = params(context)
+    server.solidworks_cam_inspect_turn_bore_options(p)
+    assert core.call_args.kwargs["include_tool_contours"] is False
+    assert core.call_args.kwargs["expected_tool_native_id"] is None
+
+
+@pytest.mark.parametrize("changes", [
+    {"include_tool_contours": True}, {"include_tool_contours": 1},
+    {"include_tool_contours": "true"}, {"expected_tool_native_id": 322},
+    {"include_tool_contours": True, "expected_tool_native_id": True},
+    {"include_tool_contours": True, "expected_tool_native_id": 322.},
+    {"include_tool_contours": True, "expected_tool_native_id": 0},
+    {"include_tool_contours": True, "expected_tool_native_id": 2**32}])
+def test_strict_contour_schema_rejects_invalid_or_unused_tool_id(context, core, changes):
+    with pytest.raises(ValueError): params(context, **changes)
+    core.assert_not_called()
+    context.connect.assert_not_called()

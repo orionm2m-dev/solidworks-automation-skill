@@ -1,5 +1,5 @@
 """Read-only operation-owned turning allowances and bounded bore rough options.
-No setter, tool getter, CL read, GTP, GOP, save or inferred unit conversion.
+Optional own-tool contours; no setter, CL read, GTP, GOP, save or inferred unit conversion.
 """
 from __future__ import annotations
 import hashlib
@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 from scripts.sw_cam import _member, _error, document_snapshot
 from scripts.sw_cam_generation import _typed
+from scripts.sw_cam_qualification_context import _segment_profile
 from scripts.sw_cam_events import CamMessageSession
 from scripts.sw_cam_operation_profile import _integer, _number, _read_profile
 from scripts.sw_executable_launch import _process_identity
@@ -61,6 +62,77 @@ def _read_bore_options(raw, typelib_path, read, result):
         raise ValueError("Bore allowance method must be exact native LONG")
     result["GetAllowanceMethodVariable"] = mode
 
+
+
+def _tool_contour_abi(typelib_path):
+    """Exact two profile calls and operation-orientation getter, metadata only."""
+    from ctypes import HRESULT, POINTER, c_int
+    from comtypes.automation import IDispatch
+    dispatch = POINTER(IDispatch)
+    specs = (("ICWTool", "GetToolProfile", 12, (POINTER(dispatch),), (10,)),
+             ("ICWTurnToolHolder", "GetHolderProfile", 1, (dispatch, POINTER(dispatch)), (1,10)),
+             ("ICWTurnToolHolder", "GetToolOrientationForOperation", 7, (dispatch, POINTER(c_int)), (1,10)))
+    observed = []
+    for owner,name,dispid,args,flags in specs:
+        interface = _interface_class(owner, typelib_path)
+        methods = [m for m in interface._methods_ if m.name == name]
+        if len(methods) != 1:
+            raise ValueError("Unique exact tool contour getter required: " + name)
+        method = methods[0]
+        if (method.restype is not HRESULT or method.idlflags[0] != dispid
+                or method.argtypes != args or tuple(x[0] for x in method.paramflags) != flags):
+            raise ValueError("Exact tool contour getter ABI differs: " + name)
+        observed.append(dict(interface=owner, iid=str(interface._iid_).upper(), method=name, dispid=dispid))
+    return dict(methods=observed, native_calls=0)
+
+
+def _read_bore_tool_contours(doc, operation, typelib_path, expected_tool_id, read, result):
+    """Read only the selected own diamond insert and its operation-specific holder contour."""
+    result.update(coordinate_frame_verified=False, program_point_verified=False, units_verified=False,
+                  solid_geometry_verified=False, physical_holder_verified=False, complete=False)
+    raw_tool = read(operation, "IGetTool")
+    if raw_tool is None or not bool(raw_tool):
+        raise ValueError("Selected operation has no own tool")
+    tool = _typed(raw_tool, "ICWTool", typelib_path)
+    result["tool_native_id"] = _object_id(doc, tool, read)
+    if result["tool_native_id"] != expected_tool_id:
+        raise ValueError("Exact selected own tool ID differs")
+    result["tool_type_raw"] = _integer(read(tool, "ToolType"))
+    if result["tool_type_raw"] != 15:
+        raise ValueError("Only an existing TURN tool contour is supported")
+    turn = _typed(raw_tool, "ICWTurnTool", typelib_path)
+    result["turn_tool_type_raw"] = _integer(read(turn, "ToolType"))
+    if result["turn_tool_type_raw"] != 1:
+        raise ValueError("Only an existing single-point TURN insert is supported")
+    result["insert_type_raw"] = _integer(read(turn, "InsertType"))
+    if result["insert_type_raw"] != 1:
+        raise ValueError("Only an existing diamond insert is supported")
+    result["insert_dimensions_native"] = {}
+    for field in ("IncludedAngle", "NoseRadius", "InscribedCircle", "Thickness"):
+        result["insert_dimensions_native"][field] = _number(read(turn, field))
+    raw_holder = read(turn, "IGetTurnToolHolder")
+    if raw_holder is None or not bool(raw_holder):
+        raise ValueError("Selected own tool has no holder")
+    holder = _typed(raw_holder, "ICWTurnToolHolder", typelib_path)
+    result["holder_type_raw"] = _integer(read(holder, "GetHolderType"))
+    if result["holder_type_raw"] != 2:
+        raise ValueError("Only an existing boring-bar holder is supported")
+    result["holder_id_raw"] = _integer(read(holder, "GetHolderId"))
+    if result["holder_id_raw"] < 0:
+        raise ValueError("Existing boring-bar holder ID must be nonnegative")
+    result["orientation_for_operation_raw"] = _integer(read(holder, "GetToolOrientationForOperation", operation))
+    result["insert_offsets_native"] = {}
+    for field in ("XInsertOffset", "ZInsertOffset"):
+        result["insert_offsets_native"][field] = _number(read(holder, field))
+    for label,owner,method,args in (("insert_profile",tool,"GetToolProfile",()),
+                                  ("holder_profile",holder,"GetHolderProfile",(operation,))):
+        profile = dict(source_method=method)
+        result[label] = profile
+        raw_chain = read(owner, method, *args)
+        _segment_profile(raw_chain, typelib_path, read, profile)
+        if not profile.get("available") or not profile.get("parameters_complete"):
+            raise ValueError("Complete bounded line/arc contour required: " + label)
+    result["complete"] = True
 
 
 def _digest(value):
@@ -132,6 +204,9 @@ def _snapshot(sw,clsid,typelib_path,config,read,check,identity,diagnostic=None):
     if config.get('inspection_scope') == 'bore_rough_options':
         result['bore_options_native'] = {}
         _read_bore_options(raw,typelib_path,read,result['bore_options_native'])
+        if config.get('include_tool_contours'):
+            result['tool_contours'] = {}
+            _read_bore_tool_contours(doc,operation,typelib_path,config['expected_tool_native_id'],read,result['tool_contours'])
         check()
         if identity()!=current_doc or _inventory(machine,typelib_path,read)!=result['inventory']:
             raise ValueError('Document, saved file or complete inventory changed during bore read')
@@ -160,7 +235,7 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
         setup_index,operation_index,expected_operation_type,expected_source_sha256,
         expected_operation_native_id=None,expected_linked_feature_ids=None,
         action='read',message_policy='vendor_default',inspection_scope='profile_and_variable_allowance',
-        expected_process_create_time=None):
+        expected_process_create_time=None,include_tool_contours=False,expected_tool_native_id=None):
     """Exact current saved part (may contain unchanged unsaved RAM data), one operation.
 
     Bootstrap obtains add-in/app only so events can be subscribed. All subsequent
@@ -182,6 +257,13 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
         if action not in ('read','identify'): raise ValueError('Only read or identify action allowed')
         if inspection_scope not in ('profile_and_variable_allowance','bore_rough_options'):
             raise ValueError('Unknown operation parameter inspection scope')
+        if type(include_tool_contours) is not bool:
+            raise ValueError('include_tool_contours must be a strict Boolean')
+        if include_tool_contours:
+            if inspection_scope!='bore_rough_options' or type(expected_tool_native_id) is not int or not 1<=expected_tool_native_id<2**32:
+                raise ValueError('Tool contours require bore scope and an exact native tool ID')
+        elif expected_tool_native_id is not None:
+            raise ValueError('An expected tool ID is only valid when contours are requested')
         if inspection_scope=='bore_rough_options':
             if action!='read' or type(expected_process_create_time) not in (int,float) or not math.isfinite(expected_process_create_time) or expected_process_create_time<=0:
                 raise ValueError('Bore options require read-only action and exact process lifetime')
@@ -212,6 +294,12 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
         if inspection_scope=='bore_rough_options':
             config['inspection_scope']=inspection_scope
             report['getter_abi']=_bore_options_abi(typelib_path)
+            if include_tool_contours:
+                config.update(include_tool_contours=True,expected_tool_native_id=expected_tool_native_id)
+                report['tool_contour_abi'] = _tool_contour_abi(typelib_path)
+                report.update(tool_contours_requested=True,
+                    program_point_verified=False,coordinate_frame_verified=False,
+                    contour_scope='Selected own diamond insert and operation-specific boring holder; 32 chains/512 curves per contour')
             report.update(full_model_geometry_verified=False,all_nc_parameters_verified=False,
                 tool_geometry_verified=False,production_qualified=False,
                 parameter_interpretation='Raw current Boolean/double/LONG values; no undercut, tool access or physical cutting qualification',
@@ -241,7 +329,9 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
                       ('event_count','overflow','callback_errors','callback_error_count','subscription_error','disconnect_errors')):
                     raise ValueError('CAM event transport requires review; no further CAM getters')
             def read(obj,name,*args):
-                report['phase']=name; check(); value=_member(obj,name,*args); check(); return value
+                report['phase']=name; check()
+                if name == 'IGetTool': report['tool_readers_used'] = True
+                value=_member(obj,name,*args); check(); return value
             with session:
                 report['before']={}
                 before=_snapshot(sw,clsid,typelib_path,config,read,check,identity,report['before'])
@@ -280,11 +370,12 @@ def inspect_turn_variable_allowance(sw,clsid,typelib_path,*,process_id,expected_
 def inspect_turn_bore_options(sw,clsid,typelib_path,*,process_id,expected_process_create_time,
         expected_document_path,expected_source_sha256,setup_index,operation_index,
         expected_operation_native_id,expected_operation_type,expected_linked_feature_ids,
-        action='read',message_policy='vendor_default'):
-    """Read eleven Bore Rough scalars twice, with source/operation/process lifetime guards."""
+        action='read',message_policy='vendor_default',include_tool_contours=False,expected_tool_native_id=None):
+    """Read bore scalars and optional exact own-tool contours twice under the same guards."""
     return _inspect_turn_operation_parameters(sw,clsid,typelib_path,process_id=process_id,
         expected_process_create_time=expected_process_create_time,expected_document_path=expected_document_path,
         expected_source_sha256=expected_source_sha256,setup_index=setup_index,operation_index=operation_index,
         expected_operation_native_id=expected_operation_native_id,expected_operation_type=expected_operation_type,
         expected_linked_feature_ids=expected_linked_feature_ids,action=action,message_policy=message_policy,
-        inspection_scope='bore_rough_options')
+        inspection_scope='bore_rough_options',include_tool_contours=include_tool_contours,
+        expected_tool_native_id=expected_tool_native_id)

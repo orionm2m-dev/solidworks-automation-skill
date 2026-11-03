@@ -60,6 +60,13 @@ def _holder_profile(holder, operation, typelib_path, choice, read, result):
     result.update(source_method=method, coordinate_frame_verified=False, units_verified=False,
                   solid_geometry_verified=False, chains=[])
     raw_chain = read(holder, method, operation)
+    _segment_profile(raw_chain, typelib_path, read, result)
+
+
+def _segment_profile(raw_chain, typelib_path, read, result):
+    """Decode a retained native segment chain with the existing bounded line/arc contract."""
+    result.update(coordinate_frame_verified=False, units_verified=False,
+                  solid_geometry_verified=False, chains=[])
     if raw_chain is None or not bool(raw_chain):
         result.update(available=False, reason="native_profile_is_null")
         return
