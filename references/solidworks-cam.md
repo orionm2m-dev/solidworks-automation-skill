@@ -1853,3 +1853,5 @@ A native reorder qualification completed four moves with HRESULT zero and exact 
 `solidworks_cam_inspect_turn_bore_options` reads eleven operation-owned rough-bore values twice under exact process, source, operation and linked-feature guards. See [bore options](cam-turn-bore-options.md). Existing holder dimension writes and their explicit identity limitations are documented in [holder dimensions](cam-turn-holder-dimensions.md). The separate [copy-only holder write-through probe](cam-turn-holder-write-through.md) qualifies one retained-holder length put without changing the ordinary writer's identity policy. Native observations and remaining qualification limits are separate from synthetic test results.
 
 For bounded rough/finish insert and holder contour reads, see [Existing TURN bore tool contours](cam-turn-tool-contours.md).
+
+For native setup links, direction and frame metadata, see [Existing TURN setup context](cam-turn-setup-context.md).

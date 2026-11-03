@@ -169,6 +169,9 @@ def _snapshot(sw,clsid,typelib_path,config,read,check,identity,diagnostic=None):
     _,doc,_,machine,_=_context(sw,clsid,typelib_path,read)
     if config['action']=='read':
         result['inventory']=_inventory(machine,typelib_path,read)
+        if config.get('inspection_scope')=='turn_setup_context':
+            from scripts.sw_cam_turn_setup_context import verify_counts
+            verify_counts(result['inventory'],config['setup_context_config'])
     setups=_items(read(machine,'IGetEnumOpSetups'),typelib_path,read)
     si=config['setup_index']; oi=config['operation_index']
     if si>=len(setups): raise ValueError('Selected setup absent')
@@ -201,6 +204,16 @@ def _snapshot(sw,clsid,typelib_path,config,read,check,identity,diagnostic=None):
         return result
     if not ids or sorted(ids)!=config['expected_linked_feature_ids']:
         raise ValueError('Exact linked feature IDs changed')
+    if config.get('inspection_scope')=='turn_setup_context':
+        from scripts.sw_cam_turn_setup_context import read_setup_context
+        result['setup_context']={}
+        read_setup_context(doc,machine,setups,si,typelib_path,config['setup_context_config'],
+            result['selected_operation'],read,check,result['setup_context'])
+        check()
+        if identity()!=current_doc or _inventory(machine,typelib_path,read)!=result['inventory']:
+            raise ValueError('Document, saved file or complete inventory changed during setup read')
+        result['capture_complete']=True
+        return result
     if config.get('inspection_scope') in ('bore_rough_options', 'tool_contours'):
         if config['inspection_scope'] == 'bore_rough_options':
             result['bore_options_native'] = {}
@@ -236,7 +249,8 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
         setup_index,operation_index,expected_operation_type,expected_source_sha256,
         expected_operation_native_id=None,expected_linked_feature_ids=None,
         action='read',message_policy='vendor_default',inspection_scope='profile_and_variable_allowance',
-        expected_process_create_time=None,include_tool_contours=False,expected_tool_native_id=None):
+        expected_process_create_time=None,include_tool_contours=False,expected_tool_native_id=None,
+        setup_context_config=None):
     """Exact current saved part (may contain unchanged unsaved RAM data), one operation.
 
     Bootstrap obtains add-in/app only so events can be subscribed. All subsequent
@@ -256,8 +270,14 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
                ('operation_index',operation_index,0,511)]:
             if type(value) is not int or not lo<=value<=hi: raise ValueError('Invalid strict selector '+name)
         if action not in ('read','identify'): raise ValueError('Only read or identify action allowed')
-        if inspection_scope not in ('profile_and_variable_allowance','bore_rough_options','tool_contours'):
+        if inspection_scope not in ('profile_and_variable_allowance','bore_rough_options','tool_contours','turn_setup_context'):
             raise ValueError('Unknown operation parameter inspection scope')
+        if inspection_scope=='turn_setup_context':
+            from scripts.sw_cam_turn_setup_context import validate_config, setup_abi
+            setup_context_config=validate_config(setup_context_config)
+            report['setup_getter_abi']=setup_abi(typelib_path)
+        elif setup_context_config is not None:
+            raise ValueError('Setup context pins only belong to the dedicated setup scope')
         if type(include_tool_contours) is not bool:
             raise ValueError('include_tool_contours must be a strict Boolean')
         if include_tool_contours:
@@ -267,7 +287,7 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
             raise ValueError('An expected tool ID is only valid when contours are requested')
         if inspection_scope=='tool_contours' and not include_tool_contours:
             raise ValueError('Tool contour scope requires both contours and an exact tool ID')
-        if inspection_scope in ('bore_rough_options','tool_contours'):
+        if inspection_scope in ('bore_rough_options','tool_contours','turn_setup_context'):
             if action!='read' or type(expected_process_create_time) not in (int,float) or not math.isfinite(expected_process_create_time) or expected_process_create_time<=0:
                 raise ValueError('Bore options require read-only action and exact process lifetime')
         elif expected_process_create_time is not None:
@@ -279,7 +299,7 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
         if action=='identify' and expected_linked_feature_ids is not None:
             raise ValueError('Identify discovers linked IDs; expected linked IDs belong to strict read only')
         allowed_types=((5,) if inspection_scope=='bore_rough_options' else
-                       (5,6) if inspection_scope=='tool_contours' else _MODE_INTERFACES)
+                       (5,6) if inspection_scope in ('tool_contours','turn_setup_context') else _MODE_INTERFACES)
         if type(expected_operation_type) is not int or expected_operation_type not in allowed_types:
             raise ValueError('Exact operation type does not match the parameter inspection scope')
         if type(expected_document_path) is not str or not absolute_document_path(expected_document_path) or Path(expected_document_path).suffix.casefold()!='.sldprt':
@@ -295,6 +315,12 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
              expected_operation_native_id=expected_operation_native_id,expected_operation_type=expected_operation_type,
              expected_linked_feature_ids=sorted(expected_linked_feature_ids) if expected_linked_feature_ids is not None else None,
              expected_source_sha256=expected_source_sha256)
+        if inspection_scope=='turn_setup_context':
+            config.update(inspection_scope=inspection_scope,setup_context_config=setup_context_config)
+            report.update(setup_context_requested=True,coordinate_frame_verified=False,
+                full_model_geometry_verified=False,production_qualified=False,
+                parameter_interpretation='Raw setup links, axes, origin and transform type metadata; no decoded matrix or generic CL frame',
+                process_identity=dict(process_id=process_id,expected_process_create_time=expected_process_create_time))
         if inspection_scope in ('bore_rough_options','tool_contours'):
             config['inspection_scope']=inspection_scope
             if inspection_scope=='bore_rough_options':

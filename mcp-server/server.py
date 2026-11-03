@@ -13823,5 +13823,47 @@ def solidworks_cam_inspect_turn_tool_contours(params: SolidWorksCamTurnToolConto
     return _run_locked(op, params.response_format)
 
 
+class SolidWorksCamTurnSetupContextInput(SolidWorksCamVariableAllowanceInput):
+    """Read exact TURN setup links and frame metadata without decoding a matrix."""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    expected_process_create_time: float = Field(gt=0, strict=True, allow_inf_nan=False)
+    expected_operation_type: int = Field(ge=5, le=6, strict=True)
+    expected_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_linked_feature_ids: list[int] = Field(min_length=1, max_length=64)
+    expected_feature_count: int = Field(ge=1, le=64, strict=True)
+    expected_operation_count: int = Field(ge=1, le=512, strict=True)
+    expected_feature_setup_count: int = Field(ge=1, le=64, strict=True)
+    expected_operation_setup_count: int = Field(ge=1, le=64, strict=True)
+    expected_generated_operation_count: int = Field(ge=0, le=512, strict=True)
+    expected_toolpath_record_count: int = Field(ge=0, le=2147483647, strict=True)
+    expected_feature_setup_native_id: int | None = Field(default=None, gt=0, le=4294967295, strict=True)
+    expected_operation_setup_native_id: int | None = Field(default=None, gt=0, le=4294967295, strict=True)
+    action: Literal["read"] = "read"
+
+    @model_validator(mode="after")
+    def setup_counts_consistent(self):
+        if self.expected_generated_operation_count > self.expected_operation_count:
+            raise ValueError("Generated operation count cannot exceed operation count")
+        return self
+
+
+@mcp.tool(name="solidworks_cam_inspect_turn_setup_context", title="Inspect Existing TURN Setup Context",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_inspect_turn_setup_context(params: SolidWorksCamTurnSetupContextInput) -> str:
+    """Read two exact setup captures; no transform decoding, insertion or changes."""
+    def op():
+        _runtime_identity.assert_current()
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_turn_setup_context import inspect_turn_setup_context
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        result = inspect_turn_setup_context(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+        _runtime_identity.assert_current()
+        return result
+    return _run_locked(op, params.response_format)
+
+
 if __name__ == "__main__":
     main()
