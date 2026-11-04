@@ -44,3 +44,15 @@ production qualification remain unverified. The tool returns structured evidence
 including partial observations on failure; the caller's existing MCP job/CLI output
 writer must persist that response to a fresh result path. There is no tool-specific
 receipt-path input. Offline software tests do not claim native qualification.
+
+
+A returned integer status1 with a null base-feature pointer is retained as
+`base_getter_status1_null`; no base-interface query or parameter read is attempted
+for that target. After safe identity/source/event checks, the explicitly selected
+comparison target is still read. Status1 with a non-null base pointer remains an
+unsupported contract and stops the probe. If the parameter getter returns integer
+status1, its caller-owned outputs are preserved only as `parameter_getter_status1`
+diagnostics and are never accepted as valid parameters. Other nonzero or untyped
+returns still stop. None of these outcomes establishes why a toolpath is empty.
+The initial native status1/null observation motivated this bounded software change;
+the completed two-target continuation remains a separate native qualification.

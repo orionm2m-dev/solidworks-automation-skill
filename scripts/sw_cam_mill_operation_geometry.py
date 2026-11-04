@@ -110,6 +110,8 @@ def read_geometry(operation,feature,*,typed,raw_call,row,boundary):
     except Exception as exc:
         if not _com_failure(exc):raise
         boundary();row['outcome']='base_getter_COM_failure';return
+    if type(status) is int and status==1 and not bool(base):
+        row['outcome']='base_getter_status1_null';boundary();return
     require(type(status) is int and status==0,'Strict base getter HRESULT S_OK required')
     if not bool(base):row['outcome']='null_base_feature';boundary();return
     row['base_interface_call']=dict(interface='ICWTpBaseFeature',attempted=True,returned=False)
@@ -133,6 +135,8 @@ def read_geometry(operation,feature,*,typed,raw_call,row,boundary):
     except Exception as exc:
         if not _com_failure(exc):raise
         boundary();row['outcome']='parameter_getter_COM_failure';return
+    if type(status) is int and status==1:
+        row['outcome']='parameter_getter_status1';boundary();return
     require(type(status) is int and status==0,'Strict parameter getter HRESULT S_OK required')
     observed=outputs();require(all(math.isfinite(x.value) for x in values),'All three DOUBLE outputs must be populated and finite')
     require(observed['pattern_boolean_short'] in (0,-1),'VARIANT_BOOL output must be populated with 0 or -1')
