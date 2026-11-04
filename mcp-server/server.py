@@ -13696,7 +13696,7 @@ class SolidWorksCamTurnHolderDimensionsInput(SolidWorksCamOperationProfileInput)
 @mcp.tool(name="solidworks_cam_configure_turn_holder_dimensions", title="Configure Existing TURN Boring Holder Dimensions",
     annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
 def solidworks_cam_configure_turn_holder_dimensions(params: SolidWorksCamTurnHolderDimensionsInput) -> str:
-    """Prepare/apply three documented scalars on an existing diamond boring holder; no rebind, generation or Save."""
+    """按精确文档/刀具绑定准备或写入三项刀柄标量，保留失败证据；不生成或保存。"""
     def op():
         _runtime_identity.assert_current()
         if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
@@ -13706,7 +13706,12 @@ def solidworks_cam_configure_turn_holder_dimensions(params: SolidWorksCamTurnHol
         values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
         result = configure_turn_holder_dimensions(sw, registration["clsid"],
             typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
-        _runtime_identity.assert_current()
+        try:
+            _runtime_identity.assert_current()
+        except Exception as error:
+            from scripts.sw_cam_turn_holder_dimensions import revoke_runtime_verification
+            return revoke_runtime_verification(result,error,params.receipt_path)
+        result["runtime_unchanged"]=True
         return result
     return _run_locked(op, params.response_format)
 

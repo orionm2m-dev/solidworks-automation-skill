@@ -1,7 +1,7 @@
 """Bounded in-place dimensions for an existing TURN diamond boring-bar holder.
 
 Only BoringBarDiameter, ShankLength and LeadAngle are writable. No tool rebinding,
-creation, generation, Save or retry. Equal catalogue IDs do not prove COM identity.
+creation, generation, Save or retry. Logical document/tool membership and owner/crib readback replace canonical holder equality.
 """
 from copy import deepcopy
 from pathlib import Path
@@ -17,7 +17,7 @@ from scripts.sw_cam_events import CamMessageSession
 from scripts.sw_cam_mill_qualification import _bootstrap
 from scripts.sw_cam_thread import _file_hash, _object_id
 from scripts.sw_cam_turn_toolcrib_diagnostic import read_tools
-from scripts.sw_cam_turn_feature_attribute import _context, _items
+from scripts.sw_cam_turn_feature_attribute import _context, _items, _inventory
 from scripts.sw_cam_checkpoint_exports import local_evidence_root
 from scripts.sw_operation_guard import absolute_document_path
 
@@ -155,6 +155,103 @@ def snapshot(sw, clsid, typelib, config, report, check, *, probe_identity=False)
     return state,native
 
 
+
+def _logical_abi(typelib):
+    """核对三项既有标量与只读文件字段的声明，不扩展写入白名单。"""
+    from ctypes import HRESULT, POINTER, c_double, c_int
+    from comtypes import BSTR
+    from scripts.sw_cam_comtypes import _interface_class, _INTERFACES
+    interface=_interface_class('ICWTurnToolHolder',typelib)
+    require(str(interface._iid_).upper()==_INTERFACES['ICWTurnToolHolder'],'Exact holder interface IID required')
+    specs=[]
+    for name,disp in [('ShankLength',13),('LeadAngle',14),('BoringBarDiameter',29)]:
+        specs.extend([(name,disp,'propget',(POINTER(c_double),),(10,)),(name,disp,'propput',(c_double,),(1,))])
+    specs.extend([('HolderShape',11,'propget',(POINTER(c_int),),(10,)),
+        ('HolderShapeFilePath',25,'propget',(POINTER(BSTR),),(10,)),
+        ('HolderShapeFileUnit',26,'propget',(POINTER(c_int),),(10,))])
+    for name,disp,kind,args,flags in specs:
+        ms=[m for m in interface._methods_ if m.name==('_get_' if kind=='propget' else '_set_')+name and kind in m.idlflags]
+        require(len(ms)==1,'Unique declared holder field required: '+name);m=ms[0]
+        require(m.restype is HRESULT and m.idlflags[0]==disp and m.argtypes==args and tuple(x[0] for x in m.paramflags)==flags,'Exact holder field ABI differs: '+name)
+    return dict(interface='ICWTurnToolHolder',scalar_write_allowlist=sorted(FIELDS),file_getters_only=True,native_calls=0)
+
+
+def _logical_snapshot(sw,clsid,typelib,config,report,check):
+    """按文档原生 ID 重读全部自有刀具与刀库，保留原始 COM 相等性诊断。"""
+    from scripts.sw_cam_turn_holder_stl import _holder_file
+    state,native=snapshot(sw,clsid,typelib,config,report,check,probe_identity=True)
+    diagnostic=report['snapshot_diagnostics'][-1]
+    # 原始相等性仍在 diagnostic 中；不能把两次封送的指针作为字段写入资格。
+    state['holder_alias_observation'].pop('selected_same_com_tool_ids',None)
+    diagnostic['logical_state']=state;diagnostic['logical_capture_complete']=False
+    def read(obj,name,*args):
+        check();v=_member(obj,name,*args);check();return v
+    _,doc,_,machine,_=_context(sw,clsid,typelib,read)
+    doc=_typed(doc,'ICWDoc3',typelib)
+    target=config['expected_tool_native_id'];selected=config['expected_operation_native_id']
+    for row in state['toolcrib']:
+        if row['native_id'] in native['held_crib_holders']:
+            row['holder_file']={};_holder_file(native['held_crib_holders'][row['native_id']],read,row['holder_file'])
+    own_rows=[];state['observed_operation_tools']=own_rows;target_rows=[];selected_seen=False
+    for si,raw_setup in enumerate(_items(read(machine,'IGetEnumOpSetups'),typelib,read,limit=512)):
+        setup=_typed(raw_setup,'ICWBaseOpSetup',typelib)
+        for oi,raw_op in enumerate(_items(read(setup,'IGetEnumOperations'),typelib,read,limit=512-len(own_rows))):
+            op=_typed(raw_op,'ICWOperation',typelib);oid=_object_id(doc,op,read)
+            prior=[x for x in state['operation_tools'] if x['operation']['setup_index']==si and x['operation']['operation_index']==oi]
+            require(len(prior)==1 and prior[0]['operation_native_id']==oid,'Repeated operation ID differs')
+            linked=[_object_id(doc,f,read) for f in _items(read(op,'IGetAllFeatures'),typelib,read,limit=64)]
+            require(len(linked)==len(set(linked)),'Duplicate linked feature IDs')
+            raw_tool=read(op,'IGetTool');tool=_typed(raw_tool,'ICWTool',typelib);tid=_object_id(doc,tool,read)
+            require(tid==prior[0]['tool_native_id'],'Repeated own-tool ID differs')
+            observed={};row=dict(operation=deepcopy(prior[0]['operation']),operation_native_id=oid,tool_native_id=tid,linked_feature_ids=linked,observed_tool=observed)
+            own_rows.append(row);profile._read_tool(raw_tool,op,typelib,read,observed,include_drill=True)
+            hd=observed.get('holder',{})
+            if observed.get('turn_tool_type_raw')==1 and hd.get('holder_type_raw') in (1,2):
+                turn=_typed(raw_tool,'ICWTurnTool',typelib);holder=_typed(read(turn,'IGetTurnToolHolder'),'ICWTurnToolHolder',typelib)
+                row['holder_file']={};_holder_file(holder,read,row['holder_file'])
+            if tid==target:
+                require(observed.get('tool_type_raw')==15 and observed.get('turn_tool_type_raw')==1 and observed.get('insert_type_raw')==1 and observed.get('parameters_status')=='available','Affected own tool is not a diamond insert')
+                require(hd.get('holder_type_raw')==2 and hd.get('holder_id_raw')==config['expected_holder_id'],'Affected holder classification differs')
+                require(observed['dimensions_native']==state['selected_tool']['dimensions_native'] and hd['dimensions_native']==state['selected_tool']['holder']['dimensions_native'],'Shared own/selected scalar readbacks disagree')
+                require(hd['shape_raw']==state['selected_tool']['holder']['shape_raw'],'Shared own holder shape differs')
+                target_rows.append(row)
+                if oid==selected:
+                    require(row['operation']==state['selected_operation'],'Selected operation reference differs')
+                    native.update(native_doc=doc,operation=op,tool=tool,turn_tool=turn,holder=holder);selected_seen=True
+    require(len(own_rows)==len(state['operation_tools']) and selected_seen,'Complete own-tool membership required')
+    require(len({x['operation_native_id'] for x in own_rows})==len(own_rows),'Duplicate own operation identity')
+    require(sorted((r['operation'] for r in target_rows),key=single._ref_key)==sorted(state['affected_operations'],key=single._ref_key),'Complete affected operation membership differs')
+    crib=next(x for x in state['toolcrib'] if x['native_id']==target)
+    require(all(r['holder_file']==crib['holder_file'] for r in target_rows),'Own/crib holder file fields disagree')
+    selected_file=deepcopy(crib['holder_file']);state['selected_holder_file']=selected_file
+    require(selected_file['shape_raw'] in (0,1),'Only standard or custom STL holder shape supported')
+    if selected_file['shape_raw']==1:
+        path=selected_file['path_raw']
+        require(type(path) is str and absolute_document_path(path) and Path(path).suffix.casefold()=='.stl','Custom holder requires exact absolute STL path')
+    require(document_snapshot(sw)==state['document'] and _inventory(machine,typelib,read)==state['inventory'],'Document or inventory changed during logical capture')
+    diagnostic['logical_capture_complete']=True
+    return state,native
+
+
+def _verify_logical_changes(before,after,changes,tool_id):
+    """只允许选中共享刀柄的请求标量变化；文件、形状、其他刀具字段保持一致。"""
+    expected=deepcopy(before)
+    require(type(after['document']['needs_save']) is bool,'Strict save flag required')
+    expected['document']['needs_save']=after['document']['needs_save']
+    expected['selected_tool']['info_raw']=after['selected_tool']['info_raw']
+    row=next(x for x in expected['toolcrib'] if x['native_id']==tool_id)
+    actual=next(x for x in after['toolcrib'] if x['native_id']==tool_id);row['info_raw']=actual['info_raw']
+    for field,value in changes.items():
+        expected['selected_tool']['holder']['dimensions_native'][field]=value
+        row['holder_dimensions_native'][field]=value;row['observed_holder']['dimensions_native'][field]=value
+    require(len(expected['observed_operation_tools'])==len(after['observed_operation_tools']),'Own-tool observation count changed')
+    for a,b in zip(expected['observed_operation_tools'],after['observed_operation_tools']):
+        if a['tool_native_id']==tool_id:
+            a['observed_tool']['info_raw']=b['observed_tool']['info_raw']
+            for field,value in changes.items():a['observed_tool']['holder']['dimensions_native'][field]=value
+    require(expected==after,'Unexpected change outside requested holder scalars or derived target tool display')
+
+
 def verify_changes(before, after, changes, tool_id):
     expected=deepcopy(before)
     require(type(after["document"]["needs_save"]) is bool, "Strict observed save flag required")
@@ -187,12 +284,14 @@ def configure_turn_holder_dimensions(sw,clsid,typelib_path,*,process_id,expected
         tool_assignment_attempted=False,automatic_retry=False,automatic_rollback=False,physical_tool_qualified=False,
         native_units_verified=False,all_holder_sharing_qualified=False,storage_independence_verified=False,
         protected_CL_bytes_compared=False,all_nc_parameters_verified=False,full_model_geometry_verified=False,persistence_verified=False,production_qualified=False,
-        setters=[],snapshot_diagnostics=[])
+        setters=[],snapshot_diagnostics=[],captures=[],receipt_created=False,receipt_path=None,
+        logical_binding_verified=False,holder_file_fields_preserved=False)
     session=None;receipt=None;created=False
     def persist():
         if created:_write_receipt(receipt,report)
     try:
         values=validate(config,values_native,protected_part_pins)
+        report["getter_setter_abi"]=_logical_abi(typelib_path)
         require(qualification_only is True and message_policy == "vendor_default", "Explicit qualification/default-message policy required")
         require(action in ("prepare","apply"), "Only prepare/apply supported")
         require(action == "apply" or all(v is None for v in (expected_state_sha256,allowed_affected_operations,receipt_path)), "Prepare rejects apply inputs")
@@ -207,7 +306,7 @@ def configure_turn_holder_dimensions(sw,clsid,typelib_path,*,process_id,expected
             receipt=Path(receipt_path)
             require(receipt.suffix.casefold() == ".json" and receipt.parent.is_dir() and not receipt.exists() and not receipt.is_symlink()
                 and guard.key(receipt) != guard.key(marker), "Fresh nonaliased receipt required")
-            _write_receipt(receipt,report,create=True);created=True
+            _write_receipt(receipt,report,create=True);created=True;report.update(receipt_created=True,receipt_path=str(receipt))
         report["request"]=dict(config,protected_part_pins=deepcopy(protected_part_pins),values_native=values,action=action)
         guard.isolated(sw,config,lambda:None)
         app=_bootstrap(sw,clsid,typelib_path,expected_document_path);session=CamMessageSession(app,typelib_path)
@@ -218,11 +317,19 @@ def configure_turn_holder_dimensions(sw,clsid,typelib_path,*,process_id,expected
             check();guard.isolated(sw,config,check)
             require(files(config,protected_part_pins) == identity,"Copy/protected file identity changed")
             if reference is not None:require(document_snapshot(sw) == reference,"Document changed before holder write")
+        def observe(label):
+            report["phase"]=label;entry=dict(label=label,capture_complete=False);report["captures"].append(entry)
+            try:
+                state,native=_logical_snapshot(sw,clsid,typelib_path,config,report,check)
+                entry.update(state=deepcopy(state),capture_complete=True)
+                return state,native
+            finally:persist()
         with session:
-            boundary();report["phase"]="before"
-            before,native=snapshot(sw,clsid,typelib_path,config,report,check);original_native=native
+            boundary()
+            before,native=observe("before");report["before"]=before
             require(before["document"]["needs_save"] is False,"Initially clean saved qualification copy required")
-            report["before"]=before;boundary(before["document"])
+            confirm,native=observe("confirm_before");require(confirm==before,"Two complete logical captures must agree")
+            boundary(before["document"])
             affected=before["affected_operations"];generated=[x for x in before["inventory"]["operations"] if x["toolpath_generated"]
                 and any((x["setup_index"],x["operation_index"]) == (r["setup_index"],r["operation_index"]) for r in affected)]
             old=before["selected_tool"]["holder"]["dimensions_native"]
@@ -241,26 +348,29 @@ def configure_turn_holder_dimensions(sw,clsid,typelib_path,*,process_id,expected
                     receipt_path=str(receipt)),create=True)
                 for field,value in changes.items():
                     boundary(current["document"])
-                    def read(obj,name,*args):
-                        check();v=_member(obj,name,*args);check();return v
-                    require(_object_id(native["native_doc"],native["operation"],read) == expected_operation_native_id,"Selected operation changed")
-                    tool=_typed(read(native["operation"],"IGetTool"),"ICWTool",typelib_path)
-                    require(_object_id(native["native_doc"],tool,read) == expected_tool_native_id,"Own tool assignment changed")
-                    turn=_typed(tool,"ICWTurnTool",typelib_path)
-                    holder=_typed(read(turn,"IGetTurnToolHolder"),"ICWTurnToolHolder",typelib_path)
-                    require(single._identity(holder) == original_native["holder_identity"],"Selected holder COM identity changed before write")
-                    require(profile._integer(read(holder,"GetHolderType")) == 2 and profile._integer(read(holder,"GetHolderId")) == expected_holder_id,"Holder classification changed")
-                    for key in values:require(profile._number(read(holder,key)) == current["selected_tool"]["holder"]["dimensions_native"][key],"Holder values changed before write")
-                    item=dict(field=field,old_value_native=old[field],value_native=value,attempted=True,returned=False,readback_verified=False)
-                    report["setters"].append(item);report.update(phase="property_put",mutation_attempted=True,native_dispatch_pending=True);persist();boundary(current["document"])
-                    setattr(holder,field,value)
-                    item["returned"]=True;report["native_calls_returned_count"]+=1;report.update(native_dispatch_pending=False,phase="property_put_returned");persist();check()
-                    observed=profile._number(read(holder,field));item["observed_value_native"]=observed
-                    require(observed == value,"Immediate holder scalar readback differs")
-                    after,native=snapshot(sw,clsid,typelib_path,config,report,check);item["after"]=after;persist()
-                    applied[field]=value;verify_changes(before,after,applied,expected_tool_native_id)
-                    require(native["holder_identity"] == original_native["holder_identity"],"Holder identity changed during readback")
-                    item["readback_verified"]=True;current=after;boundary(current["document"]);persist()
+                    item=dict(field=field,old_value_native=old[field],value_native=value,attempted=False,returned=False,readback_verified=False)
+                    report["setters"].append(item)
+                    fresh,native=observe("dispatch_guard_"+field)
+                    require(fresh==current,"Full logical owner/crib state changed before write")
+                    boundary(current["document"])
+                    report.update(phase="property_put",mutation_attempted=True,native_dispatch_pending=True)
+                    item["attempted"]=True;persist();boundary(current["document"])
+                    setter_error=None
+                    try:
+                        setattr(native["holder"],field,value)
+                        item["returned"]=True;report["native_calls_returned_count"]+=1
+                        report.update(native_dispatch_pending=False,phase="property_put_returned")
+                    except Exception as error:
+                        setter_error=error;item["setter_error"]=_error(error)
+                        report["phase"]="property_put_failed"
+                    persist();check()
+                    # setter 异常也只观察一次实际状态；禁止再次 setter 或自动回滚。
+                    after,native=observe("after_"+field);item["after"]=after
+                    report["after"]=after;current=after;persist()
+                    if setter_error is not None:raise setter_error
+                    applied[field]=value;_verify_logical_changes(before,after,applied,expected_tool_native_id)
+                    item["observed_value_native"]=after["selected_tool"]["holder"]["dimensions_native"][field]
+                    item["readback_verified"]=True;boundary(current["document"]);persist()
             report["after"]=current;check()
         m=session.summary();report["messages"]=m
         require(m.get("subscribed") is True and m.get("disconnected") is True and m.get("active") is False
@@ -269,6 +379,7 @@ def configure_turn_holder_dimensions(sw,clsid,typelib_path,*,process_id,expected
         guard.isolated(sw,config,lambda:None)
         report.update(status="prepared" if action == "prepare" else "review_required",phase="finished",readback_verified=action == "apply",
             apply_eligible=action == "prepare" and not generated and bool(changes),final_state=current,final_state_sha256=single._digest(current),
+            logical_binding_verified=True,holder_file_fields_preserved=action=="apply",
             reason="SCALAR_HOLDER_DEFINITION_ONLY_PHYSICAL_ASSEMBLY_UNITS_CL_AND_PERSISTENCE_UNQUALIFIED")
     except Exception as exc:
         report.update(status="uncertain" if report["mutation_attempted"] else "error",failed_phase=report["phase"],phase="finished",
@@ -278,6 +389,28 @@ def configure_turn_holder_dimensions(sw,clsid,typelib_path,*,process_id,expected
         try:persist()
         except Exception as exc:report.update(status="uncertain" if report["mutation_attempted"] else "error",readback_verified=False,apply_eligible=False,receipt_write_error=_error(exc))
     return report
+
+
+def revoke_runtime_verification(result,error,expected_receipt_path):
+    """保留已返回的实际证据，撤销运行时资格；只重写本次创建的匹配回执。"""
+    import json
+    result['historical_verification_before_runtime_drift']={k:result.get(k) for k in ('status','readback_verified','apply_eligible','logical_binding_verified','holder_file_fields_preserved')}
+    result.update(status='uncertain' if result.get('mutation_attempted') else 'error',readback_verified=False,
+        apply_eligible=False,logical_binding_verified=False,holder_file_fields_preserved=False,
+        runtime_unchanged=False,may_continue=False,reason='RUNTIME_CHANGED_AFTER_NATIVE_CALL',
+        runtime_error=_error(error),runtime_drift_receipt_updated=False)
+    if result.get('receipt_created') is True and expected_receipt_path is not None and result.get('receipt_path')==str(expected_receipt_path):
+        try:
+            path=Path(expected_receipt_path)
+            require(path.is_file() and not path.is_symlink(),'Owned runtime-drift receipt missing or aliased')
+            disk=json.loads(path.read_text(encoding='utf-8'))
+            require(disk.get('scope')==SCOPE and disk.get('receipt_created') is True and disk.get('receipt_path')==str(path)
+                and disk.get('request')==result.get('request'),'Runtime-drift receipt belongs to a different invocation')
+            result['runtime_drift_receipt_updated']=True
+            _write_receipt(path,result)
+        except Exception as exc:
+            result['runtime_drift_receipt_updated']=False;result['runtime_drift_receipt_error']=_error(exc)
+    return result
 
 
 PROBE_SCOPE = "TURN_HOLDER_SINGLE_SHANK_LENGTH_WRITE_THROUGH_PROBE_V1"

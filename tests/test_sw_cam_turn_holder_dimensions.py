@@ -42,6 +42,11 @@ def probe(tmp_path, monkeypatch):
             return state.get("kind_after_claim", 2) if list(marker_root.iterdir()) else 2
         def GetHolderId(self):
             return state.get("id_after_claim", self.catalog_id) if list(marker_root.iterdir()) else self.catalog_id
+        def GetToolOrientationForOperation(self, operation): return 5
+        @property
+        def HolderShapeFilePath(self): return state.get("holder_file_path") if self.catalog_id==4 else None
+        @property
+        def HolderShapeFileUnit(self): return state.get("holder_file_unit",2)
         def __getattr__(self, key):
             if key in self.values:
                 return self.values[key]
@@ -86,12 +91,14 @@ def probe(tmp_path, monkeypatch):
         def GetToolInfoString(self): return "synthetic tool"
 
     tool, second = Tool(101, first), Tool(102, other)
-    operation = NS(native_id=71, IGetTool=lambda: tool)
+    operation = NS(native_id=71, IGetTool=lambda: tool, IGetAllFeatures=lambda:[NS(native_id=51)])
+    second_operation = NS(native_id=72, IGetTool=lambda: tool if state['extra_assignment'] else second, IGetAllFeatures=lambda:[NS(native_id=52)])
+    setup=NS(IGetEnumOperations=lambda:[operation,second_operation])
     class Doc:
         def GetCWObjectID(self, obj): return obj.native_id, True
     doc = Doc()
     crib = NS(GetAllTools=lambda: [second] if state["missing_crib"] else [tool, second])
-    machine = NS(IGetToolcrib=lambda: crib)
+    machine = NS(IGetToolcrib=lambda: crib,IGetEnumOpSetups=lambda:[setup])
     app, sw = object(), object()
     def typed(obj, name, *unused):
         if name == "ICWTurnTool": return obj.turn if isinstance(obj, Tool) else obj
@@ -110,9 +117,9 @@ def probe(tmp_path, monkeypatch):
         affected = [ref()] + ([ref(1)] if state["extra_assignment"] else [])
         result = dict(document=deepcopy(document), selected_operation=ref(), selected_tool_group=0,
             inventory=dict(operations=[dict(setup_index=0, operation_index=i,
-                turn_operation_type=6, toolpath_generated=state["generated"] and i == 1) for i in range(2)]),
+                turn_operation_type=6, toolpath_generated=state["generated"] and i == 1,toolpath_record_counts=[]) for i in range(2)]),
             affected_operations=affected, operation_tools=[dict(operation=ref(), operation_native_id=71,
-                tool_group=0, tool_native_id=101)],
+                tool_group=0, tool_native_id=101),dict(operation=ref(1),operation_native_id=72,tool_group=0 if state["extra_assignment"] else 1,tool_native_id=101 if state["extra_assignment"] else 102)],
             tool_groups=[dict(cam_object_id=101, dimensions_native={k:v for k,v in tool.dimensions.items() if k != "IncludedAngle"})],
             linked_features=[dict(native_id=51, segments=[dict(start_native=[0., 1., 2.])])],
             selected_tool=selected_tool())
@@ -136,6 +143,19 @@ def probe(tmp_path, monkeypatch):
             return dict(subscribed=self.entered, active=self.active, disconnected=self.disconnected,
                 event_count=self.error, overflow=0, callback_error_count=0, callback_errors=[],
                 subscription_error=None, disconnect_errors=[])
+    def read_own_tool(raw,op,typelib,read,result,**unused):
+        holder=raw.turn.IGetTurnToolHolder()
+        result.update(present=True,tool_type_raw=15,turn_tool_type_raw=1,insert_type_raw=1,parameters_status="available",
+            info_raw=raw.GetToolInfoString(),dimensions_native=deepcopy(raw.dimensions),
+            holder=dict(present=True,holder_type_raw=holder.GetHolderType(),holder_id_raw=holder.GetHolderId(),
+                orientation_for_operation_raw=5,shape_raw=holder.values['HolderShape'],
+                dimensions_native={k:v for k,v in holder.values.items() if k!='HolderShape'}))
+    def live_inventory(*args):
+        return dict(operations=[dict(setup_index=0,operation_index=i,turn_operation_type=6,
+            toolpath_generated=state['generated'] and i==1,toolpath_record_counts=[]) for i in range(2)])
+    monkeypatch.setattr(cam,'_logical_abi',lambda path:dict(native_calls=0))
+    monkeypatch.setattr(cam,'_inventory',live_inventory)
+    monkeypatch.setattr(cam.profile,'_read_tool',read_own_tool)
     monkeypatch.setattr(cam.single, "_snapshot", base_snapshot)
     monkeypatch.setattr(cam.single, "_identity", lambda obj: obj.QueryInterface("canonical-IUnknown"))
     monkeypatch.setattr(cam, "_typed", typed)
@@ -172,8 +192,8 @@ def test_prepare_uses_real_crib_collector_and_canonical_identity_without_writes(
     assert r["status"] == "prepared", r
     assert r["apply_eligible"] and not r["mutation_attempted"]
     assert [x["native_id"] for x in r["before"]["toolcrib"]] == [101, 102]
-    assert r["before"]["holder_alias_observation"]["selected_same_com_tool_ids"] == [101]
-    assert len(probe.state["qi"]) == 3
+    assert r["snapshot_diagnostics"][0]["holder_identity_observation"]["selected_crib_same_canonical_identity"] is True
+    assert r["logical_binding_verified"] and len(probe.state["qi"]) == 6
     assert not probe.state["writes"] and not probe.receipt.exists()
     assert not list(probe.marker_root.iterdir())
 
@@ -184,7 +204,7 @@ def test_three_puts_are_durable_and_each_has_full_crib_readback(probe):
     assert probe.state["writes"] == [("BoringBarDiameter",25.), ("LeadAngle",-3.), ("ShankLength",200.)]
     assert r["native_calls_returned_count"] == 3
     assert all(x["returned"] and x["readback_verified"] for x in r["setters"])
-    assert probe.state["snapshots"] == 5
+    assert probe.state["snapshots"] == 10
     assert r["before"]["toolcrib"][1] == r["after"]["toolcrib"][1]
     assert json.loads(probe.receipt.read_text(encoding="utf-8")) == r
     for key in ("model_saved", "GOP_attempted", "GTP_attempted", "tool_assignment_attempted",
@@ -218,12 +238,12 @@ def test_hidden_other_holder_alias_stops_after_first_put(probe):
     assert not r["setters"][0]["readback_verified"]
 
 
-def test_selected_holder_identity_changes_before_put_writes_nothing(probe):
+def test_changed_view_without_owner_crib_write_through_stops_after_one_put(probe):
     p = probe.prepare(); probe.state["identity_swap"] = True
     r = probe.apply(p)
-    assert r["status"] == "error" and not r["mutation_attempted"], r
-    assert r["issue"]["type"] == "ValueError" and not r["setters"]
-    assert not probe.state["writes"]
+    assert r["status"] == "uncertain" and r["mutation_attempted"], r
+    assert r["issue"]["type"] == "ValueError" and not r["readback_verified"]
+    assert len(probe.state["writes"])==1
 
 
 def test_generated_operation_sharing_tool_blocks_apply(probe):
@@ -331,7 +351,7 @@ def test_prewrite_holder_classification_requires_native_integer(probe, key, valu
     p = probe.prepare(); probe.state[key] = value
     r = probe.apply(p)
     assert r["status"] == "error" and not r["mutation_attempted"]
-    assert not probe.state["writes"] and not r["setters"]
+    assert not probe.state["writes"] and not any(x["attempted"] for x in r["setters"])
 
 
 
