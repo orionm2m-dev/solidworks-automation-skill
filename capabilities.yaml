@@ -901,6 +901,32 @@
     "interactive",
     "reviewed"
   ]
-}
+},
+    {
+      "id": "cam_turn_cutoff_tool_contour_inspection",
+      "label": "TURN CutOff 自有槽刀及夹持器轮廓只读检查",
+      "level": "pilot",
+      "backends": [
+        "solidworks-com-pywin32"
+      ],
+      "verified_versions": [],
+      "dependencies": [
+        "SolidWorks",
+        "SOLIDWORKS CAM",
+        "pywin32",
+        "comtypes"
+      ],
+      "limitations": [
+        "Existing solidworks_cam_inspect_turn_tool_contours gains a separate type13/Groove2/shank1 branch; bore5/6 behavior unchanged.",
+        "Exact PID/lifetime/document/SHA/operation/feature/tool native IDs; two equal event-guarded captures with bounded32 chains/512 line-arc curves each.",
+        "Programmatic tests only; no native CutOff contour success is claimed. No setter, generation, Save, tool assignment, option read or tool-ID discovery.",
+        "Raw dimensions/orientation are not unit/frame/program-point/solid-geometry, collision or production qualification.",
+        "Usage: references/cam-turn-tool-contours.md"
+      ],
+      "allowed_modes": [
+        "interactive",
+        "reviewed"
+      ]
+    }
 ]
 }

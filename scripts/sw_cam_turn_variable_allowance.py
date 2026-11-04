@@ -146,6 +146,60 @@ def _read_bore_tool_contours(doc, operation, typelib_path, expected_tool_id, rea
     result["complete"] = True
 
 
+def _read_cutoff_tool_contours(doc, operation, typelib_path, expected_tool_id, read, result):
+    """仅读取 CutOff 自有槽刀及该操作专用夹持器轮廓；不推断坐标系。"""
+    result.update(coordinate_frame_verified=False, program_point_verified=False, units_verified=False,
+                  solid_geometry_verified=False, physical_holder_verified=False, complete=False)
+    raw_tool = read(operation, "IGetTool")
+    if raw_tool is None or not bool(raw_tool):
+        raise ValueError("Selected operation has no own tool")
+    tool = _typed(raw_tool, "ICWTool", typelib_path)
+    result["tool_native_id"] = _object_id(doc, tool, read)
+    if result["tool_native_id"] != expected_tool_id:
+        raise ValueError("Exact selected own tool ID differs")
+    result["tool_type_raw"] = _integer(read(tool, "ToolType"))
+    if result["tool_type_raw"] != 15:
+        raise ValueError("Only an existing TURN tool contour is supported")
+    turn = _typed(raw_tool, "ICWTurnTool", typelib_path)
+    result["turn_tool_type_raw"] = _integer(read(turn, "ToolType"))
+    if result["turn_tool_type_raw"] != 1:
+        raise ValueError("Only an existing single-point TURN insert is supported")
+    result["insert_type_raw"] = _integer(read(turn, "InsertType"))
+    if result["insert_type_raw"] != 2:
+        raise ValueError("Only an existing Groove insert is supported")
+    result["insert_dimensions_native"] = {}
+    for field in ("Thickness", "Width", "length", "Radius1", "Radius2"):
+        result["insert_dimensions_native"][field] = _number(read(turn, field))
+    raw_holder = read(turn, "IGetTurnToolHolder")
+    if raw_holder is None or not bool(raw_holder):
+        raise ValueError("Selected own tool has no holder")
+    holder = _typed(raw_holder, "ICWTurnToolHolder", typelib_path)
+    result["holder_type_raw"] = _integer(read(holder, "GetHolderType"))
+    if result["holder_type_raw"] != 1:
+        raise ValueError("Only an existing TURN shank holder is supported")
+    result["holder_id_raw"] = _integer(read(holder, "GetHolderId"))
+    if result["holder_id_raw"] < 0:
+        raise ValueError("Existing TURN shank holder ID must be nonnegative")
+    result["orientation_for_operation_raw"] = _integer(read(holder, "GetToolOrientationForOperation", operation))
+    result["insert_offsets_native"] = {}
+    for field in ("XInsertOffset", "ZInsertOffset"):
+        result["insert_offsets_native"][field] = _number(read(holder, field))
+    result["holder_shape_raw"] = _integer(read(holder, "HolderShape"))
+    result["holder_dimensions_native"] = {}
+    for field in ("GetHolderThickness", "ShankLength", "ShankWidth", "Protrusion",
+                  "LeadAngle", "BackClearAngle", "FrontClearAngle"):
+        result["holder_dimensions_native"][field] = _number(read(holder, field))
+    for label,owner,method,args in (("insert_profile",tool,"GetToolProfile",()),
+                                  ("holder_profile",holder,"GetHolderProfile",(operation,))):
+        profile = dict(source_method=method)
+        result[label] = profile
+        raw_chain = read(owner, method, *args)
+        _segment_profile(raw_chain, typelib_path, read, profile)
+        if not profile.get("available") or not profile.get("parameters_complete"):
+            raise ValueError("Complete bounded line/arc contour required: " + label)
+    result["complete"] = True
+
+
 def _digest(value):
     return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest()
 
@@ -234,7 +288,8 @@ def _snapshot(sw,clsid,typelib_path,config,read,check,identity,diagnostic=None):
                 _read_bore_options(raw,typelib_path,read,result['bore_options_native'])
         if config.get('include_tool_contours'):
             result['tool_contours'] = {}
-            _read_bore_tool_contours(doc,operation,typelib_path,config['expected_tool_native_id'],read,result['tool_contours'])
+            reader = _read_cutoff_tool_contours if kind == 13 else _read_bore_tool_contours
+            reader(doc,operation,typelib_path,config['expected_tool_native_id'],read,result['tool_contours'])
         check()
         if identity()!=current_doc or _inventory(machine,typelib_path,read)!=result['inventory']:
             raise ValueError('Document, saved file or complete inventory changed during bore read')
@@ -327,7 +382,8 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
             raise ValueError('Identify discovers linked IDs; expected linked IDs belong to strict read only')
         allowed_types=((13,) if inspection_scope=='cutoff_options' else
                        (5,) if inspection_scope=='bore_rough_options' else
-                       (5,6) if inspection_scope in ('tool_contours','turn_setup_context') else _MODE_INTERFACES)
+                       (5,6,13) if inspection_scope=='tool_contours' else
+                       (5,6) if inspection_scope=='turn_setup_context' else _MODE_INTERFACES)
         if type(expected_operation_type) is not int or expected_operation_type not in allowed_types:
             raise ValueError('Exact operation type does not match the parameter inspection scope')
         if type(expected_document_path) is not str or not absolute_document_path(expected_document_path) or Path(expected_document_path).suffix.casefold()!='.sldprt':
@@ -364,7 +420,9 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
                 report['tool_contour_abi'] = _tool_contour_abi(typelib_path)
                 report.update(tool_contours_requested=True,
                     program_point_verified=False,coordinate_frame_verified=False,
-                    contour_scope='Selected own diamond insert and operation-specific boring holder; 32 chains/512 curves per contour')
+                    contour_scope=('Selected own Groove insert and operation-specific shank holder; 32 chains/512 curves per contour'
+                        if expected_operation_type == 13 else
+                        'Selected own diamond insert and operation-specific boring holder; 32 chains/512 curves per contour'))
             report.update(full_model_geometry_verified=False,all_nc_parameters_verified=False,
                 tool_geometry_verified=False,production_qualified=False,
                 parameter_interpretation='Raw current Boolean/double/LONG values; no undercut, tool access or physical cutting qualification',
@@ -462,7 +520,7 @@ def inspect_turn_tool_contours(sw,clsid,typelib_path,*,process_id,expected_proce
         expected_document_path,expected_source_sha256,setup_index,operation_index,
         expected_operation_native_id,expected_operation_type,expected_linked_feature_ids,
         expected_tool_native_id,action='read',message_policy='vendor_default'):
-    """Read exact own-tool insert and holder contours for bore rough/finish, twice."""
+    """两次读取已有镗削或 CutOff 操作的自有刀片和夹持器轮廓。"""
     return _inspect_turn_operation_parameters(sw,clsid,typelib_path,process_id=process_id,
         expected_process_create_time=expected_process_create_time,expected_document_path=expected_document_path,
         expected_source_sha256=expected_source_sha256,setup_index=setup_index,operation_index=operation_index,

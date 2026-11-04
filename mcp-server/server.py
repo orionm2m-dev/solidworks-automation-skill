@@ -13908,20 +13908,27 @@ def solidworks_cam_qualify_turn_holder_write_through(params: SolidWorksCamTurnHo
 
 
 class SolidWorksCamTurnToolContoursInput(SolidWorksCamVariableAllowanceInput):
-    """Exact read-only own-tool contours for an existing bore rough/finish operation."""
+    """仅读取已有镗削或 CutOff 操作的自有刀具轮廓。"""
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
     expected_process_create_time: float = Field(gt=0, strict=True, allow_inf_nan=False)
-    expected_operation_type: int = Field(ge=5, le=6, strict=True)
+    expected_operation_type: int = Field(strict=True)
     expected_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
     expected_linked_feature_ids: list[int] = Field(min_length=1, max_length=64)
     expected_tool_native_id: int = Field(gt=0, le=4294967295, strict=True)
     action: Literal["read"] = "read"
 
+    @field_validator("expected_operation_type")
+    @classmethod
+    def supported_contour_operation(cls, value):
+        if value not in (5, 6, 13):
+            raise ValueError("Only bore rough/finish or CutOff operation types are supported")
+        return value
 
-@mcp.tool(name="solidworks_cam_inspect_turn_tool_contours", title="Inspect Existing TURN Bore Tool Contours",
+
+@mcp.tool(name="solidworks_cam_inspect_turn_tool_contours", title="Inspect Existing TURN Tool Contours",
           annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
 def solidworks_cam_inspect_turn_tool_contours(params: SolidWorksCamTurnToolContoursInput) -> str:
-    """Read both own-tool contours twice; no operation options, THREAD catalogue or changes."""
+    """两次读取自有刀具轮廓；不读操作选项、THREAD 目录或修改状态。"""
     def op():
         _runtime_identity.assert_current()
         if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
@@ -13931,7 +13938,13 @@ def solidworks_cam_inspect_turn_tool_contours(params: SolidWorksCamTurnToolConto
         values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
         result = inspect_turn_tool_contours(sw, registration["clsid"],
             typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
-        _runtime_identity.assert_current()
+        try:
+            _runtime_identity.assert_current()
+        except Exception as error:
+            result.update(status="error", readback_verified=False, runtime_unchanged=False,
+                may_continue=False, reason="RUNTIME_CHANGED_AFTER_READ", runtime_error=str(error))
+            return result
+        result["runtime_unchanged"] = True
         return result
     return _run_locked(op, params.response_format)
 
