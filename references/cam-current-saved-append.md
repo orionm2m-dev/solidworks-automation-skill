@@ -1,6 +1,6 @@
 # Current saved mode for one-feature MILL plan append
 
-The existing `solidworks_cam_append_mill_operations` endpoint accepts an explicit `planning_mode="current_saved"` input in addition to its unchanged historical configured-plan input. The current mode supports `prepare` and `apply`; it cannot save, assign a strategy/tool, create a feature/setup, generate paths, simulate or write TechDB.
+The existing `solidworks_cam_append_mill_operations` endpoint accepts an explicit `planning_mode="current_saved"` input in addition to its unchanged historical configured-plan input. The current mode supports `prepare` and `apply`; an explicit apply may save only after a verified additive delta. It cannot assign a strategy/tool, create a feature/setup, generate paths, simulate or write TechDB.
 
 The current input inherits the exact PID/lifetime, clean saved part path/SHA, feature/feature-setup/operation-setup IDs, ordered old operations and native path counts of the current saved reader. It pins both the actual successful current-read request and result files. No absent identity fields are invented in the old result. Two fresh captures must match the pinned raw state and each other; prepare writes a new independently bound receipt.
 
@@ -13,3 +13,13 @@ Two post-plan captures must agree. The existing delta validator ensures the old 
 Partial captures and returned step diagnostics are retained. Event, native, source, runtime or receipt errors revoke acceptance. Wrapper runtime verification is persisted before a prepare can authorize apply; post-call runtime drift preserves native evidence and updates only this call's receipt/marker. The historical configured-plan loader, its full-tool/body guards and its optional-save behavior remain unchanged.
 
 Current-saved mode is staging-only until installed and read natively. Offline tests cover real synthetic traversal, prepare catalogues, HRESULT-only None return, once markers, bad deltas, event/exception stop, runtime drift before claim/dispatch and durable evidence. Successful tests do not prove that the actual selected strategy/defaults suit the part.
+
+## Optional checked Save after append
+
+`save_after_verified` is a strict Boolean, defaulting to `false`. Prepare requires `false` and never saves. Apply may explicitly set it to `true` while consuming a successful prepare made with `false`; the flag authorizes the later Save and does not change the prepared CAM binding or snapshot shape.
+
+Save is attempted once only after both post-GOP captures agree and the additive delta is verified. Fresh process lifetime, document identity, original saved-source hash, immutable read pins, event state and runtime checks precede dispatch. The operation uses typed `ICWApp.SaveActiveDocument`, whose checked metadata is DISPID 12, HRESULT, zero arguments and no OUT parameters. The previously observed native binding returned strict Python integer zero. This branch retains that contract: Boolean, nonzero and `None` returns are recorded as uncertain and never trigger an automatic retry.
+
+Only after a qualified return and quiet guards may the expected saved-file hash advance. Two new complete captures must agree and equal the verified pre-Save CAM state exactly, allowing only the document save flag to become false. All captured operation/tool data, profile steps, strategy, catalogues and path counts remain protected. The receipt records returned type/value, observed saved hash, dirty state, saved captures and verification flags. A partial Save or changed context retains available actual evidence, revokes success and keeps the no-replay marker. No error branch saves, generates paths, closes a document, rolls back or retries. Save readback does not prove reopen persistence or manufacturing suitability.
+
+This optional extension has offline contract tests only until a separate native observation is recorded. The original prepare and default no-Save apply behavior remain unchanged.

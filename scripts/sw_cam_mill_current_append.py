@@ -63,7 +63,8 @@ def validate(v):
     """校验 prepare/apply、真实双文件证据与独立独占 dispatch marker。"""
     current.validate(v)
     require(v['planning_mode']=='current_saved' and v['action'] in ('prepare','apply') and v['observation']=='three_step_profile','Explicit current-saved three-step append mode required')
-    require(v['save_after_verified'] is False and v['acknowledge_disposable_copy'] is True,'Current mode cannot save; qualification acknowledgement required')
+    require(type(v['save_after_verified']) is bool and v['acknowledge_disposable_copy'] is True,'Strict save choice and qualification acknowledgement required')
+    require(v['action']=='apply' or v['save_after_verified'] is False,'Prepare is read-only and cannot request Save')
     receipt=Path(v['receipt_path'])
     require(type(v['receipt_path']) is str and absolute_document_path(v['receipt_path']) and receipt.suffix.casefold()=='.json' and receipt.parent.is_dir() and not receipt.exists() and not receipt.is_symlink(),'Unique output JSON required')
     state,pins=qualified_read(v)
@@ -93,9 +94,19 @@ def gop_abi(tlb):
     require(method.restype is HRESULT and method.idlflags[0]==3 and method.argtypes==(c_long,) and tuple(p[0] for p in method.paramflags)==(1,) and not any(x in method.idlflags for x in ('propget','propput','propputref')),'Exact HRESULT-only GOP ABI required')
 
 
+def save_abi(tlb):
+    """固定 ICWApp.SaveActiveDocument 的无参数 HRESULT ABI；保留已验证的 int0 返回契约。"""
+    from ctypes import HRESULT
+    cls=current._interface_class('ICWApp',tlb)
+    rows=[m for m in cls._methods_ if m.name=='SaveActiveDocument']
+    require(str(cls._iid_).upper()=='{6015E884-0B0D-11D6-A982-00062999E55F}' and len(rows)==1,'Exact Save interface required')
+    method=rows[0]
+    require(method.restype is HRESULT and method.idlflags[0]==12 and method.argtypes==() and method.paramflags==() and not any(x in method.idlflags for x in ('propget','propput','propputref')),'Exact no-argument HRESULT-only Save ABI required')
+
+
 def runtime_drift(report,error):
     """撤销成功并持久保存已返回结果；不再读取 CAM 或隐式回滚。"""
-    report.update(status='uncertain' if report.get('mutation_attempted') else 'error',readback_verified=False,operation_delta_verified=False,may_apply=False,runtime_unchanged=False,reason='RUNTIME_CHANGED_AFTER_CALL',runtime_error=str(error))
+    report.update(status='uncertain' if report.get('mutation_attempted') else 'error',readback_verified=False,operation_delta_verified=False,may_apply=False,runtime_unchanged=False,save_readback_verified=False,model_saved=False,source_update_verified=False,reason='RUNTIME_CHANGED_AFTER_CALL',runtime_error=str(error))
     try:
         if report.get('receipt_created') is True:_write_receipt(Path(report['receipt_path']),report)
         if report.get('marker_created') is True:_write_receipt(Path(report['dispatch_marker_path']),dict(scope=SCOPE,status=report['status'],receipt_path=report['receipt_path'],receipt_sha256=_file_hash(report['receipt_path']),automatic_replay=False))
@@ -104,28 +115,32 @@ def runtime_drift(report,error):
 
 
 def run_current_saved_append(sw,clsid,typelib_path,*,runtime_check,**v):
-    """只准备或对一个精确特征执行一次 RETAIN GOP；不生成轨迹、不保存。"""
+    """只准备或执行一次 RETAIN GOP；可在完整增量验证后保存，不生成轨迹。"""
     report=dict(scope=SCOPE,status='error',phase='validation',action=v['action'],binding=binding(v),
         mutation_attempted=False,native_call_attempted=False,native_call_returned=False,native_dispatch_pending=False,
         GOP_attempted=False,GTP_attempted=False,AFR_attempted=False,model_saved=False,save_attempted=False,
+        save_after_verified=v['save_after_verified'],save_call_returned=False,save_readback_verified=False,
+        save_hresult=None,source_update_verified=False,reopen_persistence_verified=False,
+        source_before_sha256=v['expected_source_sha256'],
         strategy_assignment_attempted=False,tool_assignment_attempted=False,automatic_replay=False,automatic_rollback=False,
         readback_verified=False,operation_delta_verified=False,may_apply=False,production_qualified=False,
         full_hidden_geometry_preservation_verified=False,cl_coordinates_compared=False,world_geometry_verified=False,
         receipt_created=False,marker_created=False,runtime_unchanged=False,receipt_path=v['receipt_path'],captures=[],step_getter_diagnostics=[])
-    session=None;marker=None
+    session=None;marker=None;current_source=v['expected_source_sha256']
     def persist():
         if report['receipt_created']:_write_receipt(Path(v['receipt_path']),report)
     try:
         marker,reference,pins=validate(v);qualified_read(v,clsid);current._abi(typelib_path);gop_abi(typelib_path)
+        if v['save_after_verified']:save_abi(typelib_path)
         report.update(dispatch_marker_path=str(marker),qualified_read_pins=pins)
         _write_receipt(Path(v['receipt_path']),report,create=True);report['receipt_created']=True;persist()
-        def identity():
+        def identity(*,verify_source=True):
             process=_process_identity(v['process_id'])
             require(process.get('alive') is True and process.get('process_id')==v['process_id'] and process.get('create_time')==v['expected_process_create_time'] and Path(process.get('executable','')).name.casefold()=='sldworks.exe','Exact process lifetime changed')
             pid=_member(sw,'GetProcessID');require(type(pid) is int and pid==v['process_id'],'PID changed')
             doc=document_snapshot(sw);require(type(doc) is dict and type(doc.get('type')) is int and doc['type']==1 and type(doc.get('needs_save')) is bool,'Saved part required')
             check_document_target(doc['path'],doc['title'],expected_path=v['expected_document_path'],required=True)
-            require(_file_hash(v['expected_document_path'])==v['expected_source_sha256'],'Source file changed')
+            if verify_source:require(_file_hash(v['expected_document_path'])==current_source,'Source file changed')
             for (pathkey,shakey),expected in zip(PIN_PAIRS,(pins['request'],pins['result'])):require(read_pin(v[pathkey],v[shakey])[1]==expected,'Pinned read evidence changed')
             return doc
         with solidworks_operation_lock(timeout_seconds=1,process_id=v['process_id']):
@@ -185,17 +200,44 @@ def run_current_saved_append(sw,clsid,typelib_path,*,runtime_check,**v):
                     after,_=capture('after',True);report['new_operations']=verify_added_plan(before,after,v['expected_feature_native_id'],v['expected_operation_setup_native_id'],current_saved=True);persist()
                     final,_=capture('confirm_after',True);require(final==after,'Two post-plan captures differ');verify_added_plan(before,final,v['expected_feature_native_id'],v['expected_operation_setup_native_id'],current_saved=True)
                     report['operation_delta_verified']=True
+                    if v['save_after_verified']:
+                        check();runtime_check();require(identity()==final['document'],'Identity changed before verified Save')
+                        target_app=typed(app,'ICWApp')
+                        report.update(phase='SaveActiveDocument',save_attempted=True,native_dispatch_pending=True,
+                            observed_needs_save_before=final['document']['needs_save']);persist()
+                        check();require(identity()==final['document'],'Identity changed immediately before Save');runtime_check()
+                        returned=_member(target_app,'SaveActiveDocument')
+                        report.update(save_call_returned=True,native_dispatch_pending=False,
+                            save_return_type=type(returned).__name__,save_hresult=returned if type(returned) is int else None,
+                            save_return_value=returned if type(returned) in (int,bool,str,float,type(None)) else None);persist()
+                        check();runtime_check()
+                        require(type(returned) is int and returned==0,'Unexpected Save return; outcome unknown, no replay')
+                        observed_source=_file_hash(v['expected_document_path'])
+                        report['source_after_sha256']=observed_source;persist()
+                        identity(verify_source=False);check()
+                        require(_file_hash(v['expected_document_path'])==observed_source,'Source changed during Save boundary')
+                        current_source=observed_source
+                        saved,_=capture('saved',True)
+                        report['observed_needs_save_after']=saved['document']['needs_save'];persist()
+                        expected_saved=deepcopy(final);expected_saved['document']['needs_save']=False
+                        require(saved==expected_saved,'Save changed captured CAM state')
+                        require(saved['document']['needs_save'] is False,'Save left document dirty')
+                        confirm_saved,_=capture('confirm_saved',True)
+                        require(confirm_saved==saved,'Two saved captures differ')
+                        final=confirm_saved
+                        report.update(save_readback_verified=True,model_saved=True,source_update_verified=True,
+                            saved_file_sha256=current_source,source_hash_changed=current_source!=v['expected_source_sha256']);persist()
                 check()
             clean_events(dict(messages=session.summary()));require(identity()==final['document'],'Identity changed after cleanup')
-            report.update(status='review_required',phase='finished',readback_verified=True,may_apply=v['action']=='prepare',reason='CAPTURED_ONLY_DEFINITIONS_NO_GTP_NO_SAVE_NO_MACHINING_QUALIFICATION')
+            report.update(status='review_required',phase='finished',readback_verified=True,may_apply=v['action']=='prepare',reason='CAPTURED_DEFINITIONS_SAVED_NO_GTP_NO_MACHINING_QUALIFICATION' if report['model_saved'] else 'CAPTURED_ONLY_DEFINITIONS_NO_GTP_NO_SAVE_NO_MACHINING_QUALIFICATION')
     except Exception as exc:
-        report.update(status='uncertain' if report['mutation_attempted'] else 'error',failed_phase=report['phase'],phase='finished',issue=_error(exc),readback_verified=False,operation_delta_verified=False,may_apply=False)
+        report.update(status='uncertain' if report['mutation_attempted'] else 'error',failed_phase=report['phase'],phase='finished',issue=_error(exc),readback_verified=False,operation_delta_verified=False,may_apply=False,save_readback_verified=False,model_saved=False,source_update_verified=False)
     finally:
         if session is not None:report['messages']=session.summary()
         try:
             persist()
             if report['marker_created']:_write_receipt(marker,dict(scope=SCOPE,status=report['status'],receipt_path=v['receipt_path'],receipt_sha256=_file_hash(v['receipt_path']),automatic_replay=False))
-        except Exception as exc:report.update(status='uncertain' if report['mutation_attempted'] else 'error',receipt_write_error=_error(exc),readback_verified=False,operation_delta_verified=False,may_apply=False)
+        except Exception as exc:report.update(status='uncertain' if report['mutation_attempted'] else 'error',receipt_write_error=_error(exc),readback_verified=False,operation_delta_verified=False,may_apply=False,save_readback_verified=False,model_saved=False,source_update_verified=False)
     return report
 
 
@@ -206,5 +248,5 @@ def runtime_complete(report):
         if report.get('receipt_created') is True:_write_receipt(Path(report['receipt_path']),report)
         if report.get('marker_created') is True:_write_receipt(Path(report['dispatch_marker_path']),dict(scope=SCOPE,status=report['status'],receipt_path=report['receipt_path'],receipt_sha256=_file_hash(report['receipt_path']),automatic_replay=False))
     except Exception as exc:
-        report.update(status='uncertain' if report.get('mutation_attempted') else 'error',receipt_write_error=_error(exc),readback_verified=False,operation_delta_verified=False,may_apply=False)
+        report.update(status='uncertain' if report.get('mutation_attempted') else 'error',receipt_write_error=_error(exc),readback_verified=False,operation_delta_verified=False,may_apply=False,save_readback_verified=False,model_saved=False,source_update_verified=False)
     return report
