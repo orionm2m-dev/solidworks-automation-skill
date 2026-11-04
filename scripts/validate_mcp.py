@@ -45,6 +45,7 @@ REQUIRED_TOOLS = {
     "solidworks_cam_configure_turn_tool",
     "solidworks_cam_configure_turn_tool_dimensions",
     "solidworks_cam_configure_turn_holder_dimensions",
+    "solidworks_cam_qualify_turn_holder_stl",
     "solidworks_cam_qualify_turn_holder_write_through",
     "solidworks_recover_owned_process",
     "solidworks_cam_inspect_qualification_context",

@@ -14134,5 +14134,84 @@ def solidworks_reconcile_owned_startup(params: SolidWorksReconcileOwnedStartupIn
         return reconcile_owned_startup(params.model_dump(exclude={"response_format"}))
     return _run_locked(op,params.response_format,load_automation=False,desktop_guard=True)
 
+class SolidWorksCamTurnHolderSTLInput(SolidWorksCamOperationProfileInput):
+    """校验共用现有镗杆的清镗操作，并准备或执行限定 STL 文件配方。"""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_process_create_time: float = Field(gt=0, strict=True, allow_inf_nan=False)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    setup_index: int = Field(ge=0, le=511, strict=True)
+    operation_index: int = Field(ge=0, le=511, strict=True)
+    expected_operation_type: int = Field(ge=6, le=6, strict=True)
+    expected_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_tool_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_holder_id: int = Field(ge=0, le=2147483647, strict=True)
+    expected_holder_shape_raw: int = Field(ge=0, le=0, strict=True)
+    expected_holder_orientation_raw: int = Field(ge=5, le=5, strict=True)
+    affected_operations: list[dict] = Field(min_length=1, max_length=64, strict=True)
+    holder_stl_path: str = Field(min_length=1, strict=True)
+    holder_stl_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    holder_file_unit_raw: int = Field(ge=2, le=2, strict=True)
+    qualification_only: Literal[True]
+    message_policy: Literal["vendor_default"]
+    action: Literal["prepare", "apply"] = "prepare"
+    expected_state_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: str | None = Field(default=None, min_length=1, strict=True)
+
+    @field_validator("qualification_only", mode="before")
+    @classmethod
+    def holder_stl_explicit_qualification(cls, value):
+        if type(value) is not bool:
+            raise ValueError("qualification_only must be an explicit JSON Boolean")
+        return value
+
+    @model_validator(mode="after")
+    def holder_stl_exact_request(self):
+        from scripts.sw_cam_turn_holder_stl import validate_request
+        config = self.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format",
+            "action", "expected_state_sha256", "receipt_path", "qualification_only", "message_policy"})
+        validate_request(config, self.action, self.expected_state_sha256, self.receipt_path,
+            self.qualification_only, self.message_policy)
+        return self
+
+
+@mcp.tool(name="solidworks_cam_qualify_turn_holder_stl", title="Qualify Existing TURN Boring Holder STL",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_qualify_turn_holder_stl(params: SolidWorksCamTurnHolderSTLInput) -> str:
+    """准备或执行两项刀柄文件写入；返回证据，不改刀片、数据库、轨迹或保存状态。"""
+    def op():
+        _runtime_identity.assert_current()
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_turn_holder_stl import qualify_turn_holder_stl
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        result = qualify_turn_holder_stl(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+        try:
+            _runtime_identity.assert_current()
+        except Exception as exc:
+            from scripts.sw_cam import _error
+            from scripts.sw_cam_generation import _write_receipt
+            result = dict(result)
+            result["outcome_before_runtime_check"] = {key: result.get(key) for key in
+                ("status", "readback_verified", "apply_eligible", "reason")}
+            result.update(status="uncertain" if result.get("mutation_attempted") is True else "error",
+                phase="finished", failed_phase="post_call_runtime_identity", readback_verified=False,
+                apply_eligible=False, runtime_identity_changed=True, runtime_identity_issue=_error(exc),
+                runtime_drift_receipt_updated=False, reason="RUNTIME_IDENTITY_CHANGED_AFTER_HOLDER_STL")
+            if (params.action == "apply" and result.get("receipt_created") is True
+                    and type(result.get("receipt_path")) is str
+                    and Path(result["receipt_path"]) == Path(params.receipt_path)):
+                try:
+                    result["runtime_drift_receipt_updated"] = True
+                    _write_receipt(Path(result["receipt_path"]), result)
+                except Exception as write_error:
+                    result.update(runtime_drift_receipt_updated=False, receipt_write_error=_error(write_error))
+        return result
+    return _run_locked(op, params.response_format)
+
+
 if __name__ == "__main__":
     main()

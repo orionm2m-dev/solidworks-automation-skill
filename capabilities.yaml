@@ -226,6 +226,33 @@
       "allowed_modes": ["interactive", "reviewed"]
     },
     {
+      "id": "cam_turn_holder_stl_qualification",
+      "label": "Existing TURN boring-holder STL definition qualification",
+      "level": "pilot",
+      "backends": [
+        "solidworks-com-comtypes"
+      ],
+      "verified_versions": [],
+      "dependencies": [
+        "SolidWorks",
+        "SOLIDWORKS CAM",
+        "pywin32",
+        "comtypes"
+      ],
+      "limitations": [
+        "Software validation only: 65 focused and 214 combined tests passed; no native holder STL assignment performed.",
+        "Exact existing finish-bore own tool, all shared consumers ungenerated, source/process lifetime/STL hashes, native operation/tool and linked-feature IDs, double captures, persistent no-replay marker and per-setter durable intent are required.",
+        "SetTurnHolderSTLFile followed once by SetTurnHolderSTLFileUnit raw2. Raw file/shape/unit readback is separate from geometric scale, nose-center frame, holder clearance and production qualification.",
+        "Only standard shape0, boring holder2, diamond insert1 and LEFT_UP5 are supported. No insert changes, tool creation/reassignment, TechDB write, GTP, GOP or Save.",
+        "Old operation links, observed assigned-tool/holder/file metadata and path record counts are compared; hidden geometry and CL coordinates are not proven unchanged.",
+        "See references/cam-turn-holder-stl.md. Native apply remains review_required even after matching file fields."
+      ],
+      "allowed_modes": [
+        "interactive",
+        "reviewed"
+      ]
+    },
+    {
       "id": "cam_turn_cutoff_option_inspection",
       "label": "TURN CutOff scalar option inspection",
       "level": "pilot",
