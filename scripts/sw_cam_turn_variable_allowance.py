@@ -75,6 +75,37 @@ def _read_bore_options(raw, typelib_path, read, result, *, include_leftover_cont
 
 
 
+def _finish_leftover_abi(typelib_path):
+    """仅核对精镗两个只读属性的精确 IID、DISPID、返回类型与方向。"""
+    from ctypes import HRESULT, POINTER, c_int
+    from ctypes.wintypes import VARIANT_BOOL
+    interface = _interface_class("ICWTurnBoreFinishOp", typelib_path)
+    specs = (("_get_GenerateLeftOver", 22, VARIANT_BOOL), ("_get_LEFTOVER_TYPE", 23, c_int))
+    for name, dispid, scalar in specs:
+        methods = [m for m in interface._methods_ if m.name == name]
+        if len(methods) != 1:
+            raise ValueError("Unique finish leftover getter required: " + name)
+        method = methods[0]
+        if (method.restype is not HRESULT or method.idlflags[0] != dispid
+                or "propget" not in method.idlflags or method.argtypes != (POINTER(scalar),)
+                or tuple(x[0] for x in method.paramflags) != (10,)):
+            raise ValueError("Exact finish leftover getter ABI differs: " + name)
+    return dict(interface="ICWTurnBoreFinishOp", iid=str(interface._iid_).upper(), getter_count=2, native_calls=0)
+
+
+def _read_finish_leftover(raw, typelib_path, read, result):
+    """读取当前精镗操作的两个原始值；不推断界面模式或输入毛坯。"""
+    interface = _typed(raw, "ICWTurnBoreFinishOp", typelib_path)
+    generated = read(interface, "GenerateLeftOver")
+    if type(generated) is not bool:
+        raise ValueError("GenerateLeftOver must be a strict Boolean")
+    result["GenerateLeftOver"] = generated
+    kind = read(interface, "LEFTOVER_TYPE")
+    if type(kind) is not int or kind not in range(5):
+        raise ValueError("LEFTOVER_TYPE must be a declared native enum 0..4")
+    result["LEFTOVER_TYPE"] = kind
+
+
 def _tool_contour_abi(typelib_path):
     """Exact two profile calls and operation-orientation getter, metadata only."""
     from ctypes import HRESULT, POINTER, c_int
@@ -279,8 +310,11 @@ def _snapshot(sw,clsid,typelib_path,config,read,check,identity,diagnostic=None):
             raise ValueError('Document, saved file or complete inventory changed during setup read')
         result['capture_complete']=True
         return result
-    if config.get('inspection_scope') in ('bore_rough_options', 'tool_contours'):
-        if config['inspection_scope'] == 'bore_rough_options':
+    if config.get('inspection_scope') in ('bore_rough_options', 'bore_finish_leftover', 'tool_contours'):
+        if config['inspection_scope'] == 'bore_finish_leftover':
+            result['bore_options_native'] = {}
+            _read_finish_leftover(raw,typelib_path,read,result['bore_options_native'])
+        elif config['inspection_scope'] == 'bore_rough_options':
             result['bore_options_native'] = {}
             if config.get("include_leftover_control"):
                 _read_bore_options(raw,typelib_path,read,result['bore_options_native'],include_leftover_control=True)
@@ -348,7 +382,7 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
                ('operation_index',operation_index,0,511)]:
             if type(value) is not int or not lo<=value<=hi: raise ValueError('Invalid strict selector '+name)
         if action not in ('read','identify'): raise ValueError('Only read or identify action allowed')
-        if inspection_scope not in ('profile_and_variable_allowance','bore_rough_options','tool_contours','turn_setup_context','cutoff_options'):
+        if inspection_scope not in ('profile_and_variable_allowance','bore_rough_options','bore_finish_leftover','tool_contours','turn_setup_context','cutoff_options'):
             raise ValueError('Unknown operation parameter inspection scope')
         if inspection_scope=='turn_setup_context':
             from scripts.sw_cam_turn_setup_context import validate_config, setup_abi
@@ -358,8 +392,10 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
             raise ValueError('Setup context pins only belong to the dedicated setup scope')
         if type(include_leftover_control) is not bool:
             raise ValueError('include_leftover_control must be a strict Boolean')
-        if include_leftover_control and inspection_scope != 'bore_rough_options':
-            raise ValueError('Leftover control only belongs to bore rough options')
+        if include_leftover_control and inspection_scope not in ('bore_rough_options','bore_finish_leftover'):
+            raise ValueError('Leftover control only belongs to bore option scopes')
+        if inspection_scope=='bore_finish_leftover' and (not include_leftover_control or include_tool_contours or expected_tool_native_id is not None):
+            raise ValueError('Finish bore supports only explicit leftover control without tool contours')
         if type(include_tool_contours) is not bool:
             raise ValueError('include_tool_contours must be a strict Boolean')
         if include_tool_contours:
@@ -369,7 +405,7 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
             raise ValueError('An expected tool ID is only valid when contours are requested')
         if inspection_scope=='tool_contours' and not include_tool_contours:
             raise ValueError('Tool contour scope requires both contours and an exact tool ID')
-        if inspection_scope in ('bore_rough_options','tool_contours','turn_setup_context','cutoff_options'):
+        if inspection_scope in ('bore_rough_options','bore_finish_leftover','tool_contours','turn_setup_context','cutoff_options'):
             if action!='read' or type(expected_process_create_time) not in (int,float) or not math.isfinite(expected_process_create_time) or expected_process_create_time<=0:
                 raise ValueError('Bore options require read-only action and exact process lifetime')
         elif expected_process_create_time is not None:
@@ -381,6 +417,7 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
         if action=='identify' and expected_linked_feature_ids is not None:
             raise ValueError('Identify discovers linked IDs; expected linked IDs belong to strict read only')
         allowed_types=((13,) if inspection_scope=='cutoff_options' else
+                       (6,) if inspection_scope=='bore_finish_leftover' else
                        (5,) if inspection_scope=='bore_rough_options' else
                        (5,6,13) if inspection_scope=='tool_contours' else
                        (5,6) if inspection_scope=='turn_setup_context' else _MODE_INTERFACES)
@@ -405,9 +442,14 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
                 full_model_geometry_verified=False,production_qualified=False,
                 parameter_interpretation='Raw setup links, axes, origin and transform type metadata; no decoded matrix or generic CL frame',
                 process_identity=dict(process_id=process_id,expected_process_create_time=expected_process_create_time))
-        if inspection_scope in ('bore_rough_options','tool_contours'):
+        if inspection_scope in ('bore_rough_options','bore_finish_leftover','tool_contours'):
             config['inspection_scope']=inspection_scope
-            if inspection_scope=='bore_rough_options':
+            if inspection_scope=='bore_finish_leftover':
+                config['include_leftover_control']=True
+                report.update(leftover_control_requested=True,
+                    leftover_enum_mapping_scope='Declared TLB enum only; no UI-mode correspondence inferred',
+                    getter_abi=_finish_leftover_abi(typelib_path))
+            elif inspection_scope=='bore_rough_options':
                 if include_leftover_control:
                     config['include_leftover_control'] = True
                     report['leftover_control_requested'] = True
@@ -427,6 +469,9 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
                 tool_geometry_verified=False,production_qualified=False,
                 parameter_interpretation='Raw current Boolean/double/LONG values; no undercut, tool access or physical cutting qualification',
                 process_identity=dict(process_id=process_id,expected_process_create_time=expected_process_create_time))
+            if inspection_scope=='bore_finish_leftover':
+                report['parameter_interpretation']='Two raw finish-bore leftover controls only; input stock geometry and UI mode correspondence unqualified'
+                report['incoming_stock_geometry_verified']=False
             if inspection_scope=='tool_contours':
                 report['parameter_interpretation']='Raw selected own-tool contours and dimensions only; no operation options or feature profiles read'
         if inspection_scope == "cutoff_options":
@@ -506,13 +551,13 @@ def inspect_turn_bore_options(sw,clsid,typelib_path,*,process_id,expected_proces
         expected_operation_native_id,expected_operation_type,expected_linked_feature_ids,
         action='read',message_policy='vendor_default',include_tool_contours=False,expected_tool_native_id=None,
         include_leftover_control=False):
-    """Read bore scalars and optional exact own-tool contours twice under the same guards."""
+    """粗镗读取原有标量；精镗仅在明确请求时读取两项余料控制，均使用双重守卫快照。"""
     return _inspect_turn_operation_parameters(sw,clsid,typelib_path,process_id=process_id,
         expected_process_create_time=expected_process_create_time,expected_document_path=expected_document_path,
         expected_source_sha256=expected_source_sha256,setup_index=setup_index,operation_index=operation_index,
         expected_operation_native_id=expected_operation_native_id,expected_operation_type=expected_operation_type,
         expected_linked_feature_ids=expected_linked_feature_ids,action=action,message_policy=message_policy,
-        inspection_scope='bore_rough_options',include_tool_contours=include_tool_contours,
+        inspection_scope='bore_finish_leftover' if expected_operation_type==6 else 'bore_rough_options',include_tool_contours=include_tool_contours,
         expected_tool_native_id=expected_tool_native_id,include_leftover_control=include_leftover_control)
 
 

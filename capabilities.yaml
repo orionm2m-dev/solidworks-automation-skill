@@ -927,6 +927,32 @@
         "interactive",
         "reviewed"
       ]
+    },
+    {
+      "id": "cam_turn_bore_finish_leftover_inspection",
+      "label": "TURN finish-bore leftover control inspection",
+      "level": "pilot",
+      "backends": [
+        "solidworks-com-pywin32",
+        "solidworks-com-comtypes"
+      ],
+      "verified_versions": [],
+      "dependencies": [
+        "SolidWorks",
+        "SOLIDWORKS CAM",
+        "pywin32",
+        "comtypes"
+      ],
+      "limitations": [
+        "Existing solidworks_cam_inspect_turn_bore_options accepts type6 only with explicit include_leftover_control=true and no tool contours. Exact ICWTurnBoreFinishOp propget DISP22/23; raw Boolean and enum only.",
+        "Software-only validation; native readback, incoming-stock geometry, UI-mode correspondence and stock transfer remain unqualified.",
+        "Exact process lifetime, saved source, operation and linked-feature pins; two matching event-guarded captures with unchanged collected inventory. Stable unsaved RAM may be observed without persistence claims.",
+        "No setters, profile reads, New Stock definition, GTP, GOP, CL, Save or production qualification. See references/cam-turn-bore-options.md."
+      ],
+      "allowed_modes": [
+        "interactive",
+        "reviewed"
+      ]
     }
 ]
 }

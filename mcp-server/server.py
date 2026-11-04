@@ -13721,7 +13721,7 @@ def solidworks_cam_configure_turn_holder_dimensions(params: SolidWorksCamTurnHol
 class SolidWorksCamTurnBoreOptionsInput(SolidWorksCamVariableAllowanceInput):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
     expected_process_create_time: float = Field(gt=0, strict=True, allow_inf_nan=False)
-    expected_operation_type: int = Field(ge=5, le=5, strict=True)
+    expected_operation_type: int = Field(ge=5, le=6, strict=True)
     expected_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
     expected_linked_feature_ids: list[int] = Field(min_length=1, max_length=64)
     action: Literal["read"] = "read"
@@ -13733,12 +13733,14 @@ class SolidWorksCamTurnBoreOptionsInput(SolidWorksCamVariableAllowanceInput):
     def exact_tool_for_contours(self):
         if self.include_tool_contours != (self.expected_tool_native_id is not None):
             raise ValueError("Tool contours require an exact tool ID; unused tool IDs are rejected")
+        if self.expected_operation_type == 6 and (not self.include_leftover_control or self.include_tool_contours):
+            raise ValueError("Finish bore supports only explicit leftover controls without contours")
         return self
 
-@mcp.tool(name="solidworks_cam_inspect_turn_bore_options", title="Inspect Existing TURN Bore Rough Options",
+@mcp.tool(name="solidworks_cam_inspect_turn_bore_options", title="Inspect Existing TURN Bore Options",
           annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
 def solidworks_cam_inspect_turn_bore_options(params: SolidWorksCamTurnBoreOptionsInput) -> str:
-    """Read bore options and optional exact own-tool contours twice; no setters, generation or Save."""
+    """双重读取粗镗选项或精镗两项余料控制；不写参数、不生成或保存。"""
     def op():
         _runtime_identity.assert_current()
         if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
@@ -13748,7 +13750,14 @@ def solidworks_cam_inspect_turn_bore_options(params: SolidWorksCamTurnBoreOption
         values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
         result = inspect_turn_bore_options(sw, registration["clsid"],
             typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
-        _runtime_identity.assert_current()
+        try:
+            _runtime_identity.assert_current()
+        except Exception as error:
+            result.update(status="error",readback_verified=False,may_continue=False,runtime_unchanged=False,
+                runtime_error={"type":type(error).__name__,"message":str(error)},
+                reason="RUNTIME_CHANGED_AFTER_NATIVE_READ")
+            return result
+        result["runtime_unchanged"]=True
         return result
     return _run_locked(op, params.response_format)
 

@@ -1,4 +1,4 @@
-# TURN Bore Rough option inspection
+# TURN bore option inspection
 
 `solidworks_cam_inspect_turn_bore_options` reads eleven raw operation-owned parameters by default from an existing TURN Bore Rough operation (native type 5). It reuses the two-snapshot, source-pinned, event-guarded operation reader. The existing OD variable-allowance entry and its read/identify behavior remain unchanged.
 
@@ -20,6 +20,16 @@ The installed implementation read all eleven options twice on an existing rough-
 `include_leftover_control=true` adds only `ICWTurnBoreRoughOp.GenerateLeftOver` (strict Boolean) and `LEFTOVER_TYPE` (raw native enum) to each scalar capture. The flag defaults to `false`, preserving the original eleven-field request; enabling it gives thirteen fields and does not enable tool contours. Both extra getters use the existing source, process, operation, feature, inventory and event guards.
 
 The reviewed type library declares `NONE=0`, `FEAT=1`, `WIP=2`, `NEW_STOCK=3`, and `NOT_DEFINED=4`. The reader checks a strict integer in this range and the exact getter signature. It does not independently validate the enum constants at runtime or infer a complete correspondence to the UI stock modes. The older bundled SDK enum page lists only values 0 through 2 without descriptions. Reading these controls does not define new stock or establish stock transfer between setups. Native readback on SOLIDWORKS 2026 SP4 produced two equal thirteen-property captures on one existing rough-bore operation. The observed values were `GenerateLeftOver=true` and `LEFTOVER_TYPE=1` (declared symbol `FEAT`). The original eleven values, collected inventory, saved source and pre-existing unsaved state remained unchanged. This verifies the bounded read, not the UI stock-mode meaning or the stock supplied to a subsequent operation.
+
+## Finish-bore leftover controls
+
+For an existing Bore Finish operation (native type 6), the same tool accepts only `include_leftover_control=true` with `include_tool_contours=false` and no expected tool ID. It reads exactly `ICWTurnBoreFinishOp.GenerateLeftOver` (DISPID 22, strict Boolean) and `LEFTOVER_TYPE` (DISPID 23, strict integer 0 through 4). Rough-bore properties and their DISPIDs are not reused for finish operations. The eleven-field rough default and thirteen-field rough opt-in remain unchanged.
+
+The finish branch validates the exact interface IID and two getter signatures before connecting to CAM. Its two snapshots retain the exact process lifetime, document and saved-source pins, selected native operation and linked feature IDs, complete collected inventory, and raw values in `bore_options_native`. It does not read feature or tool contours. Stable unsaved RAM is allowed but does not prove persistence. A changed value, identity, inventory, event state, or cleanup result revokes readback verification; partial evidence is retained.
+
+This finish branch has software-only pilot validation. It does not claim a native successful read until separately observed. These are the selected operation's own controls; another operation's values cannot substitute for them. Neither the enum value nor `GenerateLeftOver` proves incoming-stock shape, a UI mode correspondence, a previous-operation WIP link, or a complete simulation replay. No setter, New Stock definition, stock export, GTP, GOP, CL or Save is performed.
+
+A post-read runtime change preserves the returned captures and revokes `readback_verified` and `may_continue`. Reconnect to a current server after installing runtime changes.
 
 ## Optional existing tool contours
 
