@@ -4726,18 +4726,52 @@ def solidworks_cam_status(params: SolidWorksCamApplicationInput) -> str:
     return _run_locked(op, params.response_format)
 
 
+class SolidWorksCamLoadInput(SolidWorksCamApplicationInput):
+    """Optional single native load for the observed E_POINTER empty-session case."""
+    initialize_unavailable_api: bool = Field(default=False, strict=True)
+    expected_process_create_time: Optional[float] = Field(default=None, gt=0, strict=True, allow_inf_nan=False)
+    expected_failure_hresult: Optional[int] = Field(default=None, strict=True)
+    expected_addin_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    receipt_path: Optional[str] = None
+
+    @model_validator(mode="after")
+    def unavailable_api_contract(self):
+        from scripts.sw_operation_guard import absolute_document_path
+        fields=(self.expected_process_create_time,self.expected_failure_hresult,self.expected_addin_sha256,self.receipt_path)
+        if self.initialize_unavailable_api:
+            if not self.expected_no_documents or any(value is None for value in fields):
+                raise ValueError("Unavailable API load requires empty scope, lifetime, error, DLL hash and receipt")
+            if self.expected_failure_hresult != -2147467261:
+                raise ValueError("Only observed GetCWApp E_POINTER can authorize this qualification")
+            if not absolute_document_path(self.receipt_path) or Path(self.receipt_path).suffix.lower()!='.json':
+                raise ValueError("Absolute JSON receipt required")
+        elif any(value is not None for value in fields):
+            raise ValueError("Unavailable API guards require explicit initialize_unavailable_api=true")
+        return self
+
+
 @mcp.tool(
     name="solidworks_cam_load_addin",
     title="Load Registered SOLIDWORKS CAM Add-in",
-    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
 )
-def solidworks_cam_load_addin(params: SolidWorksCamApplicationInput) -> str:
-    """Load the registry-verified CAM DLL into the pinned process and inspect API; no startup, licensing or model edits."""
+def solidworks_cam_load_addin(params: SolidWorksCamLoadInput) -> str:
+    """Load registered CAM; optional once-only E_POINTER qualification requires an empty exact process."""
     def op():
         from scripts.sw_cam import load_cam_addin
         sw, registration = _cam_application_target(params)
-        return _cam_application_readback(params, sw, load_cam_addin(sw, registration["clsid"], registration["addin_path"]))
+        if getattr(params,"initialize_unavailable_api",False):
+            from scripts.sw_cam_unavailable_api_load import initialize_unavailable_api
+            report=initialize_unavailable_api(sw,registration["clsid"],registration["addin_path"],
+                expected_no_documents=params.expected_no_documents,process_id=params.process_id,
+                expected_process_create_time=params.expected_process_create_time,
+                expected_failure_hresult=params.expected_failure_hresult,
+                expected_addin_sha256=params.expected_addin_sha256,receipt_path=params.receipt_path)
+        else:
+            report=load_cam_addin(sw,registration["clsid"],registration["addin_path"])
+        return _cam_application_readback(params,sw,report)
     return _run_locked(op, params.response_format)
+
 
 
 @mcp.tool(
