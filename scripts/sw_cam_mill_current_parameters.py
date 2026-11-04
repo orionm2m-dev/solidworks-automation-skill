@@ -96,8 +96,14 @@ def capture(state,native,v,authority,*,document,read,typed,boundary):
     require(state==authority['state'],'Fresh full captured state differs from saved authority')
     capture_rows(state,native,authority['targets'],feature_id=v['expected_feature_native_id'],read=read,typed=typed,boundary=boundary)
 
-def capture_rows(state,native,targets,*,feature_id,read,typed,boundary):
+def capture_rows(state,native,targets,*,feature_id,read,typed,boundary,generation_observations=None):
     """Own scalar observations from explicit fresh inventory rows; no authority adapter."""
+    observations={} if generation_observations is None else deepcopy(generation_observations)
+    require(type(observations) is dict and all(type(k) is int and k>0 and type(v) is list and len(v)==1 and type(v[0]) is int and 0<v[0]<=100000 for k,v in observations.items()),'Exact observed generated-count map required')
+    require(set(observations)<={r['native_id'] for r in targets},'Generated observations outside explicit parameter targets')
+    for row in targets:
+        wanted=observations.get(row['native_id'],[])
+        require(row['toolpath_generated'] is bool(wanted) and row['toolpath_record_counts']==wanted,'Explicit parameter generation state differs')
     class Batch:
         def read(self,*a):return read(*a)
         def typed(self,*a):return typed(*a)
@@ -112,7 +118,7 @@ def capture_rows(state,native,targets,*,feature_id,read,typed,boundary):
         require(type(found) in (tuple,list) and len(found)==2 and found[1] is True,'Exact operation lookup required')
         for candidate in (raw,found[0]):
             op=typed(candidate,'ICWOperation');mill=typed(candidate,'ICWMillOperation')
-            require(_object_id(doc,op,read)==oid and read(mill,'OpernType')==row['mill_operation_type'] and read(op,'Suppressed') is False and read(op,'GetIsToolpathGenerated') is False,'Enumerated/lookup operation identity differs')
+            require(_object_id(doc,op,read)==oid and read(mill,'OpernType')==row['mill_operation_type'] and read(op,'Suppressed') is False and read(op,'GetIsToolpathGenerated') is bool(observations.get(oid,[])),'Enumerated/lookup operation identity differs')
             links=[_object_id(doc,x,read) for x in _items(read(op,'IGetAllFeatures'),typed,read,4)]
             require(links==row['linked_feature_ids'],'Own feature links differ')
             generic,tool=read_generic_tool(op,doc,read,typed)

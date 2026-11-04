@@ -51,3 +51,30 @@ while retaining all returned native evidence. Completed receipts use
 Save/readback/source flags. `request_pin` hashes the canonical binding; it is not
 the byte hash of an external MCP envelope. Real input file pins are recorded in
 `qualified_read_pins`.
+
+
+## Explicit Save-only recovery
+
+`prepare_recover_save` and `recover_save` are separate actions in the same
+current-saved input. They require immutable partial-receipt, old-marker and original
+apply-request path/SHA pairs; the original prepare pin is derived from that request.
+The original receipt and claim are never rewritten. A distinct recovery claim is
+bound to the partial receipt hash and prevents a second recovery attempt.
+
+The admitted historical case is deliberately narrow: the complete eight-action
+batch returned integer zero and each own-field readback succeeded, but the final
+comparison stopped on the three recorded representations of `DepthAllow` changing
+from 1.0 to 0.2 with `GetZAllowance`. A pure history validator checks the original
+request, prepare, marker, full baseline, strict tool-assignment barrier and exact
+final state. This observed relationship is not a universal API alias. Ordinary
+parameter batches still protect `DepthAllow`; no caller-controlled alias switch
+is exposed.
+
+Recovery prepare repeats the exact final partial state twice with all original
+identity, file, runtime and event guards. Recovery apply repeats that proof and
+performs only one checked Save, followed by two full saved captures. It cannot
+assign a tool, repeat a field setter or generate a path. Its receipt retains
+`action="recover_save"`, separate historical evidence and exactly one Save action;
+it is never relabelled as a new ordinary apply. Completed recovery can become
+subsequent read/generation authority only after all recovery and Save checks pass.
+These recovery paths have offline software tests; native qualification is separate.

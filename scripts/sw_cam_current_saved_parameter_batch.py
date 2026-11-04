@@ -24,6 +24,8 @@ SCOPE='MILL_CURRENT_SAVED_PARAMETER_BATCH_V1'
 READ_KEYS=append.READ_KEYS+parameters.FIELDS
 EXTRA=('candidate_tool_native_id','expected_candidate_consumer_ids','current_read_request_path','current_read_request_sha256','current_read_receipt_path','current_read_receipt_sha256','recipe_path','recipe_sha256')
 PAIRS=(('current_read_request_path','current_read_request_sha256'),('current_read_receipt_path','current_read_receipt_sha256'),('parameters_authority_receipt_path','parameters_authority_receipt_sha256'),('recipe_path','recipe_sha256'))
+RECOVERY_KEYS=('partial_receipt_path','partial_receipt_sha256','partial_attempt_marker_path','partial_attempt_marker_sha256','original_apply_request_path','original_apply_request_sha256')
+RECOVERY_ACTIONS=('prepare_recover_save','recover_save')
 require=fields.require
 
 def binding(v):
@@ -57,24 +59,50 @@ def load_inputs(v,clsid=None):
     require(fields.equal(usage,v['expected_candidate_consumer_ids']),'Pinned candidate usage differs')
     return dict(baseline=deepcopy(baseline),authority=authority,plan=plan,pins=dict(request=rpin,result=dpin,authority=authority['pin'],recipe=recipepin))
 
+
+def recovery_binding(v):
+    return {k:deepcopy(v[k]) for k in RECOVERY_KEYS}
+
+def load_recovery(v,data):
+    """固定原始 partial、已消费 marker、实际 apply 请求与其 prepare；不改写旧证据。"""
+    from scripts.sw_cam_current_parameter_recovery_evidence import validate_history
+    partial,ppin=read_pin(v['partial_receipt_path'],v['partial_receipt_sha256'])
+    old_marker,mpin=read_pin(v['partial_attempt_marker_path'],v['partial_attempt_marker_sha256'])
+    request,rpin=read_pin(v['original_apply_request_path'],v['original_apply_request_sha256'])
+    rows=[x for x in request.get('requests',[]) if x.get('name')=='solidworks_cam_configure_guide_definitions']
+    require(len(rows)==1,'One immutable original apply request required');args=rows[0]['arguments']['params']
+    original_prepare,prep_pin=read_pin(args['prepare_receipt_path'],args['prepare_receipt_sha256'])
+    pins=dict(partial=ppin,old_marker=mpin,original_request=rpin,original_prepare=prep_pin)
+    info=validate_history(partial,original_prepare,request,old_marker,base_binding=binding(v),plan=data['plan'],baseline=data['baseline'],pins=pins)
+    directory=Path(v['attempt_registry_path'])
+    require(directory.is_dir() and not directory.is_symlink() and directory.resolve()==Path(mpin['path']).parent.resolve(),'Recovery must retain the original attempt registry')
+    marker=directory/('parameter_recover_save_'+_digest(dict(scope=SCOPE,document=str(Path(v['expected_document_path']).resolve()).casefold(),source_sha256=v['expected_source_sha256'],feature_id=v['expected_feature_native_id'],partial_sha256=ppin['sha256']))+'.json')
+    return marker,info,pins
+
 def validate(v,clsid=None):
     current.validate(v)
-    require(v['configuration_mode']=='current_saved' and v['observation']=='operation_parameters' and v['action'] in ('prepare','apply'),'Explicit current-saved parameter mode required')
+    require(v['configuration_mode']=='current_saved' and v['observation']=='operation_parameters' and v['action'] in ('prepare','apply',*RECOVERY_ACTIONS),'Explicit current-saved parameter mode required')
     require(type(v['candidate_tool_native_id']) is int and 0<v['candidate_tool_native_id']<2**32,'Strict existing candidate ID required')
     ids=v['expected_candidate_consumer_ids'];require(type(ids) is list and len(ids)<=32 and all(type(i) is int and 0<i<2**32 for i in ids) and len(set(ids))==len(ids),'Strict ordered candidate consumers required')
-    require(type(v['save_after_verified']) is bool and (v['action']=='apply' or not v['save_after_verified']) and v['acknowledge_qualification_only'] is True,'Explicit qualification/Save choice required')
+    recovering=v['action'] in RECOVERY_ACTIONS
+    if not recovering:require(all(v.get(k) is None for k in RECOVERY_KEYS),'Recovery pins require explicit recovery action')
+    else:require(all(type(v.get(k)) is str and v[k] for k in RECOVERY_KEYS) and v['save_after_verified'] is (v['action']=='recover_save'),'Explicit Save-only recovery choice and pins required')
+    require(type(v['save_after_verified']) is bool and (v['action'] in ('apply','recover_save') or not v['save_after_verified']) and v['acknowledge_qualification_only'] is True,'Explicit qualification/Save choice required')
     path=Path(v['receipt_path']);require(absolute_document_path(str(path)) and path.suffix.casefold()=='.json' and path.parent.is_dir() and not path.exists() and not path.is_symlink(),'Unique absolute output receipt required')
-    marker=attempt_marker(v['attempt_registry_path'],v['expected_document_path'],v['expected_source_sha256'],v['expected_feature_native_id'])
-    require(not marker.exists() and not marker.is_symlink(),'Prior source/feature attempt exists; inspect, never replay')
     data=load_inputs(v,clsid)
-    paths=[Path(v[k]).resolve() for k,_ in PAIRS]+[path.resolve(),marker.resolve(),Path(v['expected_document_path']).resolve()]
+    if recovering:
+        marker,info,pins=load_recovery(v,data);data.update(recovery=info,recovery_pins=pins)
+    else:marker=attempt_marker(v['attempt_registry_path'],v['expected_document_path'],v['expected_source_sha256'],v['expected_feature_native_id'])
+    require(not marker.exists() and not marker.is_symlink(),'Prior source/feature attempt exists; inspect, never replay')
+    paths=[Path(v[k]).resolve() for k,_ in PAIRS]+[path.resolve(),marker.resolve(),Path(v['expected_document_path']).resolve()]+[Path(pin['path']).resolve() for pin in data.get('recovery_pins',{}).values()]
     require(len(paths)==len(set(paths)),'Distinct immutable input/output/source paths required')
-    if v['action']=='prepare':require(v['prepare_receipt_path'] is None and v['prepare_receipt_sha256'] is None,'Prepare cannot consume a prepare')
+    if v['action'] in ('prepare','prepare_recover_save'):require(v['prepare_receipt_path'] is None and v['prepare_receipt_sha256'] is None,'Prepare cannot consume a prepare')
     else:
         prep,pin=read_pin(v['prepare_receipt_path'],v['prepare_receipt_sha256'])
         require(Path(v['prepare_receipt_path']).resolve() not in paths,'Prepare must remain immutable')
-        require(prep.get('scope')==SCOPE and prep.get('action')=='prepare' and prep.get('status')=='review_required' and prep.get('phase')=='finished' and prep.get('readback_verified') is True and prep.get('runtime_unchanged') is True and prep.get('mutation_attempted') is False and fields.equal(prep.get('binding'),binding(v)),'Exact completed reviewed prepare required')
+        require(prep.get('scope')==SCOPE and prep.get('action')==('prepare_recover_save' if recovering else 'prepare') and prep.get('status')=='review_required' and prep.get('phase')=='finished' and prep.get('readback_verified') is True and prep.get('runtime_unchanged') is True and prep.get('mutation_attempted') is False and fields.equal(prep.get('binding'),binding(v)),'Exact completed reviewed prepare required')
         require(fields.equal(prep['before'],prep['confirm_before']) and prep['state_sha256']==_digest(prep['before']),'Stable prepare required');clean_events(prep)
+        if recovering:require(prep.get('recovery_verified') is True and fields.equal(prep.get('recovery_binding'),recovery_binding(v)),'Exact reviewed recovery preparation required')
         data.update(prepare=prep,prepare_pin=pin)
     return marker,data
 
@@ -85,6 +113,7 @@ class NativeBatchContext:
         self.source=v['expected_source_sha256'];self.session=None;self.native=None;self.initial=None
     def verify_files(self):
         for (pathkey,shakey),pin in zip(PAIRS,self.data['pins'].values()):require(read_pin(self.v[pathkey],self.v[shakey])[1]==pin,'Immutable parameter evidence changed')
+        for pin in self.data.get('recovery_pins',{}).values():require(read_pin(pin['path'],pin['sha256'])[1]==pin,'Immutable recovery history changed')
         if 'prepare_pin' in self.data:require(read_pin(self.v['prepare_receipt_path'],self.v['prepare_receipt_sha256'])[1]==self.data['prepare_pin'],'Prepare evidence changed')
     def identity(self,verify_source=True):
         v=self.v;p=_process_identity(v['process_id'])
@@ -119,7 +148,9 @@ class NativeBatchContext:
     def __enter__(self):
         self.lock=solidworks_operation_lock(timeout_seconds=1,process_id=self.v['process_id']);self.lock.__enter__()
         try:
-            self.initial=self.identity();require(self.initial['needs_save'] is False,'Clean saved initial source required')
+            self.initial=self.identity()
+            if 'recovery' in self.data:require(fields.equal(self.initial,self.data['recovery']['expected_state']['document']),'Recovery document differs from exact recorded CAM delta')
+            else:require(self.initial['needs_save'] is False,'Clean saved initial source required')
             addin=_member(self.sw,'GetAddInObject',self.clsid);require(addin is not None,'CAM must already be loaded')
             self.app=_typed(_member(addin,'GetCWApp'),'ICWApp4',self.tlb)
             require(self.identity()==self.initial,'Identity changed during bootstrap')
@@ -154,7 +185,7 @@ class NativeBatchContext:
         finally:self.persist()
     def guard(self):
         expected=self.boundary()
-        return ScopedCamDispatchGuard(self.sw,self.tlb,process_id=self.v['process_id'],expected_document=expected,source_sha256=self.source,evidence_pins=list(self.data['pins'].values())+([self.data['prepare_pin']] if 'prepare_pin' in self.data else []),verify_evidence=self.verify_files,verify_owned_process=lambda:self.boundary(),check_events=self.check)
+        return ScopedCamDispatchGuard(self.sw,self.tlb,process_id=self.v['process_id'],expected_document=expected,source_sha256=self.source,evidence_pins=list(self.data['pins'].values())+list(self.data.get('recovery_pins',{}).values())+([self.data['prepare_pin']] if 'prepare_pin' in self.data else []),verify_evidence=self.verify_files,verify_owned_process=lambda:self.boundary(),check_events=self.check)
     def set_tool(self,row,candidate,pending,returned):
         from comtypes.automation import IDispatch
         with self.guard() as guard:
@@ -227,36 +258,47 @@ def run_current_saved_configuration(sw,clsid,typelib_path,*,runtime_check,_conte
         return out,pending,returned
     try:
         marker,data=validate(v,clsid);report.update(dispatch_marker_path=str(marker),qualified_read_pins=data['pins'],recipe=deepcopy(data['plan']))
+        recovering='recovery' in data
+        if recovering:report.update(recovery_mode='recover_save',recovery_binding=recovery_binding(v),recovery_pins=deepcopy(data['recovery_pins']),original_action_receipt_pin=deepcopy(data['recovery_pins']['partial']),historical_before=deepcopy(data['recovery']['historical_before']),recovery_verified=False,setters_replayed=False)
         current._abi(typelib_path);parameters.preflight(typelib_path,data['authority']['definition_mode']);fields.preflight(typelib_path);append.save_abi(typelib_path)
         _write_receipt(Path(v['receipt_path']),report,create=True);report['receipt_created']=True;persist()
         ctx=_context_factory(sw,clsid,typelib_path,v,data,report,persist,runtime_check)
         with ctx:
-            consumers=list(v['expected_candidate_consumer_ids']);before=ctx.capture('before',consumers);confirm=ctx.capture('confirm_before',consumers)
+            consumers=list(data['recovery']['consumer_ids'] if recovering else v['expected_candidate_consumer_ids']);before=ctx.capture('before',consumers);confirm=ctx.capture('confirm_before',consumers)
             require(fields.equal(before,confirm),'Two full prepare captures differ')
-            reference=deepcopy(before);reference.pop('parameter_batch');require(fields.equal(reference,data['baseline']),'Fresh parameters differ from pinned actual read')
-            fields.compile_plan(before,data['plan']);report['state_sha256']=_digest(before);persist();final=confirm
+            if recovering:
+                require(fields.equal(before,data['recovery']['expected_state']),'Fresh complete state differs from verified historical setter outcomes')
+                fields.verify_final(data['recovery']['historical_before'],before,data['plan'],{v['candidate_tool_native_id']:before['parameter_batch']['candidate_tool']},observed_floor_alias=True)
+                report['recovery_verified']=True
+            else:
+                reference=deepcopy(before);reference.pop('parameter_batch');require(fields.equal(reference,data['baseline']),'Fresh parameters differ from pinned actual read')
+                fields.compile_plan(before,data['plan'])
+            report['state_sha256']=_digest(before);persist();final=confirm
             candidate=deepcopy(before['parameter_batch']['candidate_tool']);candidates={v['candidate_tool_native_id']:candidate}
-            if v['action']=='apply':
+            if v['action'] in ('apply','recover_save'):
                 require(fields.equal(data['prepare']['before'],before),'Fresh state differs from reviewed prepare')
                 ctx.boundary();runtime_check();_write_receipt(marker,dict(scope=SCOPE,status='claimed_no_replay',binding=binding(v),receipt_path=v['receipt_path'],automatic_replay=False),create=True);report['marker_created']=True;persist();ctx.boundary();runtime_check()
-                for row in data['plan']['rows']:
-                    if row['existing_tool_native_id'] is not None:
-                        out,pending,returned=action('SetTool',row)
-                        ctx.set_tool(row,candidate,pending,returned)
-                        consumers=[r['native_id'] for r in final['operations'] if r['assigned_tool']['native_id']==v['candidate_tool_native_id'] or r['native_id']==row['operation_native_id']]
-                        observed=ctx.capture('after_tool_'+str(row['operation_native_id']),consumers)
-                        fields.verify_assignment_delta(final,observed,row,candidate)
-                        confirmed=ctx.capture('confirm_tool_'+str(row['operation_native_id']),consumers);require(fields.equal(observed,confirmed),'Two SetTool barrier captures differ')
-                        out['readback_verified']=True;out['capture']='after_tool_'+str(row['operation_native_id']);persist();final=confirmed
-                    for change in row['fields']:
-                        if fields.equal(change['expected'],change['new']):continue
-                        out,pending,returned=action('field',row,change)
-                        ctx.set_field(row,change,pending,returned)
-                        observed=ctx.read_field(row,change,out.setdefault('observed',{}))
-                        require(fields.equal(observed,change['new']),'Immediate field readback differs')
-                        out['readback_verified']=True;persist()
-                after=ctx.capture('after',consumers);fields.verify_final(before,after,data['plan'],candidates)
-                final=ctx.capture('confirm_after',consumers);require(fields.equal(after,final),'Two final captures differ');fields.verify_final(before,final,data['plan'],candidates)
+                if recovering:
+                    report['after']=deepcopy(before);report['confirm_after']=deepcopy(confirm);report['after_capture_references']=['before','confirm_before']
+                else:
+                    for row in data['plan']['rows']:
+                        if row['existing_tool_native_id'] is not None:
+                            out,pending,returned=action('SetTool',row)
+                            ctx.set_tool(row,candidate,pending,returned)
+                            consumers=[r['native_id'] for r in final['operations'] if r['assigned_tool']['native_id']==v['candidate_tool_native_id'] or r['native_id']==row['operation_native_id']]
+                            observed=ctx.capture('after_tool_'+str(row['operation_native_id']),consumers)
+                            fields.verify_assignment_delta(final,observed,row,candidate)
+                            confirmed=ctx.capture('confirm_tool_'+str(row['operation_native_id']),consumers);require(fields.equal(observed,confirmed),'Two SetTool barrier captures differ')
+                            out['readback_verified']=True;out['capture']='after_tool_'+str(row['operation_native_id']);persist();final=confirmed
+                        for change in row['fields']:
+                            if fields.equal(change['expected'],change['new']):continue
+                            out,pending,returned=action('field',row,change)
+                            ctx.set_field(row,change,pending,returned)
+                            observed=ctx.read_field(row,change,out.setdefault('observed',{}))
+                            require(fields.equal(observed,change['new']),'Immediate field readback differs')
+                            out['readback_verified']=True;persist()
+                    after=ctx.capture('after',consumers);fields.verify_final(before,after,data['plan'],candidates)
+                    final=ctx.capture('confirm_after',consumers);require(fields.equal(after,final),'Two final captures differ');fields.verify_final(before,final,data['plan'],candidates)
                 report['parameter_delta_verified']=True;persist()
                 if v['save_after_verified']:
                     out,pending,returned=action('SaveActiveDocument')
@@ -271,7 +313,7 @@ def run_current_saved_configuration(sw,clsid,typelib_path,*,runtime_check,_conte
                 ctx.boundary()
             ctx.boundary()
         clean_events(dict(messages=ctx.session.summary()));require(ctx.identity()==final['document'],'Identity changed after cleanup');runtime_check()
-        report.update(status='review_required',phase='finished',readback_verified=True,may_apply=v['action']=='prepare',reason='CAPTURED_PARAMETERS_ONLY_NO_GTP_NO_MACHINING_QUALIFICATION')
+        report.update(status='review_required',phase='finished',readback_verified=True,may_apply=v['action'] in ('prepare','prepare_recover_save'),reason='CAPTURED_PARAMETERS_ONLY_NO_GTP_NO_MACHINING_QUALIFICATION')
     except Exception as exc:
         report.update(failed_phase=report['phase'],phase='finished',issue=_error(exc));_revoke(report)
     finally:

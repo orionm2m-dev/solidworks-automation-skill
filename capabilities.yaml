@@ -906,8 +906,9 @@
     "显式 current_saved 模式支持当前已观察 rough0 的固定八字段和可选现有刀具；旧 sealed 四项分支不变。",
     "current_saved 仅有离线测试和元数据校验；必须先准备和审阅实际工具/NC，任何 SetTool 非预期参数重置均停止，不自动接受速度、进给或补偿变化。",
     "current_saved 逐字段精确回读，工具指定后、批次末及 Save 后各两次完整读取；部分结果禁止重放，无 GTP/GOP。",
-    "使用说明：references/cam-current-saved-parameter-batch.md"
-  ],
+    "使用说明：references/cam-current-saved-parameter-batch.md",
+        "Explicit prepare_recover_save/recover_save validate four immutable history files and the narrowly observed floor/DepthAllow relationship; two fresh exact captures precede Save only, with no setter/GTP replay. Ordinary alias guards remain unchanged. Offline software validation only; see references/cam-current-saved-parameter-batch.md."
+      ],
   "allowed_modes": [
     "interactive",
     "reviewed"
@@ -1022,6 +1023,34 @@
         "interactive",
         "reviewed"
       ]
+    },
+    {
+      "id": "cam_current_saved_selected_generation",
+      "label": "当前保存铣削指定刀路批次",
+      "level": "pilot",
+      "backends": [
+        "solidworks-com-pywin32",
+        "solidworks-com-comtypes"
+      ],
+      "verified_versions": [],
+      "dependencies": [
+        "SolidWorks",
+        "SOLIDWORKS CAM",
+        "pywin32",
+        "comtypes"
+      ],
+      "limitations": [
+        "Existing solidworks_cam_generate_configured_local_group has an explicit sealed current_saved mode; its legacy fixed four-operation branch remains unchanged. No new public endpoint.",
+        "Completed current-saved configuration and checked-Save authority, exact process lifetime/source SHA, explicit Rough IDs and full observed parameter/inventory state are required. The observed three-step compound/parameter-pair scope is retained; not all-feature qualification.",
+        "Completed explicit recover_save may supply authority only with the validated original four-file history, exact full final state and one checked Save; generation never replays setters or performs recovery. All history pins remain protected during the session.",
+        "One session performs machine preCL, selected GTP once, complete captured delta verification, checked Save once and saved machine CL. Suppressed rows are allowed only as exact pinned empty ungenerated rows that remain unchanged; they are never dispatched.",
+        "Complete protected CL command/motion/circle signatures must remain unique and ordered. Existing limits are32 operation rows and100000total native records; no count prediction, truncation, implicit regeneration or whole-machine GTP.",
+        "Software-only staging validation; no native qualification yet. No source/tool parameter setters, model reopen, world-frame/depth/clearance/machining/production claim. See references/cam-current-saved-generation.md."
+      ],
+      "allowed_modes": [
+        "interactive",
+        "reviewed"
+      ]
     }
-]
+  ]
 }

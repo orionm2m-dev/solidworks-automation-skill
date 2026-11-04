@@ -131,13 +131,17 @@ def _replace_observed(row,area,member,value):
     observed['raw_observation']=decoder.bounded_raw_observation(native_shape(value))
 
 
-def expected_field_state(before,row,change):
+def expected_field_state(before,row,change,*,observed_floor_alias=False):
     spec=FIELDS[change['field']];checked_value(spec,change['expected']);checked_value(spec,change['new'])
+    require(type(observed_floor_alias) is bool,'Strict internal observed-alias choice required')
     expected=deepcopy(before);actual=parameter_row(expected,row['operation_native_id'])
     require(equal(field_value(actual,spec.name),change['expected']),'Expected captured field differs')
     if spec.alias:
         require(equal(actual['rough'][spec.area][spec.alias]['raw'],change['expected'][1]),'Established depth alias differs before change')
+    if observed_floor_alias and spec.name=='floor_allowance':
+        require(equal(actual['rough']['depth']['DepthAllow']['raw'],change['expected']),'Observed floor alias must exactly match the original scalar')
     _replace_observed(actual,spec.area,spec.getter,change['new'])
+    if observed_floor_alias and spec.name=='floor_allowance':_replace_observed(actual,'depth','DepthAllow',change['new'])
     if spec.alias:_replace_observed(actual,spec.area,spec.alias,change['new'][1])
     return expected
 
@@ -185,11 +189,11 @@ def verify_field_delta(before,after,row,change):
     require(equal(_normal_document(expected),_normal_document(after)),'Setter changed unrequested captured state or exact requested readback differs')
 
 
-def verify_final(before,after,plan,candidates):
+def verify_final(before,after,plan,candidates,*,observed_floor_alias=False):
     expected=deepcopy(before)
     for row in plan['rows']:
         if row['existing_tool_native_id'] is not None:expected=expected_assignment_state(expected,row,candidates[row['existing_tool_native_id']])
-        for change in row['fields']:expected=expected_field_state(expected,row,change)
+        for change in row['fields']:expected=expected_field_state(expected,row,change,observed_floor_alias=observed_floor_alias)
     require(equal(_normal_document(expected),_normal_document(after)),'Final batch changed protected captured fields or exact requested targets differ')
 
 

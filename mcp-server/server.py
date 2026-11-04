@@ -10371,7 +10371,7 @@ def _cam_guide_configuration_sealed_payload(request_path, request_sha256, proces
 class SolidWorksCamCurrentSavedConfigurationInput(SolidWorksCamCurrentSavedCompoundInput):
     """既有配置入口的显式 current_saved prepare/apply；不更改旧 sealed 分支。"""
     configuration_mode: Literal["current_saved"]
-    action: Literal["prepare","apply"] = "prepare"
+    action: Literal["prepare","apply","prepare_recover_save","recover_save"] = "prepare"
     observation: Literal["operation_parameters"] = "operation_parameters"
     candidate_tool_native_id: int = Field(gt=0,le=4294967295,strict=True)
     expected_candidate_consumer_ids: list[Annotated[int,Field(gt=0,le=4294967295,strict=True)]] = Field(max_length=32,strict=True)
@@ -10388,11 +10388,19 @@ class SolidWorksCamCurrentSavedConfigurationInput(SolidWorksCamCurrentSavedCompo
     attempt_registry_path: str = Field(min_length=1,strict=True)
     receipt_path: str = Field(min_length=1,strict=True)
 
+    partial_receipt_path: Optional[str] = Field(default=None,min_length=1,strict=True)
+    partial_receipt_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+    partial_attempt_marker_path: Optional[str] = Field(default=None,min_length=1,strict=True)
+    partial_attempt_marker_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+    original_apply_request_path: Optional[str] = Field(default=None,min_length=1,strict=True)
+    original_apply_request_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+
     @model_validator(mode="after")
     def current_saved_configuration_contract(self):
         from scripts.sw_cam_current_saved_parameter_batch import validate
         validate(self.model_dump(exclude={"addin_clsid","expected_document_title","response_format"}))
         return self
+
 
 
 @mcp.tool(name="solidworks_cam_configure_guide_definitions",
@@ -12794,7 +12802,8 @@ def _cam_configured_local_group_sealed_payload(request_path, request_sha256, pro
             or payload["params"]["process_id"] != process_id):
         raise ValueError("Exact action and owned process required")
     p = payload["params"]
-    module = Path(SCRIPTS_DIR) / "sw_cam_local_generation.py"
+    current_mode = p.get("generation_mode") == "current_saved"
+    module = Path(SCRIPTS_DIR) / ("sw_cam_current_saved_generation.py" if current_mode else "sw_cam_local_generation.py")
     if (not module.is_file() or module.is_symlink()
             or hashlib.sha256(module.read_bytes()).hexdigest() != p.get("module_sha256")):
         raise ValueError("Installed operation packet implementation differs")
@@ -12805,7 +12814,7 @@ def _cam_configured_local_group_sealed_payload(request_path, request_sha256, pro
             raise ValueError("Absolute continuation input required")
         protected.add(Path(value).resolve())
     outputs = []
-    for field in ("receipt_path", "progress_path", "saved_cl_path"):
+    for field in (("receipt_path", "progress_path", "saved_cl_path", "before_cl_path") if current_mode else ("receipt_path", "progress_path", "saved_cl_path")):
         value = p.get(field)
         if type(value) is not str or not value or not Path(value).is_absolute():
             raise ValueError("Absolute operation packet output required")
@@ -12816,11 +12825,34 @@ def _cam_configured_local_group_sealed_payload(request_path, request_sha256, pro
     return payload
 
 
+
 @mcp.tool(name="solidworks_cam_generate_configured_local_group",
     title="Generate Saved Local Operation Group",
     annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
 def solidworks_cam_generate_configured_local_group(params: SolidWorksCamConfiguredLocalGenerationInput) -> str:
-    """Generate the four saved configured operations once, preserve the existing fourteen paths, save once and export eighteen streams without inserting operations, assigning tools or changing parameters."""
+    """执行已封存配置的明确子集 GTP/Save/CL；旧四操作模式保持原契约。"""
+    payload = _cam_configured_local_group_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+    if payload["params"].get("generation_mode") == "current_saved":
+        def current_op():
+            from copy import deepcopy
+            from scripts import sw_cam_current_saved_generation as core
+            if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+                raise ValueError("Explicit owned process connection required")
+            _runtime_identity.assert_current()
+            packet = _cam_configured_local_group_sealed_payload(params.request_path, params.request_sha256, params.process_id)
+            if packet != payload: raise ValueError("Sealed generation request changed before dispatch")
+            def runtime_check():
+                _runtime_identity.assert_current()
+                if _cam_configured_local_group_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
+                    raise ValueError("Sealed generation request changed during dispatch")
+            core.prepare_request(packet)
+            target = SolidWorksCamTargetInput(expected_document_path=packet["params"]["expected_document_path"])
+            sw, registration = _cam_target(target)
+            result = core.dispatch_current_saved(sw, registration["clsid"],str(Path(registration["addin_path"]).parent / "camworks.tlb"),deepcopy(packet),runtime_check=runtime_check)
+            try: runtime_check()
+            except Exception as exc: return core.revoke_runtime(result,exc)
+            return result
+        return _run_locked(current_op, params.response_format, desktop_guard=True)
     def op():
         from copy import deepcopy
         if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
@@ -12832,6 +12864,7 @@ def solidworks_cam_generate_configured_local_group(params: SolidWorksCamConfigur
             raise ValueError("Sealed operation request changed during dispatch")
         return result
     return _run_locked(op, params.response_format, load_automation=False, desktop_guard=True)
+
 
 
 class SolidWorksCamLocalGenerationReconciliationInput(BaseInput):
