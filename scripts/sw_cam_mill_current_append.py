@@ -3,6 +3,7 @@ from copy import deepcopy
 from pathlib import Path
 from scripts import sw_cam_mill_current_compound_read as current
 from scripts import sw_cam_mill_selected_insert as selected_insert
+from scripts import sw_cam_mill_selected_continue as continuation
 from scripts.sw_cam import _member, _error, document_snapshot
 from scripts.sw_cam_generation import _typed, _write_receipt
 from scripts.sw_cam_thread import _file_hash, _object_id
@@ -58,23 +59,27 @@ def qualified_read(v,clsid=None):
 
 def binding(v):
     if selected_insert.selected(v):
-        return {k:deepcopy(v[k]) for k in READ_KEYS+('definition_mode',)+selected_insert.KEYS}
+        return {k:deepcopy(v[k]) for k in READ_KEYS+('definition_mode',)+selected_insert.KEYS+(continuation.KEYS if continuation.enabled(v) else ())}
     return {k:deepcopy(v[k]) for k in READ_KEYS+tuple(x for pair in PIN_PAIRS for x in pair)}
 
 
 def validate(v):
     """校验 prepare/apply、真实双文件证据与独立独占 dispatch marker。"""
-    current.validate(v);selected_insert.validate_choices(v)
+    current.validate(v);selected_insert.validate_choices(v);continuation.validate_fields(v)
     require(v['planning_mode']=='current_saved' and v['action'] in ('prepare','apply') and v['observation']=='three_step_profile','Explicit current-saved three-step append mode required')
     require(type(v['save_after_verified']) is bool and v['acknowledge_disposable_copy'] is True,'Strict save choice and qualification acknowledgement required')
     require(v['action']=='apply' or v['save_after_verified'] is False,'Prepare is read-only and cannot request Save')
     receipt=Path(v['receipt_path'])
     require(type(v['receipt_path']) is str and absolute_document_path(v['receipt_path']) and receipt.suffix.casefold()=='.json' and receipt.parent.is_dir() and not receipt.exists() and not receipt.is_symlink(),'Unique output JSON required')
-    if selected_insert.selected(v):state,pins,_=selected_insert.authority(v)
+    if selected_insert.selected(v):
+        state,pins,saved=selected_insert.authority(v)
+        if continuation.enabled(v):
+            info=continuation.load(v,binding(dict(v,definition_mode='selected_insert')),saved);pins.update(info['pins'])
     else:state,pins=qualified_read(v)
-    marker=attempt_marker(v['attempt_registry_path'],v['expected_document_path'],v['expected_source_sha256'],v['expected_feature_native_id'])
+    marker=continuation.marker_path(v) if continuation.enabled(v) else attempt_marker(v['attempt_registry_path'],v['expected_document_path'],v['expected_source_sha256'],v['expected_feature_native_id'])
     require(not marker.exists() and not marker.is_symlink(),'Prior attempt exists; inspect outcome, never replay')
-    paths=[Path(v[k]).resolve() for k,_ in (selected_insert.PAIRS if selected_insert.selected(v) else PIN_PAIRS)]+[receipt.resolve(),marker.resolve()]
+    pairs=(selected_insert.PAIRS if selected_insert.selected(v) else PIN_PAIRS)+(continuation.PAIRS if continuation.enabled(v) else ())
+    paths=[Path(v[k]).resolve() for k,_ in pairs]+[receipt.resolve(),marker.resolve()]
     require(len(paths)==len(set(paths)),'Distinct input/output/marker paths required')
     if v['action']=='prepare':
         require(v['prepare_receipt_path'] is None and v['prepare_receipt_sha256'] is None,'Prepare cannot consume another prepare')
@@ -135,9 +140,10 @@ def run_current_saved_append(sw,clsid,typelib_path,*,runtime_check,**v):
         if report['receipt_created']:_write_receipt(Path(v['receipt_path']),report)
     try:
         marker,reference,pins=validate(v);current._abi(typelib_path)
-        selected=selected_insert.selected(v);authority_state=None
+        selected=selected_insert.selected(v);continuing=continuation.enabled(v);authority_state=None;continuation_info=None
         if selected:
-            _,_,authority_state=selected_insert.authority(v);selected_insert.abi(typelib_path)
+            _,_,authority_state=selected_insert.authority(v);selected_insert.abi(typelib_path);selected_insert.nc_abi(typelib_path)
+            if continuing:continuation_info=continuation.load(v,binding(dict(v,definition_mode='selected_insert')),authority_state)
         else:qualified_read(v,clsid);gop_abi(typelib_path)
         if v['save_after_verified']:save_abi(typelib_path)
         report.update(dispatch_marker_path=str(marker),qualified_read_pins=pins)
@@ -149,12 +155,12 @@ def run_current_saved_append(sw,clsid,typelib_path,*,runtime_check,**v):
             doc=document_snapshot(sw);require(type(doc) is dict and type(doc.get('type')) is int and doc['type']==1 and type(doc.get('needs_save')) is bool,'Saved part required')
             check_document_target(doc['path'],doc['title'],expected_path=v['expected_document_path'],required=True)
             if verify_source:require(_file_hash(v['expected_document_path'])==current_source,'Source file changed')
-            pairs=selected_insert.PAIRS if selected else PIN_PAIRS
-            expected_pins=(pins['authority'],) if selected else (pins['request'],pins['result'])
+            pairs=(selected_insert.PAIRS if selected else PIN_PAIRS)+(continuation.PAIRS if continuing else ())
+            expected_pins=((pins['authority'],) if selected else (pins['request'],pins['result']))+((pins['partial'],pins['old_marker']) if continuing else ())
             for (pathkey,shakey),expected in zip(pairs,expected_pins):require(read_pin(v[pathkey],v[shakey])[1]==expected,'Pinned authority evidence changed')
             return doc
         with solidworks_operation_lock(timeout_seconds=1,process_id=v['process_id']):
-            initial=identity();require(initial['needs_save'] is False,'Prepare/apply must start from clean saved source')
+            initial=identity();require(continuing or initial['needs_save'] is False,'Other modes require clean saved source; continuation verifies the exact unsaved CAM delta')
             addin=_member(sw,'GetAddInObject',clsid);require(addin is not None,'CAM must already be loaded')
             app=_typed(_member(addin,'GetCWApp'),'ICWApp4',typelib_path);require(identity()==initial,'Bootstrap identity changed')
             session=CamMessageSession(app,typelib_path)
@@ -179,8 +185,8 @@ def run_current_saved_append(sw,clsid,typelib_path,*,runtime_check,**v):
                 if not after:require(start==initial,'Pre-dispatch document changed')
                 def boundary():
                     check();require(identity()==start,'Identity changed during capture');check()
-                native=current._capture(app,typelib_path,read,typed,state,v,boundary,verify_operation_pins=not after)
-                if not after:require(state==reference,'Current captured state differs from qualified read')
+                native=current._capture(app,typelib_path,read,typed,state,v,boundary,verify_operation_pins=not after and not continuing)
+                if not after and not continuing:require(state==reference,'Current captured state differs from qualified read')
                 state['document']=deepcopy(start)
                 strategy_state=deepcopy(state)
                 for row in strategy_state['features']:
@@ -188,12 +194,19 @@ def run_current_saved_append(sw,clsid,typelib_path,*,runtime_check,**v):
                 details={};state['strategy_diagnostics']=details
                 read_compound_strategy(strategy_state,native,read,typed,details,feature_id=v['expected_feature_native_id'],owner_id=v['expected_feature_setup_native_id'],step_count=3,expected_header=state['target_header'],boundary=boundary,observation='strategy')
                 state['default_operation_catalogues']=read_catalogues(native['selected_feature'],read=read,typed=typed)
-                if not after and selected:require(state==authority_state,'Current complete state differs from saved authority')
+                if continuing:
+                    continuation.capture_nc(state,native,v,read,typed,persist)
+                    if not after:continuation.verify_current(continuation_info,state,v)
+                elif not after and selected:require(state==authority_state,'Current complete state differs from saved authority')
                 boundary();persist();return state,native
             with session:
                 before,native=capture('before');confirm,native=capture('confirm_before')
                 require(before==confirm,'Two complete prepare captures differ')
-                if selected:report['selected_definition_plan']=selected_insert.plan(before,v)
+                if continuing:
+                    report['selected_definition_plan']=deepcopy(continuation_info['chosen'])
+                    report['continuation_recovery_verified']=True
+                    report['continuation_retained_operation_native_id']=v['retained_operation_native_id']
+                elif selected:report['selected_definition_plan']=selected_insert.plan(before,v)
                 else:require(len(before['operations'])<32 and before['selected_operation_setup']['operation_count']==0 and not any(v['expected_feature_native_id'] in row['linked_feature_ids'] for row in before['operations']),'Target must be unplanned in empty setup with capacity')
                 report['state_sha256']=_digest(before)
                 strategy=before['strategy_diagnostics']['compound_strategy'];report['selected_strategy']=deepcopy(strategy);report['default_operation_catalogues']=deepcopy(before['default_operation_catalogues']);persist()
@@ -206,7 +219,7 @@ def run_current_saved_append(sw,clsid,typelib_path,*,runtime_check,**v):
                     _write_receipt(marker,dict(scope=SCOPE,status='claimed_no_replay',binding=binding(v),receipt_path=v['receipt_path'],automatic_replay=False),create=True);report['marker_created']=True;persist()
                     check();require(identity()==initial,'Identity changed after exclusive claim');runtime_check()
                     if selected:
-                        final=selected_insert.execute(v,report,before,native,read=read,typed=typed,capture=capture,check=check,identity=identity,runtime_check=runtime_check,persist=persist)
+                        final=selected_insert.execute(v,report,before,native,read=read,typed=typed,capture=capture,check=check,identity=identity,runtime_check=runtime_check,persist=persist,continuation=continuation_info)
                     else:
                         report.update(phase='GenerateOpPlan',mutation_attempted=True,GOP_attempted=True,native_call_attempted=True,native_dispatch_pending=True);persist()
                         returned=_member(feature,'GenerateOpPlan',1)

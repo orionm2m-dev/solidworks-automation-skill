@@ -17,11 +17,11 @@ def require(value,message):
     if not value:raise ValueError(message)
 
 
-def selected(v):return v.get('definition_mode','retain_plan')=='selected_insert'
+def selected(v):return v.get('definition_mode','retain_plan')in ('selected_insert','selected_continue')
 
 
 def validate_choices(v):
-    require(v.get('definition_mode','retain_plan') in ('retain_plan','selected_insert'),'Explicit supported definition mode required')
+    require(v.get('definition_mode','retain_plan') in ('retain_plan','selected_insert','selected_continue'),'Explicit supported definition mode required')
     if not selected(v):
         require(all(v.get(k) is None for k in KEYS),'Selected insert fields forbidden for RETAIN mode')
         return
@@ -99,6 +99,23 @@ def abi(tlb):
     require(m.restype is HRESULT and m.idlflags[0]==44 and m.argtypes==(c_long,c_long,POINTER(IDispatch),POINTER(POINTER(IDispatch))) and tuple(p[0] for p in m.paramflags)==(1,1,1,10) and not any(x in m.idlflags for x in ('propget','propput','propputref')),'Exact InsertOperation ABI required')
 
 
+def nc_abi(tlb):
+    """在任何 setter/Insert 前核验将要使用的 NC registry、IID 与 getter ABI。"""
+    from ctypes import HRESULT,c_double,POINTER
+    from comtypes.automation import IDispatch
+    from scripts.sw_cam_comtypes import _interface_class
+    for name in ('ICWApp','ICWApp4','ICWEventGenerator','_IDialogEvents','ICWDoc3','ICWPartDoc','ICWMachine','ICWBaseSetup','ICWSetup','ICWBaseOpSetup','ICWDispatchCollection','ICWFeature','ICWMillFeature','ICWMultiStepFeature','ICWOperation','ICWMillOperation','ICWTool','ICWToolpath','ICWPosition','ICWNCParam','ICWNCParam2'):
+        _interface_class(name,tlb)
+    contracts=(('ICWMillOperation','{4EDDCA74-325A-11D6-A9A7-00062999E55F}','IGetNCParam',7,POINTER(POINTER(IDispatch)),None),
+               ('ICWNCParam','{7532C780-3BC4-11D6-A9AF-00062999E55F}','GetSpndlSpeed',7,POINTER(c_double),None),
+               ('ICWNCParam2','{7B7640FD-F53E-4B98-A073-EB4E6992E802}','_get_XYFeed',23,POINTER(c_double),'propget'))
+    for name,iid,method,dispid,arg,flag in contracts:
+        cls=_interface_class(name,tlb);rows=[x for x in cls._methods_ if x.name==method]
+        require(str(cls._iid_).upper()==iid and len(rows)==1,'Exact registered NC interface/getter required')
+        m=rows[0];flags=set(m.idlflags)&{'propget','propput','propputref'}
+        require(m.restype is HRESULT and m.idlflags[0]==dispid and m.argtypes==(arg,) and tuple(p[0] for p in m.paramflags)==(10,) and flags==({flag} if flag else set()),'Exact own-NC getter ABI required')
+
+
 def verify_suppression(before,after,oid):
     _inventory(before);_inventory(after);expected=deepcopy(before)
     rows=[x for x in expected['operations'] if x['native_id']==oid]
@@ -118,9 +135,13 @@ def verify_insert(before,after,row,oid,anchor):
     return result
 
 
-def execute(v,report,before,native,*,read,typed,capture,check,identity,runtime_check,persist):
+def execute(v,report,before,native,*,read,typed,capture,check,identity,runtime_check,persist,continuation=None):
     """小型适配器复用已限定 InsertOperation；每步双读取验证后才进行下一步。"""
-    chosen=plan(before,v);state=before;doc=native['doc'];report['definition_actions']=[];report['new_operations']=[]
+    chosen=continuation['chosen'] if continuation else plan(before,v)
+    state=before;doc=native['doc'];report['definition_actions']=[];report['new_operations']=[]
+    if continuation:
+        report['retained_operations']=[deepcopy(before['operations'][-1])]
+        report['continuation_retained_operation_native_id']=v['retained_operation_native_id']
     def boundary():
         check();require(identity()==state['document'],'Document changed before selected dispatch');runtime_check()
     class Adapter:
@@ -141,15 +162,16 @@ def execute(v,report,before,native,*,read,typed,capture,check,identity,runtime_c
         after,_=capture(label,True);verify(after)
         confirm,_=capture('confirm_'+label,True);require(confirm==after,'Two selected-step captures differ');verify(confirm)
         action.update(readback_verified=True);persist();return confirm
-    for oid in chosen['suppress_operation_native_ids']:
+    for oid in ([] if continuation else chosen['suppress_operation_native_ids']):
         action=dict(kind='suppress',operation_native_id=oid,requested_value=True,attempted=False,returned=False,readback_verified=False)
         report['definition_actions'].append(action);persist();boundary()
         found=read(doc,'GetCWObjectFromID',3,oid);require(type(found) in (tuple,list) and len(found)==2 and found[1] is True,'Exact suppression operation lookup required')
         op=typed(found[0],'ICWOperation');require(_object_id(doc,op,read)==oid and read(op,'Suppressed') is False and read(op,'GetIsToolpathGenerated') is False,'Suppression operation changed')
         adapter.dispatch_once(lambda:setattr(op,'Suppressed',True),pending)
         state=observe('after_suppress_'+str(oid),lambda after:verify_suppression(state,after,oid))
-    anchor=chosen['anchor_operation_native_id']
+    anchor=v['retained_operation_native_id'] if continuation else chosen['anchor_operation_native_id']
     for index,row in enumerate(chosen['insert_operations']):
+        if continuation and index==0:continue
         action=dict(kind='insert',choice=deepcopy(row),anchor_native_id=anchor,attempted=False,returned=False,readback_verified=False)
         report['definition_actions'].append(action);persist()
         raw=definitions.insert_selected_once(adapter,doc,row,anchor,before['target_header'],pending)

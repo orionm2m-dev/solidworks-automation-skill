@@ -39,8 +39,10 @@ def validate(v):
     integer(v['expected_generated_operation_count'],'generated operation count',0,32)
     integer(v['expected_total_record_count'],'record count',0,100000)
     if v['expected_generated_operation_count']>len(ids):raise ValueError('Generated count exceeds operation count')
-    if v['read_mode']!='current_saved' or v['observation'] not in ('header_and_count','three_step_profile') or v['qualification_only'] is not True or v['message_policy']!='vendor_default':
+    if v['read_mode']!='current_saved' or v['observation'] not in ('header_and_count','three_step_profile','operation_parameters') or v['qualification_only'] is not True or v['message_policy']!='vendor_default':
         raise ValueError('Explicit current-saved read-only qualification required')
+    from scripts.sw_cam_mill_current_parameters import validate as validate_parameters
+    validate_parameters(v)
 
 
 def _abi(path):
@@ -122,21 +124,22 @@ def _capture(app,tlb,read,typed,state,v,boundary,*,verify_operation_pins=True):
     compound=typed(raw[0],'ICWMultiStepFeature')
     count=read(compound,'GetNumOfSteps');state['number_of_steps_raw']=count
     integer(count,'step count',1,64)
-    if v['observation']=='three_step_profile':
+    if v['observation'] in ('three_step_profile','operation_parameters'):
         state['profile']=read_three_step_profile(compound,count=count,read=read,typed=typed)
     after_count=read(compound,'GetNumOfSteps')
     integer(after_count,'repeated step count',1,64)
     repeated,_=read_header(target,doc,read,typed,v['expected_feature_setup_native_id'])
     if after_count!=count or repeated!=header:raise ValueError('Compound changed during capture')
     boundary();state['capture_complete']=True
-    return dict(doc=doc,machine=machine,selected_feature=base)
+    return dict(doc=doc,machine=machine,selected_feature=base,operations=native['operations'])
 
 
 def inspect_current_saved_compound(sw,clsid,typelib_path,*,process_id,expected_process_create_time,
         expected_document_path,expected_source_sha256,expected_feature_native_id,
         expected_feature_setup_native_id,expected_operation_setup_native_id,expected_operation_native_ids,
         expected_generated_operation_count,expected_total_record_count,read_mode='current_saved',
-        observation='header_and_count',qualification_only=True,message_policy='vendor_default'):
+        observation='header_and_count',qualification_only=True,message_policy='vendor_default',
+        parameters_authority_receipt_path=None,parameters_authority_receipt_sha256=None,parameter_operation_native_ids=None):
     """读取当前保存模型中的精确复合特征；返回两次原始状态，不生成、保存或改写。
 
     输入包含 PID/创建时间、路径/SHA、特征和两类 setup ID、完整有序操作 ID 与路径计数。
@@ -150,9 +153,16 @@ def inspect_current_saved_compound(sw,clsid,typelib_path,*,process_id,expected_p
         units_verified=False,coordinate_frame_verified=False,production_qualified=False,
         full_hidden_geometry_preservation_verified=False,cl_coordinates_compared=False,
         historical_receipt_loaded=False,automatic_retry_permitted=False,native_read_count=0,
-        post_cleanup_cam_read_performed=False,step_getter_diagnostics=[])
+        post_cleanup_cam_read_performed=False,step_getter_diagnostics=[],parameter_getter_diagnostics=[],
+        parameter_observations_verified=False,full_tool_profiles_read=False,physical_tool_qualified=False)
     try:
         validate(v);report['getter_abi']=_abi(typelib_path)
+        authority=None
+        if observation=='operation_parameters':
+            from scripts import sw_cam_mill_current_parameters as parameters
+            authority=parameters.load_authority(v)
+            report['parameter_interface_admission']=parameters.preflight(typelib_path,authority['definition_mode'])
+            report.update(saved_authority_pin=authority['pin'],historical_receipt_loaded=True,parameter_operation_native_ids=list(parameter_operation_native_ids))
         def identity():
             p=_process_identity(process_id)
             if p.get('alive') is not True or p.get('process_id')!=process_id or p.get('create_time')!=expected_process_create_time or Path(p.get('executable','')).name.casefold()!='sldworks.exe':raise ValueError('Exact process lifetime changed')
@@ -162,6 +172,7 @@ def inspect_current_saved_compound(sw,clsid,typelib_path,*,process_id,expected_p
             if type(doc) is not dict or type(doc.get('type')) is not int or doc['type']!=1 or doc.get('needs_save') is not False:raise ValueError('Clean current saved part required')
             check_document_target(doc['path'],doc['title'],expected_path=expected_document_path,required=True)
             if _file_hash(expected_document_path)!=expected_source_sha256:raise ValueError('Current saved source SHA changed')
+            if authority is not None and _file_hash(parameters_authority_receipt_path)!=parameters_authority_receipt_sha256:raise ValueError('Saved parameter authority changed')
             return doc
         with solidworks_operation_lock(timeout_seconds=1,process_id=process_id):
             initial=identity();report['document']=deepcopy(initial)
@@ -185,7 +196,15 @@ def inspect_current_saved_compound(sw,clsid,typelib_path,*,process_id,expected_p
                 if name in _STEP_GETTERS:
                     diag=dict(method=name,arguments=list(args),capture=report['capture_phase'],attempted=True,returned=False)
                     report['step_getter_diagnostics'].append(diag)
+                parameter_diag=None
+                if report.get('parameter_read_active'):
+                    parameter_diag=dict(method=name,capture=report['capture_phase'],returned=False)
+                    report['parameter_getter_diagnostics'].append(parameter_diag)
                 raw=_member(obj,name,*args)
+                if parameter_diag is not None:
+                    parameter_diag.update(returned=True,converted_output_shape=_converted_shape(raw))
+                    try:parameter_diag['raw']=parameters.pocket.rough.bounded_raw_observation(raw)
+                    except ValueError:pass
                 if diag is not None:diag.update(returned=True,converted_output_shape=_converted_shape(raw))
                 check();return raw
             def typed(raw,name):
@@ -195,17 +214,21 @@ def inspect_current_saved_compound(sw,clsid,typelib_path,*,process_id,expected_p
             with session:
                 for phase in ('before','after'):
                     report['capture_phase']=phase;state={};report[phase]=state
-                    _capture(app,typelib_path,read,typed,state,v,boundary)
+                    native=_capture(app,typelib_path,read,typed,state,v,boundary)
+                    if authority is not None:
+                        report['parameter_read_active']=True
+                        parameters.capture(state,native,v,authority,document=initial,read=read,typed=typed,boundary=boundary)
+                        report['parameter_read_active']=False
                 if report['before']!=report['after']:raise ValueError('Two complete observations differ')
                 boundary()
             s=session.summary();report['messages']=s
             if s.get('active') is not False or s.get('disconnected') is not True or s.get('subscribed') is not True or any(s.get(k) for k in _EVENT_ERRORS):raise ValueError('Event cleanup not confirmed')
             if identity()!=initial:raise ValueError('Document changed after cleanup')
             report.update(status='review_required',phase='finished',observation_verified=True,
-                readback_verified=True,guards_verified=True,reason='STABLE_RAW_CURRENT_SAVED_COMPOUND_NO_MACHINING_QUALIFICATION')
+                readback_verified=True,guards_verified=True,parameter_observations_verified=authority is not None,reason='STABLE_RAW_CURRENT_SAVED_COMPOUND_NO_MACHINING_QUALIFICATION')
     except Exception as error:
         report.update(status='error',failed_phase=report['phase'],phase='finished',issue=_error(error),
-                      readback_verified=False,observation_verified=False,guards_verified=False)
+                      readback_verified=False,observation_verified=False,guards_verified=False,parameter_observations_verified=False)
     finally:
         if session is not None:report['messages']=session.summary()
     return report

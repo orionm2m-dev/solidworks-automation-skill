@@ -211,7 +211,10 @@
         "复用 solidworks_cam_append_mill_operations；不增加工具入口。参见 references/cam-current-saved-append.md。",
         "既有 current_saved endpoint 新增 selected_insert 模式：真实成功保存 receipt + 当前双读取，两个明确无轨迹旧定义 Suppressed=True，复用 InsertOperation 的 Rough0/Finish1 选择插入。",
         "逐步双读取验证，仅允许指定抑制标志和两个新定义；整个批次独占 once marker，事件/身份/代码变化立即停止，不自动重试或回滚。",
-        "可复用已验证 Save 序列；无 GOP/GTP、策略/工具赋值或 TechDB 写入。新组合分支尚无原生成功证明。"
+        "可复用已验证 Save 序列；无 GOP/GTP、策略/工具赋值或 TechDB 写入。新组合分支尚无原生成功证明。",
+        "显式 selected_continue 只承认两次已验证抑制和一次已返回粗加工插入后发生的本地 NC registry 失败；固定原始部分结果与旧 once marker，不重放旧变更。",
+        "只读恢复以同一源文件/PID 生命周期和 未保存 CAM 状态双读取（主机 needs_save 标志可为 false，须实际读取并固定）证明唯一已存在粗加工定义与 own NC；apply 仅插入剩余精加工定义，然后可复用 checked Save。",
+        "任何变更前检查实际 bridge registry、生成 IID 和 own-NC 精确 getter ABI，包含 ICWNCParam2；离线 integration 覆盖 reused reader→真实 registry 与缺失接口的零变更拒绝。"
       ],
       "allowed_modes": [
         "interactive",
@@ -238,7 +241,10 @@
         "两次受事件门禁保护的完整采集；复用现有 header/操作/三台阶读取器。GetSetup DISP30 与四个 compound getter 先检查声明 ABI。",
         "header_and_count 不访问索引；three_step_profile 仅在实际数量严格为三时读取0..2，其他类型或计数无回退。",
         "仅离线测试及本地生成类型库 ABI 检查，当前保存模式原生资格待验证。不得声称世界坐标、单位、完整隐蔽刀具几何、旧 CL 坐标或生产资格。",
-        "无 setter、AFR/GOP/GTP、保存、导出或 TechDB 写入；失败保留已返回诊断，停止，不自动重试。见 references/cam-current-saved-compound-read.md。"
+        "无 setter、AFR/GOP/GTP、保存、导出或 TechDB 写入；失败保留已返回诊断，停止，不自动重试。见 references/cam-current-saved-compound-read.md。",
+        "显式 operation_parameters 只读模式固定成功 selected_insert 或 selected_continue checked-Save receipt 与两个实际 Rough0/Finish1 ID；不接受 partial/uncertain authority。",
+        "复用既有 levels、粗精参数和工具/刀柄标量读取，实际 owner/link/tool 身份及完整已采集状态双读取比较；继续模式重读保留粗加工 own NC。接口 registry 在 bootstrap 前检查。",
+        "新参数模式已离线验证并通过组合 continuation→Save→read 集成；尚无该模式原生成功证明，不证明物理单位、完整轮廓、间隙或生产资格。"
       ],
       "allowed_modes": [
         "interactive",

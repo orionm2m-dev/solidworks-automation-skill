@@ -13,6 +13,13 @@ from scripts import sw_cam_comtypes
 @pytest.fixture
 def packet(saving,monkeypatch):
  e=saving
+ from types import SimpleNamespace
+ from ctypes import HRESULT,POINTER,c_double
+ from comtypes.automation import IDispatch
+ primary=SimpleNamespace(**{name:SimpleNamespace(_iid_=iid,_methods_=[]) for name,iid in sw_cam_comtypes._INTERFACES.items()})
+ for name,method,dispid,arg,flags in (('ICWMillOperation','IGetNCParam',7,POINTER(POINTER(IDispatch)),()),('ICWNCParam','GetSpndlSpeed',7,POINTER(c_double),()),('ICWNCParam2','_get_XYFeed',23,POINTER(c_double),('propget',))):
+  getattr(primary,name)._methods_=[SimpleNamespace(name=method,restype=HRESULT,argtypes=(arg,),paramflags=((10,'value'),),idlflags=(dispid,)+flags)]
+ monkeypatch.setattr(sw_cam_comtypes,'_load_type_library',lambda path:primary)
  class Operation(Native):
   def __setattr__(self,name,value):
    assert name=='Suppressed' and value is True
@@ -143,5 +150,5 @@ def test_runtime_drift_between_suppression_and_insert_stops(packet):
 
 
 def test_exact_declared_insert_and_property_metadata(monkeypatch):
- mod=importlib.import_module('comtypes.gen._FE488661_0BD8_11D6_2012_2018CE99E55F_0_25_0')
+ mod=pytest.importorskip('comtypes.gen._FE488661_0BD8_11D6_2012_2018CE99E55F_0_25_0',reason='Requires locally installed CAM primary metadata')
  monkeypatch.setattr(current,'_interface_class',lambda name,path:getattr(mod,name));selected.abi('offline')

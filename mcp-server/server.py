@@ -8188,7 +8188,10 @@ class SolidWorksCamCurrentSavedCompoundInput(SolidWorksCamTargetInput):
     expected_generated_operation_count: int = Field(ge=0,le=32,strict=True)
     expected_total_record_count: int = Field(ge=0,le=100000,strict=True)
     read_mode: Literal["current_saved"] = "current_saved"
-    observation: Literal["header_and_count","three_step_profile"] = "header_and_count"
+    observation: Literal["header_and_count","three_step_profile","operation_parameters"] = "header_and_count"
+    parameters_authority_receipt_path: Optional[str] = Field(default=None,min_length=1,strict=True)
+    parameters_authority_receipt_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+    parameter_operation_native_ids: Optional[list[Annotated[int,Field(strict=True)]]] = Field(default=None,min_length=2,max_length=2)
     qualification_only: bool = Field(strict=True)
     message_policy: Literal["vendor_default"] = "vendor_default"
 
@@ -8223,7 +8226,7 @@ def solidworks_cam_inspect_current_saved_compound(params: SolidWorksCamCurrentSa
         try:_runtime_identity.assert_current()
         except Exception as error:
             result.update(status="error",observation_verified=False,readback_verified=False,
-                guards_verified=False,may_continue=False,runtime_unchanged=False,
+                guards_verified=False,may_continue=False,runtime_unchanged=False,parameter_observations_verified=False,
                 reason="RUNTIME_CHANGED_AFTER_READ",runtime_error=str(error))
             return result
         result["runtime_unchanged"]=True
@@ -8366,12 +8369,17 @@ class SolidWorksCamCurrentSavedAppendInput(SolidWorksCamCurrentSavedCompoundInpu
     prepare_receipt_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
     expected_strategy_id: Optional[int] = Field(default=None,ge=-2147483648,le=2147483647,strict=True)
     expected_strategy_name: Optional[str] = Field(default=None,min_length=1,max_length=4096,strict=True)
-    definition_mode: Literal["retain_plan","selected_insert"] = "retain_plan"
+    definition_mode: Literal["retain_plan","selected_insert","selected_continue"] = "retain_plan"
     saved_authority_receipt_path: Optional[str] = Field(default=None,min_length=1,strict=True)
     saved_authority_receipt_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
     anchor_operation_native_id: Optional[int] = Field(default=None,ge=1,le=2147483647,strict=True)
     insert_operations: Optional[list[dict[str,Any]]] = Field(default=None,min_length=2,max_length=2)
     suppress_operation_native_ids: Optional[list[Annotated[int,Field(strict=True)]]] = Field(default=None,min_length=2,max_length=2)
+    partial_receipt_path: Optional[str] = Field(default=None,min_length=1,strict=True)
+    partial_receipt_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+    partial_attempt_marker_path: Optional[str] = Field(default=None,min_length=1,strict=True)
+    partial_attempt_marker_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+    retained_operation_native_id: Optional[int] = Field(default=None,ge=1,le=2147483647,strict=True)
     save_after_verified: bool = Field(default=False,strict=True)
     acknowledge_disposable_copy: bool = Field(strict=True)
     attempt_registry_path: str = Field(min_length=1,strict=True)
