@@ -13721,6 +13721,7 @@ class SolidWorksCamTurnBoreOptionsInput(SolidWorksCamVariableAllowanceInput):
     expected_linked_feature_ids: list[int] = Field(min_length=1, max_length=64)
     action: Literal["read"] = "read"
     include_tool_contours: bool = Field(default=False, strict=True)
+    include_leftover_control: bool = Field(default=False, strict=True)
     expected_tool_native_id: int | None = Field(default=None, gt=0, le=4294967295, strict=True)
 
     @model_validator(mode="after")
@@ -13746,6 +13747,39 @@ def solidworks_cam_inspect_turn_bore_options(params: SolidWorksCamTurnBoreOption
         return result
     return _run_locked(op, params.response_format)
 
+
+
+class SolidWorksCamTurnCutoffOptionsInput(SolidWorksCamVariableAllowanceInput):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    expected_process_create_time: float = Field(gt=0, strict=True, allow_inf_nan=False)
+    expected_operation_type: int = Field(ge=13, le=13, strict=True)
+    expected_operation_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_linked_feature_ids: list[int] = Field(min_length=1, max_length=64)
+    action: Literal["read"] = "read"
+
+
+@mcp.tool(name="solidworks_cam_inspect_turn_cutoff_options", title="Inspect Existing TURN CutOff Options",
+          annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def solidworks_cam_inspect_turn_cutoff_options(params: SolidWorksCamTurnCutoffOptionsInput) -> str:
+    """Read exact CutOff13 scalars twice. No setters, feature extension guesses, GTP or Save."""
+    def op():
+        _runtime_identity.assert_current()
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_turn_cutoff_options import inspect_turn_cutoff_options
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        result = inspect_turn_cutoff_options(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+        try:
+            _runtime_identity.assert_current()
+        except Exception as error:
+            result.update(status="error",readback_verified=False,runtime_unchanged=False,
+                          reason="RUNTIME_CHANGED_AFTER_READ",runtime_error=str(error),may_continue=False)
+            return result
+        result["runtime_unchanged"] = True
+        return result
+    return _run_locked(op, params.response_format)
 
 
 class SolidWorksCamTurnHolderWriteThroughInput(SolidWorksCamOperationProfileInput):

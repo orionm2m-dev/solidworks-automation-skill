@@ -226,6 +226,34 @@
       "allowed_modes": ["interactive", "reviewed"]
     },
     {
+      "id": "cam_turn_cutoff_option_inspection",
+      "label": "TURN CutOff scalar option inspection",
+      "level": "pilot",
+      "backends": [
+        "solidworks-com-pywin32",
+        "solidworks-com-comtypes"
+      ],
+      "verified_versions": [
+        "2026"
+      ],
+      "dependencies": [
+        "SolidWorks",
+        "SOLIDWORKS CAM",
+        "pywin32",
+        "comtypes"
+      ],
+      "limitations": [
+        "Read-only solidworks_cam_inspect_turn_cutoff_options retrieves eighteen declared ICWTurnCutOffOp scalars for an exact existing type 13 operation. Requires pinned process lifetime, saved source, native operation and linked-feature identities; two matching captures and event cleanup.",
+        "541 focused and legacy programmatic tests passed, including current generated type-library getter contracts. Native readback on SOLIDWORKS 2026 SP4 produced two equal eighteen-property captures on one existing CutOff operation, with unchanged collected inventory, saved source and pre-existing unsaved state.",
+        "No direct final diameter, numeric feature start/end extension or machining-side getter is established. Raw values do not qualify units, frames, part separation, stock transfer, toolpath, holder clearance or production machining.",
+        "No setters, feature or tool profiles, GTP, CL record access or Save. See references/cam-turn-cutoff-options.md."
+      ],
+      "allowed_modes": [
+        "interactive",
+        "reviewed"
+      ]
+    },
+    {
       "id": "saved_work_resume_checkpoint",
       "label": "Проверка сохранённой точки продолжения CAD/CAM",
       "level": "verified",

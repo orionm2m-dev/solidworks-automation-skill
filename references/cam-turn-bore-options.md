@@ -1,6 +1,6 @@
 # TURN Bore Rough option inspection
 
-`solidworks_cam_inspect_turn_bore_options` reads eleven raw operation-owned parameters from an existing TURN Bore Rough operation (native type 5). It reuses the two-snapshot, source-pinned, event-guarded operation reader. The existing OD variable-allowance entry and its read/identify behavior remain unchanged.
+`solidworks_cam_inspect_turn_bore_options` reads eleven raw operation-owned parameters by default from an existing TURN Bore Rough operation (native type 5). It reuses the two-snapshot, source-pinned, event-guarded operation reader. The existing OD variable-allowance entry and its read/identify behavior remain unchanged.
 
 The caller supplies the connected process ID and creation time, exact saved part path and SHA-256, setup/operation indices, native operation ID, and linked feature IDs. The only action is `read`. The default request does not traverse tool or feature profiles. No receipt/write options, CAM generation, or model saving are exposed. A stable unsaved document may be inspected; unchanged RAM does not prove persistence.
 
@@ -14,6 +14,12 @@ The default result is scalar metadata only. It does not qualify an undercut tool
 
 The installed implementation read all eleven options twice on an existing rough-boring operation. Both scalar captures and complete inventories agreed, the source stayed unchanged, and no CAM messages were observed. The observed undercut flag was already enabled; the reader therefore ruled out that particular configuration hypothesis. This does not qualify material removal, units or a tool envelope. The installed focused and legacy regression suite passed 307 tests.
 
+
+## Optional leftover controls
+
+`include_leftover_control=true` adds only `ICWTurnBoreRoughOp.GenerateLeftOver` (strict Boolean) and `LEFTOVER_TYPE` (raw native enum) to each scalar capture. The flag defaults to `false`, preserving the original eleven-field request; enabling it gives thirteen fields and does not enable tool contours. Both extra getters use the existing source, process, operation, feature, inventory and event guards.
+
+The reviewed type library declares `NONE=0`, `FEAT=1`, `WIP=2`, `NEW_STOCK=3`, and `NOT_DEFINED=4`. The reader checks a strict integer in this range and the exact getter signature. It does not independently validate the enum constants at runtime or infer a complete correspondence to the UI stock modes. The older bundled SDK enum page lists only values 0 through 2 without descriptions. Reading these controls does not define new stock or establish stock transfer between setups. Native readback on SOLIDWORKS 2026 SP4 produced two equal thirteen-property captures on one existing rough-bore operation. The observed values were `GenerateLeftOver=true` and `LEFTOVER_TYPE=1` (declared symbol `FEAT`). The original eleven values, collected inventory, saved source and pre-existing unsaved state remained unchanged. This verifies the bounded read, not the UI stock-mode meaning or the stock supplied to a subsequent operation.
 
 ## Optional existing tool contours
 

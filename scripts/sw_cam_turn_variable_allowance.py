@@ -26,7 +26,7 @@ _BORE_NUMBER = {"FirstCutAmt": 12, "MaxCutAmt": 13, "FinalCutAmt": 14,
                 "RadialStockAmt": 25, "AxialStockAmt": 26}
 
 
-def _bore_options_abi(typelib_path):
+def _bore_options_abi(typelib_path, *, include_leftover_control=False):
     """Metadata-only exact getter contract; no activation, QI or setters."""
     from ctypes import HRESULT, POINTER, c_int, c_double
     from ctypes.wintypes import VARIANT_BOOL
@@ -34,6 +34,8 @@ def _bore_options_abi(typelib_path):
     specifications = [("_get_"+name, dispid, VARIANT_BOOL) for name,dispid in _BORE_BOOL.items()]
     specifications += [("_get_"+name, dispid, c_double) for name,dispid in _BORE_NUMBER.items()]
     specifications += [("GetAllowanceMethodVariable", 23, c_int)]
+    if include_leftover_control:
+        specifications += [("_get_GenerateLeftOver", 21, VARIANT_BOOL), ("_get_LEFTOVER_TYPE", 22, c_int)]
     for name,dispid,scalar in specifications:
         methods = [m for m in interface._methods_ if m.name == name]
         if len(methods) != 1:
@@ -48,7 +50,7 @@ def _bore_options_abi(typelib_path):
                 getter_count=len(specifications), native_calls=0)
 
 
-def _read_bore_options(raw, typelib_path, read, result):
+def _read_bore_options(raw, typelib_path, read, result, *, include_leftover_control=False):
     interface = _typed(raw, "ICWTurnBoreRoughOp", typelib_path)
     for name in _BORE_BOOL:
         value = read(interface,name)
@@ -61,6 +63,15 @@ def _read_bore_options(raw, typelib_path, read, result):
     if type(mode) is not int or not -(2**31) <= mode < 2**31:
         raise ValueError("Bore allowance method must be exact native LONG")
     result["GetAllowanceMethodVariable"] = mode
+    if include_leftover_control:
+        generated = read(interface, "GenerateLeftOver")
+        if type(generated) is not bool:
+            raise ValueError("GenerateLeftOver must be a strict Boolean")
+        result["GenerateLeftOver"] = generated
+        kind = read(interface, "LEFTOVER_TYPE")
+        if type(kind) is not int or kind not in range(5):
+            raise ValueError("LEFTOVER_TYPE must be a declared native enum 0..4")
+        result["LEFTOVER_TYPE"] = kind
 
 
 
@@ -217,7 +228,10 @@ def _snapshot(sw,clsid,typelib_path,config,read,check,identity,diagnostic=None):
     if config.get('inspection_scope') in ('bore_rough_options', 'tool_contours'):
         if config['inspection_scope'] == 'bore_rough_options':
             result['bore_options_native'] = {}
-            _read_bore_options(raw,typelib_path,read,result['bore_options_native'])
+            if config.get("include_leftover_control"):
+                _read_bore_options(raw,typelib_path,read,result['bore_options_native'],include_leftover_control=True)
+            else:
+                _read_bore_options(raw,typelib_path,read,result['bore_options_native'])
         if config.get('include_tool_contours'):
             result['tool_contours'] = {}
             _read_bore_tool_contours(doc,operation,typelib_path,config['expected_tool_native_id'],read,result['tool_contours'])
@@ -225,6 +239,15 @@ def _snapshot(sw,clsid,typelib_path,config,read,check,identity,diagnostic=None):
         if identity()!=current_doc or _inventory(machine,typelib_path,read)!=result['inventory']:
             raise ValueError('Document, saved file or complete inventory changed during bore read')
         result['capture_complete']=True
+        return result
+    if config.get("inspection_scope") == "cutoff_options":
+        from scripts.sw_cam_turn_cutoff_options import _read_cutoff_options
+        result["cutoff_options_native"] = {}
+        _read_cutoff_options(raw,typelib_path,read,result["cutoff_options_native"])
+        check()
+        if identity()!=current_doc or _inventory(machine,typelib_path,read)!=result["inventory"]:
+            raise ValueError("Document, saved file or complete inventory changed during CutOff read")
+        result["capture_complete"] = True
         return result
     for fid,value in zip(ids,linked):
         profile={}
@@ -250,7 +273,7 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
         expected_operation_native_id=None,expected_linked_feature_ids=None,
         action='read',message_policy='vendor_default',inspection_scope='profile_and_variable_allowance',
         expected_process_create_time=None,include_tool_contours=False,expected_tool_native_id=None,
-        setup_context_config=None):
+        setup_context_config=None,include_leftover_control=False):
     """Exact current saved part (may contain unchanged unsaved RAM data), one operation.
 
     Bootstrap obtains add-in/app only so events can be subscribed. All subsequent
@@ -270,7 +293,7 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
                ('operation_index',operation_index,0,511)]:
             if type(value) is not int or not lo<=value<=hi: raise ValueError('Invalid strict selector '+name)
         if action not in ('read','identify'): raise ValueError('Only read or identify action allowed')
-        if inspection_scope not in ('profile_and_variable_allowance','bore_rough_options','tool_contours','turn_setup_context'):
+        if inspection_scope not in ('profile_and_variable_allowance','bore_rough_options','tool_contours','turn_setup_context','cutoff_options'):
             raise ValueError('Unknown operation parameter inspection scope')
         if inspection_scope=='turn_setup_context':
             from scripts.sw_cam_turn_setup_context import validate_config, setup_abi
@@ -278,6 +301,10 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
             report['setup_getter_abi']=setup_abi(typelib_path)
         elif setup_context_config is not None:
             raise ValueError('Setup context pins only belong to the dedicated setup scope')
+        if type(include_leftover_control) is not bool:
+            raise ValueError('include_leftover_control must be a strict Boolean')
+        if include_leftover_control and inspection_scope != 'bore_rough_options':
+            raise ValueError('Leftover control only belongs to bore rough options')
         if type(include_tool_contours) is not bool:
             raise ValueError('include_tool_contours must be a strict Boolean')
         if include_tool_contours:
@@ -287,7 +314,7 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
             raise ValueError('An expected tool ID is only valid when contours are requested')
         if inspection_scope=='tool_contours' and not include_tool_contours:
             raise ValueError('Tool contour scope requires both contours and an exact tool ID')
-        if inspection_scope in ('bore_rough_options','tool_contours','turn_setup_context'):
+        if inspection_scope in ('bore_rough_options','tool_contours','turn_setup_context','cutoff_options'):
             if action!='read' or type(expected_process_create_time) not in (int,float) or not math.isfinite(expected_process_create_time) or expected_process_create_time<=0:
                 raise ValueError('Bore options require read-only action and exact process lifetime')
         elif expected_process_create_time is not None:
@@ -298,7 +325,8 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
             raise ValueError('Allowance read requires exact expected operation native ID')
         if action=='identify' and expected_linked_feature_ids is not None:
             raise ValueError('Identify discovers linked IDs; expected linked IDs belong to strict read only')
-        allowed_types=((5,) if inspection_scope=='bore_rough_options' else
+        allowed_types=((13,) if inspection_scope=='cutoff_options' else
+                       (5,) if inspection_scope=='bore_rough_options' else
                        (5,6) if inspection_scope in ('tool_contours','turn_setup_context') else _MODE_INTERFACES)
         if type(expected_operation_type) is not int or expected_operation_type not in allowed_types:
             raise ValueError('Exact operation type does not match the parameter inspection scope')
@@ -324,7 +352,13 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
         if inspection_scope in ('bore_rough_options','tool_contours'):
             config['inspection_scope']=inspection_scope
             if inspection_scope=='bore_rough_options':
-                report['getter_abi']=_bore_options_abi(typelib_path)
+                if include_leftover_control:
+                    config['include_leftover_control'] = True
+                    report['leftover_control_requested'] = True
+                    report['leftover_enum_mapping_scope'] = 'Declared TLB enum only; no UI-mode correspondence inferred'
+                    report['getter_abi']=_bore_options_abi(typelib_path,include_leftover_control=True)
+                else:
+                    report['getter_abi']=_bore_options_abi(typelib_path)
             if include_tool_contours:
                 config.update(include_tool_contours=True,expected_tool_native_id=expected_tool_native_id)
                 report['tool_contour_abi'] = _tool_contour_abi(typelib_path)
@@ -337,6 +371,15 @@ def _inspect_turn_operation_parameters(sw,clsid,typelib_path,*,process_id,expect
                 process_identity=dict(process_id=process_id,expected_process_create_time=expected_process_create_time))
             if inspection_scope=='tool_contours':
                 report['parameter_interpretation']='Raw selected own-tool contours and dimensions only; no operation options or feature profiles read'
+        if inspection_scope == "cutoff_options":
+            from scripts.sw_cam_turn_cutoff_options import _cutoff_options_abi
+            config["inspection_scope"] = inspection_scope
+            report["getter_abi"] = _cutoff_options_abi(typelib_path)
+            report.update(full_model_geometry_verified=False,all_nc_parameters_verified=False,
+                tool_geometry_verified=False,production_qualified=False,
+                parameter_interpretation="Declared ICWTurnCutOffOp scalar values only; no final diameter, feature extension or machining-side mapping inferred",
+                unavailable_requested_parameters=["final_diameter","feature_start_end_extension_lengths","machining_side"],
+                process_identity=dict(process_id=process_id,expected_process_create_time=expected_process_create_time))
         def identity():
             if expected_process_create_time is not None:
                 process=_process_identity(process_id)
@@ -403,7 +446,8 @@ def inspect_turn_variable_allowance(sw,clsid,typelib_path,*,process_id,expected_
 def inspect_turn_bore_options(sw,clsid,typelib_path,*,process_id,expected_process_create_time,
         expected_document_path,expected_source_sha256,setup_index,operation_index,
         expected_operation_native_id,expected_operation_type,expected_linked_feature_ids,
-        action='read',message_policy='vendor_default',include_tool_contours=False,expected_tool_native_id=None):
+        action='read',message_policy='vendor_default',include_tool_contours=False,expected_tool_native_id=None,
+        include_leftover_control=False):
     """Read bore scalars and optional exact own-tool contours twice under the same guards."""
     return _inspect_turn_operation_parameters(sw,clsid,typelib_path,process_id=process_id,
         expected_process_create_time=expected_process_create_time,expected_document_path=expected_document_path,
@@ -411,7 +455,7 @@ def inspect_turn_bore_options(sw,clsid,typelib_path,*,process_id,expected_proces
         expected_operation_native_id=expected_operation_native_id,expected_operation_type=expected_operation_type,
         expected_linked_feature_ids=expected_linked_feature_ids,action=action,message_policy=message_policy,
         inspection_scope='bore_rough_options',include_tool_contours=include_tool_contours,
-        expected_tool_native_id=expected_tool_native_id)
+        expected_tool_native_id=expected_tool_native_id,include_leftover_control=include_leftover_control)
 
 
 def inspect_turn_tool_contours(sw,clsid,typelib_path,*,process_id,expected_process_create_time,
