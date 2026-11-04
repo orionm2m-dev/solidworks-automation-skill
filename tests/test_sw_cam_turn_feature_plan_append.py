@@ -28,7 +28,9 @@ def planning(copying, monkeypatch):
     monkeypatch.setattr(feature_reader, "_items", core._items)
     monkeypatch.setattr(core, "_inventory", feature_reader._inventory)
     monkeypatch.setattr(core.reverse, "_inventory", feature_reader._inventory)
+    e["feature"].update(GetTurnFeatureType=2, Attribute=50, GetAttributeName="Rough-Finish")
     copied = e["make_feature"](33)
+    copied.update(GetTurnFeatureType=2, Attribute=50, GetAttributeName="Rough-Finish")
     e["new_feature"] = copied
     e["target"]["IGetEnumFeatures"] = e["collection"]([copied])
     e["machine"]["IGetWorkpiece"] = {"GetTurnWorkpieceType": 0}
@@ -236,3 +238,25 @@ def test_second_post_snapshot_must_agree(planning, monkeypatch):
     monkeypatch.setattr(core,"_capture",drift)
     r=e["apply"]()
     assert r["status"]=="uncertain" and not r["readback_verified"] and e["gop_calls"]==[1]
+
+
+@pytest.mark.parametrize("where", ["source", "copied", "both"])
+def test_type_three_is_rejected_even_with_matching_copied_digest(planning, where):
+    e=planning
+    if where in ("source","both"): e["feature"]["GetTurnFeatureType"]=3
+    if where in ("copied","both"): e["new_feature"]["GetTurnFeatureType"]=3
+    with core.CamMessageSession(e["app"], "fixture"):
+        observed=copying_core._profile({},e["new_feature"],300,"fixture",core._member,[0])
+    e["args"]["expected_copied_feature_sha256"]=core._digest(observed)
+    r=e["run"]()
+    assert r["status"]=="error" and not e["marker"].exists() and not e["gop_calls"]
+
+
+def test_internal_profile_enum_two_matches_source_and_copy(planning):
+    e=planning; r=e["run"]()
+    assert r["status"]=="prepared",r
+    for key in ("source_feature","copied_feature"):
+        assert r["before"][key]["profile"]["feature_type_raw"]==2
+        assert r["before"][key]["profile"]["turn_feature_type_raw"]==2
+        assert r["before"][key]["profile"]["attribute_id_raw"]==50
+        assert r["before"][key]["profile"]["attribute_name"]=="Rough-Finish"

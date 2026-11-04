@@ -31,3 +31,9 @@ The synthetic test graph uses actual bounded collection, inventory, source/copie
 The public wrapper checks the runtime before and after core execution. A failed final check preserves the native outcome and observations, but revokes `readback_verified` and `apply_eligible`. Its status is `uncertain` when a mutation was attempted and `error` otherwise. The previous summary is retained as `outcome_before_runtime_check`; it is historical evidence, not a current qualification.
 
 The core marks `receipt_created` and `receipt_path` only after exclusive creation. The wrapper durably rewrites only that invocation's owned receipt with the downgraded outcome, without further CAM calls. A failed rewrite is exposed as `receipt_write_error` and `runtime_drift_receipt_updated=false`; in that case the previous on-disk receipt is not authoritative. Pre-existing or unowned receipt files are never rewritten by this recovery path.
+
+## TURN internal-feature discriminator
+
+The source and copied feature must both have `feature_type_raw=2` and `turn_feature_type_raw=2`. These are separate fields: the generic type identifies TURN, and the latter is the internal-profile value observed in the validated bore workflow. Source and copied attribute ID/name and segment count must agree; raw coordinates may differ after reverse-setup copy. The copied raw profile remains independently digest-pinned.
+
+The previous staged value `3` was a fixture-derived implementation error. The fixtures now use the validated value `2`, including the observed Rough-Finish strategy metadata. Separate negative tests reject `3` on the source, copy or both even when the copied digest matches. The method help declares a LONG result without naming its subtype enum; generic feature-category enum constants are not substituted for that missing declaration.

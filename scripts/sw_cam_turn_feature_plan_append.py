@@ -91,7 +91,13 @@ def _capture(sw, clsid, typelib_path, config, read, check, identity, *, after=Fa
     budget = [0]
     state["source_feature"] = copying._profile(native["doc"], handles[source_id], source["native_id"], typelib_path, read, budget)
     state["copied_feature"] = copying._profile(native["doc"], handles[copied_id], target_id, typelib_path, read, budget)
-    require(state["copied_feature"]["profile"]["turn_feature_type_raw"] == 3, "Only copied TURN bore feature supported")
+    source_profile = state["source_feature"]["profile"]
+    copied_profile = state["copied_feature"]["profile"]
+    require(source_profile["feature_type_raw"] == copied_profile["feature_type_raw"] == 2
+        and source_profile["turn_feature_type_raw"] == copied_profile["turn_feature_type_raw"] == 2,
+        "Only a TURN internal-profile source and its copied bore feature are supported")
+    for field in ("attribute_id_raw", "attribute_name", "segment_count"):
+        require(source_profile[field] == copied_profile[field], "Copied/source feature metadata differs")
     require(_digest(state["copied_feature"]) == config["expected_copied_feature_sha256"], "Pinned copied feature profile or attribute changed")
     if not after:
         require(not any(copied_id in op["linked_feature_ids"] for row in state["operation_setups"] for op in row["operations"]),
