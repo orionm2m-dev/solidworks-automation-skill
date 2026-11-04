@@ -10,7 +10,10 @@ def save(p,d):
 
 def authority(tmp_path):
     binding=dict(process_id=123,expected_document_path=str(tmp_path/'part.sldprt'),expected_process_create_time=12.5)
-    pins={k:save(tmp_path/(k+'.json'),{})for k in('request','result','authority')}
+    binding['expected_source_sha256']='b'*64
+    request=dict(requests=[dict(name='solidworks_cam_inspect_current_saved_compound',arguments=dict(params=dict(binding,read_mode='current_saved',observation='operation_parameters',addin_clsid='{11111111-2222-3333-4444-555555555555}')))])
+    pins={k:save(tmp_path/(k+'.json'),request if k=='request' else {})for k in('request','result','authority')}
+    binding.update(current_read_request_path=pins['request']['path'],current_read_request_sha256=pins['request']['sha256'])
     recipe=dict(schema_version=1,rows=[dict(operation_native_id=13,feature_native_id=102,operation_type=0,expected_tool_native_id=44,existing_tool_native_id=None,fields=[dict(field="side_allowance",expected=1.0,new=0.5)])])
     pins['recipe']=save(tmp_path/'recipe.json',recipe)
     d=dict(scope=g.CONFIG_SCOPE,action='apply',status='review_required',phase='finished',binding=binding,request_pin=dict(kind='canonical_binding',sha256=g._digest(binding)),qualified_read_pins=pins,recipe=recipe,saved=state(),confirm_saved=state(),source_after_sha256='a'*64,saved_file_sha256='a'*64,GTP_attempted=False,GOP_attempted=False,native_dispatch_pending=False,save_call_returned=True,save_hresult=0,messages=dict(active=False,subscribed=True,disconnected=True,event_count=0))

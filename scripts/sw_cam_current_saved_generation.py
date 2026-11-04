@@ -50,10 +50,27 @@ def load_completed_configuration(path,sha,*,process_id,source_path,source_sha256
         require(type(value) is dict and type(value.get('path')) is str and type(value.get('sha256')) is str,'Concrete immutable file pin required')
         _,actual=read_pin(value['path'],value['sha256']);require(actual['sha256']==value['sha256'],'Evidence file changed')
     actual_recipe,_=read_pin(pins['recipe']['path'],pins['recipe']['sha256']);require(delta.equal(actual_recipe,recipe),'Recipe content differs from immutable file')
+    actual_request,_=read_pin(pins['request']['path'],pins['request']['sha256'])
+    addin_clsid=_configuration_addin_clsid(actual_request,pins['request'],binding)
     recovery_pins={}
     if d['action']=='recover_save':recovery_pins=_load_recovery_history(d,binding,pins)
     else:require(not any(k in d for k in ('recovery_mode','recovery_verified','recovery_pins','original_action_receipt_pin')),'Ordinary apply cannot masquerade as recovery')
-    return dict(receipt=deepcopy(d),pin=pin,state=deepcopy(saved),binding=deepcopy(binding),recipe=deepcopy(recipe),pins=deepcopy(pins),recovery_pins=deepcopy(recovery_pins),selected_ids=list(selected_ids),source_sha256=source_sha256)
+    return dict(receipt=deepcopy(d),pin=pin,state=deepcopy(saved),binding=deepcopy(binding),recipe=deepcopy(recipe),pins=deepcopy(pins),recovery_pins=deepcopy(recovery_pins),addin_clsid=addin_clsid,selected_ids=list(selected_ids),source_sha256=source_sha256)
+
+
+def _configuration_addin_clsid(request,pin,binding):
+    """从已固定的真实参数读取请求取得显式 CLSID；不使用版本默认值。"""
+    import re
+    require(type(request) is dict and type(request.get('requests')) is list and all(type(x) is dict for x in request['requests']),'Exact pinned parameter request batch required')
+    rows=[x for x in request['requests'] if x.get('name')=='solidworks_cam_inspect_current_saved_compound']
+    require(len(rows)==1,'One exact pinned current parameter tool call required')
+    args=rows[0].get('arguments');require(type(args) is dict and type(args.get('params')) is dict,'Pinned parameter tool arguments required');v=args['params']
+    for key in ('process_id','expected_process_create_time','expected_document_path','expected_source_sha256'):
+        require(key in binding and type(v.get(key)) is type(binding[key]) and v[key]==binding[key],'Pinned add-in request binding differs: '+key)
+    require(v.get('read_mode')=='current_saved' and v.get('observation')=='operation_parameters','Original current parameter observation required')
+    require(type(binding.get('current_read_request_path')) is str and Path(binding['current_read_request_path']).resolve()==Path(pin['path']).resolve() and binding.get('current_read_request_sha256')==pin['sha256'],'Original request file pin differs from configuration binding')
+    clsid=v.get('addin_clsid');require(type(clsid) is str and re.fullmatch(r'\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}',clsid) is not None,'Explicit pinned CAM add-in GUID required')
+    return clsid
 
 
 def _load_recovery_history(d,binding,pins):

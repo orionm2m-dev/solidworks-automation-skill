@@ -12845,8 +12845,8 @@ def solidworks_cam_generate_configured_local_group(params: SolidWorksCamConfigur
                 _runtime_identity.assert_current()
                 if _cam_configured_local_group_sealed_payload(params.request_path, params.request_sha256, params.process_id) != payload:
                     raise ValueError("Sealed generation request changed during dispatch")
-            core.prepare_request(packet)
-            target = SolidWorksCamTargetInput(expected_document_path=packet["params"]["expected_document_path"])
+            _, loaded, _ = core.prepare_request(packet)
+            target = SolidWorksCamTargetInput(addin_clsid=loaded["addin_clsid"], expected_document_path=packet["params"]["expected_document_path"])
             sw, registration = _cam_target(target)
             result = core.dispatch_current_saved(sw, registration["clsid"],str(Path(registration["addin_path"]).parent / "camworks.tlb"),deepcopy(packet),runtime_check=runtime_check)
             try: runtime_check()
