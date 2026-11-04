@@ -33,6 +33,11 @@ def planning(copying, monkeypatch):
     copied.update(GetTurnFeatureType=2, Attribute=50, GetAttributeName="Rough-Finish")
     e["new_feature"] = copied
     e["target"]["IGetEnumFeatures"] = e["collection"]([copied])
+    # Match saved native observations: distinct automation identities, same document IDs.
+    e["linked_source"] = dict(e["feature_setup"], QueryInterface=lambda iid: "linked_source_wrapper")
+    e["linked_target"] = dict(e["target"], QueryInterface=lambda iid: "linked_target_wrapper")
+    e["setup"]["GetSetup"] = lambda: e["linked_source"]
+    e["target_op"]["GetSetup"] = lambda: e["linked_target"]
     e["machine"]["IGetWorkpiece"] = {"GetTurnWorkpieceType": 0}
     holder = dict(GetHolderType=2, GetHolderId=71, GetToolOrientationForOperation=lambda op: 0,
         HolderShape=1, GetHolderThickness=5., ShankLength=80., LeadAngle=95., BackClearAngle=5.,
@@ -260,3 +265,72 @@ def test_internal_profile_enum_two_matches_source_and_copy(planning):
         assert r["before"][key]["profile"]["turn_feature_type_raw"]==2
         assert r["before"][key]["profile"]["attribute_id_raw"]==50
         assert r["before"][key]["profile"]["attribute_name"]=="Rough-Finish"
+
+
+
+def test_false_canonical_identity_is_stable_telemetry_with_verified_logical_links(planning):
+    e=planning; r=e["apply"]()
+    assert r["status"]=="review_required" and r["readback_verified"],r
+    for phase in ("before","after"):
+        rows=r[phase]["operation_setups"]
+        assert [row["feature_setup_canonical_identity_equal"] for row in rows]==[False,False]
+        assert [row["logical_setup_link"]["feature_setup_native_id"] for row in rows]==[100,300]
+        assert [row["logical_setup_link"]["feature_native_ids"] for row in rows]==[[11],[33]]
+    assert e["gop_calls"]==[1]
+
+
+@pytest.mark.parametrize("fault",["wrong_id","missing_feature","wrong_feature","source_membership"])
+def test_logical_link_or_membership_contradiction_blocks_before_claim(planning,fault):
+    e=planning
+    if fault=="wrong_id":e["linked_target"]["native_id"]=999
+    elif fault=="missing_feature":e["linked_target"]["IGetEnumFeatures"]=e["collection"]([])
+    elif fault=="wrong_feature":e["linked_target"]["IGetEnumFeatures"]=e["collection"]([e["make_feature"](34)])
+    else:e["linked_source"]["IGetEnumFeatures"]=e["collection"]([e["make_feature"](12)])
+    r=e["run"]()
+    assert r["status"]=="error" and not e["marker"].exists() and not e["gop_calls"]
+
+
+def test_canonical_telemetry_flip_between_captures_still_blocks(planning,monkeypatch):
+    e=planning; capture=core._capture; count=[0]
+    def changed(*args,**kwargs):
+        result=capture(*args,**kwargs);count[0]+=1
+        if count[0]==1:e["linked_target"]["QueryInterface"]=e["target"]["QueryInterface"]
+        return result
+    monkeypatch.setattr(core,"_capture",changed)
+    r=e["run"]()
+    assert r["status"]=="error" and not e["marker"].exists() and not e["gop_calls"]
+
+
+def test_existing_actual_tool_families_follow_bounded_reader_branches(planning):
+    e=planning
+    outer_holder=dict(e["holder"],GetHolderType=1,ShankWidth=12.)
+    outer_insert=dict(e["own_insert"],IGetTurnToolHolder=lambda:outer_holder)
+    groove_holder=dict(e["holder"])
+    groove=dict(ToolType=1,InsertType=2,Thickness=3.,Width=2.,length=6.,Radius1=.2,Radius2=.2,
+        IGetTurnToolHolder=lambda:groove_holder)
+    cutoff=dict(groove,IGetTurnToolHolder=lambda:outer_holder)
+    branches=[dict(e["own_tool"],native_id=136,turn=outer_insert),
+        dict(e["own_tool"],native_id=138,turn=dict(ToolType=3)),
+        dict(e["own_tool"],native_id=139,turn=dict(ToolType=2)),
+        dict(e["own_tool"],native_id=140,turn=groove),
+        dict(e["own_tool"],native_id=141,turn=cutoff)]
+    for op,tool in zip(e["old"],branches):op["IGetTool"]=(lambda tool=tool:tool)
+    r=e["apply"]()
+    assert r["status"]=="review_required" and r["readback_verified"],r
+    observed=[op["observed_own_tool"] for op in r["before"]["operation_setups"][0]["operations"]]
+    assert observed[0]["holder"]["holder_type_raw"]==1
+    assert [observed[i]["parameters_status"] for i in (1,2)]==["unavailable","unavailable"]
+    assert [observed[i]["insert_type_raw"] for i in (3,4)]==[2,2]
+    assert [observed[i]["holder"]["holder_type_raw"] for i in (3,4)]==[2,1]
+
+
+def test_installed_comtypes_pointer_equality_is_not_python_wrapper_identity():
+    import ctypes
+    from comtypes._post_coinit.unknwn import _compointer_base
+    class InertPointer(_compointer_base):
+        def Release(self): return 0
+    value=ctypes.c_int(7);other=ctypes.c_int(7)
+    a=InertPointer(ctypes.addressof(value));b=InertPointer(ctypes.addressof(value))
+    c=InertPointer(ctypes.addressof(other))
+    assert a is not b and a==b and a!=c
+    assert ctypes.pointer(value)!=ctypes.pointer(value)

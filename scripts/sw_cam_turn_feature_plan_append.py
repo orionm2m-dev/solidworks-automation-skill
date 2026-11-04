@@ -69,8 +69,7 @@ def _capture(sw, clsid, typelib_path, config, read, check, identity, *, after=Fa
     target, target_op = target_rows[0], target_ops[0]
     copied_id = config["expected_copied_feature_native_id"]
     require(target["feature_native_ids"] == [copied_id], "Target must contain only the exact copied feature")
-    require(target_op["feature_setup_native_id"] == target_id and target_op["feature_setup_canonical_identity_equal"] is True,
-        "Target operation setup link changed")
+    require(target_op["feature_setup_native_id"] == target_id, "Target operation setup link changed")
     if not after: require(target_op["operations"] == [], "Append requires an empty operation setup")
     source = next(row for row in state["feature_setups"] if row["native_id"] == config["expected_feature_setup_native_id"])
     require(source["frame"]["is_reverse_direction"] is False and target["frame"]["is_reverse_direction"] is True,
@@ -108,6 +107,17 @@ def _capture(sw, clsid, typelib_path, config, read, check, identity, *, after=Fa
     for raw_setup, row in zip(setups, state["operation_setups"]):
         setup = _typed(raw_setup, "ICWBaseOpSetup", typelib_path)
         require(_object_id(native["doc"], setup, read) == row["native_id"], "Own-tool setup identity changed")
+        # CAM document identity is distinct from COM automation-object identity.
+        # Keep canonical equality as observed telemetry; never require it to be true.
+        linked = _typed(read(setup, "GetSetup"), "ICWBaseSetup", typelib_path)
+        linked_id = _object_id(native["doc"], linked, read)
+        require(linked_id == row["feature_setup_native_id"], "Repeated operation-to-feature setup link changed")
+        linked_features = _items(read(linked, "IGetEnumFeatures"), typelib_path, read, limit=64)
+        linked_ids = [_object_id(native["doc"], feature, read) for feature in linked_features]
+        feature_row = next(item for item in state["feature_setups"] if item["native_id"] == linked_id)
+        require(linked_ids == feature_row["feature_native_ids"], "Returned setup membership differs from independent inventory")
+        row["logical_setup_link"] = dict(feature_setup_native_id=linked_id, feature_native_ids=linked_ids,
+            basis="document_native_id_and_repeated_feature_membership")
         operations = _items(read(setup, "IGetEnumOperations"), typelib_path, read, limit=512)
         require(len(operations) == len(row["operations"]), "Own-tool operation count changed")
         for raw, op in zip(operations, row["operations"]):
