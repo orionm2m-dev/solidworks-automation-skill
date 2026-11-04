@@ -67,7 +67,7 @@ def _abi(path):
     return dict(declared_getters_verified=5,native_calls=0)
 
 
-def _capture(app,tlb,read,typed,state,v,boundary):
+def _capture(app,tlb,read,typed,state,v,boundary,*,verify_operation_pins=True):
     """使用现有 header、collection、operation 和三台阶读取函数采集原始状态。"""
     state.update(capture_complete=False,features=[],feature_setups=[],operation_counts=[])
     boundary()
@@ -107,7 +107,7 @@ def _capture(app,tlb,read,typed,state,v,boundary):
     if selected is None:raise ValueError('Exact operation setup missing')
     read_route_operations(state,native,read,typed)
     operations=state['operations']
-    if [r['native_id'] for r in operations]!=v['expected_operation_native_ids'] or sum(r['toolpath_generated'] for r in operations)!=v['expected_generated_operation_count'] or sum(sum(r['toolpath_record_counts']) for r in operations)!=v['expected_total_record_count']:
+    if verify_operation_pins and ([r['native_id'] for r in operations]!=v['expected_operation_native_ids'] or sum(r['toolpath_generated'] for r in operations)!=v['expected_generated_operation_count'] or sum(sum(r['toolpath_record_counts']) for r in operations)!=v['expected_total_record_count']):
         raise ValueError('Expected operation order or path counts differ')
     boundary()
     raw=read(doc,'GetCWObjectFromID',1,v['expected_feature_native_id'])
@@ -129,6 +129,7 @@ def _capture(app,tlb,read,typed,state,v,boundary):
     repeated,_=read_header(target,doc,read,typed,v['expected_feature_setup_native_id'])
     if after_count!=count or repeated!=header:raise ValueError('Compound changed during capture')
     boundary();state['capture_complete']=True
+    return dict(doc=doc,machine=machine,selected_feature=base)
 
 
 def inspect_current_saved_compound(sw,clsid,typelib_path,*,process_id,expected_process_create_time,

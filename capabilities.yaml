@@ -187,6 +187,33 @@
   ],
   "capabilities": [
     {
+      "id": "cam_current_saved_mill_append",
+      "label": "当前保存铣削单特征操作计划追加",
+      "level": "pilot",
+      "backends": [
+        "solidworks-com-pywin32",
+        "solidworks-com-comtypes"
+      ],
+      "verified_versions": [],
+      "dependencies": [
+        "SolidWorks",
+        "SOLIDWORKS CAM",
+        "pywin32",
+        "comtypes"
+      ],
+      "limitations": [
+        "新增显式 current_saved prepare/apply 模式，固定成功原生 read 的真实 request/result、当前 PID/生命周期/路径/SHA，并再次比较全部已采集状态。",
+        "prepare 只返回实际策略及粗/精默认名称/ID；apply 必须显式匹配经复核的实际策略，采用独占一次 marker，仅对一个既有特征调用 RETAIN GOP。此模式不 Save/GTP/改策略/改工具。",
+        "当前模式仅保护已采集的旧操作/连接/自有工具标量/路径计数和目标几何原始数据；不替代完整 BRep、隐藏夹持几何或 CL 坐标比较。历史 configured-plan 全工具/实体守卫不放宽。",
+        "151 项离线 focused+legacy regression PASS；当前 append 模式尚未原生验证。必须先 native prepare 并复核实际catalogue，测试通过不证明默认操作适合加工。",
+        "复用 solidworks_cam_append_mill_operations；不增加工具入口。参见 references/cam-current-saved-append.md。"
+      ],
+      "allowed_modes": [
+        "interactive",
+        "reviewed"
+      ]
+    },
+    {
       "id": "cam_current_saved_compound_read",
       "label": "当前保存铣削多台阶特征读取",
       "level": "pilot",

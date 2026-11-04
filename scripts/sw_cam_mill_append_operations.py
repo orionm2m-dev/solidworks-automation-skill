@@ -287,3 +287,9 @@ def append_mill_operations(sw, clsid, typelib_path, *, process_id, expected_docu
                 receipt_write_error=_error(exc), readback_verified=False,
                 operation_delta_verified=False, save_readback_verified=False, model_saved=False)
     return report
+
+
+def append_current_saved_operations(sw, clsid, typelib_path, **values):
+    """复用既有追加入口的独立 current_saved 模式；历史分支保持原契约。"""
+    from scripts.sw_cam_mill_current_append import run_current_saved_append
+    return run_current_saved_append(sw, clsid, typelib_path, **values)

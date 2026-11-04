@@ -47,7 +47,7 @@ def _inventory(state):
         raise ValueError("Unowned operation")
     return rows, setups
 
-def verify_added_plan(before, after, feature_id, operation_setup_id):
+def verify_added_plan(before, after, feature_id, operation_setup_id, *, current_saved=False):
     """Accept new definitions for one previously unplanned feature only.
 
     Existing operations can shift indices as new definitions are inserted, but
@@ -97,6 +97,16 @@ def verify_added_plan(before, after, feature_id, operation_setup_id):
     for key in OPERATION_KEYS:
         protected[key] = deepcopy(after[key])
     protected["document"]["needs_save"] = after["document"]["needs_save"]
+    if current_saved:
+        # 当前保存模式仅保护实际采集字段；不伪造空 BRep 或声称实体几何已校验。
+        if "sw_reference" in before or "sw_reference" in after:
+            raise ValueError("Current-saved captured-only scope must be explicit")
+        if before["selected_operation_setup"]["native_id"] != operation_setup_id:
+            raise ValueError("Exact captured target operation setup required")
+        protected["selected_operation_setup"]["operation_count"] = after["selected_operation_setup"]["operation_count"]
+        if protected != after:
+            raise ValueError("Unrequested captured current-saved context change")
+        return deepcopy(added)
     old_bodies = before["sw_reference"]["solids"]
     new_bodies = after["sw_reference"]["solids"]
     if not _same_bodies(old_bodies, new_bodies):

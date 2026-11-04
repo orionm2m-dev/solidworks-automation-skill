@@ -8353,14 +8353,50 @@ class SolidWorksCamAppendMillOperationsInput(SolidWorksCamSavedMillPlanToolsInpu
         return self
 
 
+class SolidWorksCamCurrentSavedAppendInput(SolidWorksCamCurrentSavedCompoundInput):
+    """既有 append endpoint 的显式当前保存 prepare/apply 模式。"""
+    planning_mode: Literal["current_saved"] = "current_saved"
+    action: Literal["prepare","apply"] = "prepare"
+    observation: Literal["three_step_profile"] = "three_step_profile"
+    current_read_request_path: str = Field(min_length=1,strict=True)
+    current_read_request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    current_read_receipt_path: str = Field(min_length=1,strict=True)
+    current_read_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    prepare_receipt_path: Optional[str] = Field(default=None,min_length=1,strict=True)
+    prepare_receipt_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+    expected_strategy_id: Optional[int] = Field(default=None,ge=-2147483648,le=2147483647,strict=True)
+    expected_strategy_name: Optional[str] = Field(default=None,min_length=1,max_length=4096,strict=True)
+    save_after_verified: bool = Field(default=False,strict=True)
+    acknowledge_disposable_copy: bool = Field(strict=True)
+    attempt_registry_path: str = Field(min_length=1,strict=True)
+    receipt_path: str = Field(min_length=1,strict=True)
+
+    @model_validator(mode="after")
+    def current_saved_append_contract(self):
+        from scripts.sw_cam_mill_current_append import validate
+        validate(self.model_dump(exclude={"addin_clsid","expected_document_title","response_format"}))
+        return self
+
+
 @mcp.tool(name="solidworks_cam_append_mill_operations",
     title="Append One Compound MILL Feature Plan and Optionally Save",
     annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
-def solidworks_cam_append_mill_operations(params: SolidWorksCamAppendMillOperationsInput) -> str:
+def solidworks_cam_append_mill_operations(params: SolidWorksCamCurrentSavedAppendInput | SolidWorksCamAppendMillOperationsInput) -> str:
     """One RETAIN plan for a pinned three-step feature; preserve prior tools and optional checked save."""
     def op():
         if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
             raise ValueError("Additive MILL planning requires the explicitly connected process")
+        if isinstance(params,SolidWorksCamCurrentSavedAppendInput):
+            _runtime_identity.assert_current()
+            from scripts.sw_cam_mill_append_operations import append_current_saved_operations
+            from scripts.sw_cam_mill_current_append import runtime_drift,runtime_complete
+            sw,registration=_cam_target(params)
+            values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format"})
+            result=append_current_saved_operations(sw,registration["clsid"],
+                typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"),runtime_check=_runtime_identity.assert_current,**values)
+            try:_runtime_identity.assert_current()
+            except Exception as error:return runtime_drift(result,error)
+            return runtime_complete(result)
         from scripts.sw_cam_mill_append_operations import append_mill_operations
         sw, registration = _cam_target(params)
         values = params.model_dump(exclude={
