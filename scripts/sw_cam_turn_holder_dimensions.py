@@ -274,7 +274,7 @@ def marker_path(identity, tool_id):
 def configure_turn_holder_dimensions(sw,clsid,typelib_path,*,process_id,expected_process_create_time,expected_document_path,
         expected_source_sha256,setup_index,operation_index,expected_operation_type,expected_operation_native_id,expected_tool_native_id,
         expected_holder_id,protected_part_pins,values_native,action="prepare",expected_state_sha256=None,
-        allowed_affected_operations=None,receipt_path=None,qualification_only,message_policy):
+        allowed_affected_operations=None,receipt_path=None,qualification_only,message_policy,completed_length_probe=None):
     config=dict(process_id=process_id,expected_process_create_time=expected_process_create_time,expected_document_path=expected_document_path,
         expected_source_sha256=expected_source_sha256,setup_index=setup_index,operation_index=operation_index,
         expected_operation_type=expected_operation_type,expected_operation_native_id=expected_operation_native_id,
@@ -286,17 +286,26 @@ def configure_turn_holder_dimensions(sw,clsid,typelib_path,*,process_id,expected
         protected_CL_bytes_compared=False,all_nc_parameters_verified=False,full_model_geometry_verified=False,persistence_verified=False,production_qualified=False,
         setters=[],snapshot_diagnostics=[],captures=[],receipt_created=False,receipt_path=None,
         logical_binding_verified=False,holder_file_fields_preserved=False)
-    session=None;receipt=None;created=False
+    from scripts import sw_cam_turn_holder_continuation as continuation
+    session=None;receipt=None;created=False;prior_evidence=None
     def persist():
         if created:_write_receipt(receipt,report)
     try:
         values=validate(config,values_native,protected_part_pins)
+        completed_length_probe=continuation.validate_completed_length_probe(completed_length_probe,values)
         report["getter_setter_abi"]=_logical_abi(typelib_path)
         require(qualification_only is True and message_policy == "vendor_default", "Explicit qualification/default-message policy required")
         require(action in ("prepare","apply"), "Only prepare/apply supported")
         require(action == "apply" or all(v is None for v in (expected_state_sha256,allowed_affected_operations,receipt_path)), "Prepare rejects apply inputs")
         identity=files(config,protected_part_pins);marker=marker_path(identity,expected_tool_native_id)
-        require(not marker.exists() and not marker.is_symlink(), "Earlier holder attempt exists; no replay")
+        legacy_marker=marker
+        lead_marker=continuation.continuation_marker_path(legacy_marker,identity,expected_tool_native_id)
+        continuation.require_known(not lead_marker.exists() and not lead_marker.is_symlink(),"HOLDER_LEAD_ALREADY_CLAIMED")
+        if completed_length_probe is None:
+            continuation.require_known(not marker.exists() and not marker.is_symlink(),"HOLDER_PRIOR_ATTEMPT_EXISTS")
+        else:
+            prior_evidence=continuation.load_completed_length_probe(completed_length_probe,legacy_marker,identity,config)
+            report["completed_length_probe"]=prior_evidence;marker=lead_marker
         if action == "apply":
             require(guard.sha(expected_state_sha256), "Exact prepared state required")
             require(type(allowed_affected_operations) is list and 1 <= len(allowed_affected_operations) <= 512, "Exact shared-operation references required")
@@ -308,6 +317,7 @@ def configure_turn_holder_dimensions(sw,clsid,typelib_path,*,process_id,expected
                 and guard.key(receipt) != guard.key(marker), "Fresh nonaliased receipt required")
             _write_receipt(receipt,report,create=True);created=True;report.update(receipt_created=True,receipt_path=str(receipt))
         report["request"]=dict(config,protected_part_pins=deepcopy(protected_part_pins),values_native=values,action=action)
+        if completed_length_probe is not None:report["request"]["completed_length_probe"]=deepcopy(completed_length_probe)
         guard.isolated(sw,config,lambda:None)
         app=_bootstrap(sw,clsid,typelib_path,expected_document_path);session=CamMessageSession(app,typelib_path)
         def check():
@@ -316,12 +326,15 @@ def configure_turn_holder_dimensions(sw,clsid,typelib_path,*,process_id,expected
         def boundary(reference=None):
             check();guard.isolated(sw,config,check)
             require(files(config,protected_part_pins) == identity,"Copy/protected file identity changed")
+            if prior_evidence is not None:continuation.verify_evidence_pins(completed_length_probe)
             if reference is not None:require(document_snapshot(sw) == reference,"Document changed before holder write")
         def observe(label):
             report["phase"]=label;entry=dict(label=label,capture_complete=False);report["captures"].append(entry)
             try:
                 state,native=_logical_snapshot(sw,clsid,typelib_path,config,report,check)
                 entry.update(state=deepcopy(state),capture_complete=True)
+                if prior_evidence is not None and not label.startswith("after_"):
+                    continuation.verify_current_completed_length(state,prior_evidence,expected_tool_native_id)
                 return state,native
             finally:persist()
         with session:
@@ -334,7 +347,9 @@ def configure_turn_holder_dimensions(sw,clsid,typelib_path,*,process_id,expected
                 and any((x["setup_index"],x["operation_index"]) == (r["setup_index"],r["operation_index"]) for r in affected)]
             old=before["selected_tool"]["holder"]["dimensions_native"]
             changes={k:v for k,v in values.items() if old[k] != v}
-            digest=single._digest(dict(config=config,protected_part_pins=protected_part_pins,values_native=values,state=before))
+            digest_data=dict(config=config,protected_part_pins=protected_part_pins,values_native=values,state=before)
+            if prior_evidence is not None:digest_data["completed_length_probe"]=prior_evidence
+            digest=single._digest(digest_data)
             report.update(state_sha256=digest,affected_operations=affected,affected_generated_operations=generated,
                 changed_fields=list(changes),no_changes_required=not changes)
             current=before;applied={}
@@ -343,9 +358,15 @@ def configure_turn_holder_dimensions(sw,clsid,typelib_path,*,process_id,expected
                 require(sorted(refs,key=single._ref_key) == sorted(affected,key=single._ref_key),"All and only sharing operations must be explicitly allowed")
                 require(not generated and bool(changes),"Generated sharing or no-op recipe forbids holder writes")
                 report["marker_path"]=str(marker)
-                _write_receipt(marker,dict(scope=SCOPE,status="claimed_no_replay",copy_file_identity=identity,
+                marker_data=dict(scope=SCOPE,status="claimed_no_replay",copy_file_identity=identity,
                     tool_native_id=expected_tool_native_id,source_sha256=expected_source_sha256,state_sha256=digest,
-                    receipt_path=str(receipt)),create=True)
+                    receipt_path=str(receipt))
+                if prior_evidence is not None:
+                    marker_data.update(scope=continuation.SCOPE,field="LeadAngle",completed_length_probe=deepcopy(prior_evidence))
+                try:
+                    _write_receipt(marker,marker_data,create=True)
+                except FileExistsError:
+                    raise continuation.ContinuationGuardError("HOLDER_LEAD_ALREADY_CLAIMED" if prior_evidence is not None else "HOLDER_PRIOR_ATTEMPT_EXISTS") from None
                 for field,value in changes.items():
                     boundary(current["document"])
                     item=dict(field=field,old_value_native=old[field],value_native=value,attempted=False,returned=False,readback_verified=False)
@@ -377,6 +398,7 @@ def configure_turn_holder_dimensions(sw,clsid,typelib_path,*,process_id,expected
             and not any(m.get(k) for k in guard.EVENT_ERRORS),"Event cleanup uncertain")
         require(document_snapshot(sw) == current["document"] and files(config,protected_part_pins) == identity,"Post-cleanup document/source changed")
         guard.isolated(sw,config,lambda:None)
+        if prior_evidence is not None:continuation.verify_evidence_pins(completed_length_probe)
         report.update(status="prepared" if action == "prepare" else "review_required",phase="finished",readback_verified=action == "apply",
             apply_eligible=action == "prepare" and not generated and bool(changes),final_state=current,final_state_sha256=single._digest(current),
             logical_binding_verified=True,holder_file_fields_preserved=action=="apply",
@@ -384,6 +406,7 @@ def configure_turn_holder_dimensions(sw,clsid,typelib_path,*,process_id,expected
     except Exception as exc:
         report.update(status="uncertain" if report["mutation_attempted"] else "error",failed_phase=report["phase"],phase="finished",
             readback_verified=False,apply_eligible=False,issue=_error(exc))
+        report.update(continuation.known_reason(exc))
     finally:
         if session is not None:report["messages"]=session.summary()
         try:persist()

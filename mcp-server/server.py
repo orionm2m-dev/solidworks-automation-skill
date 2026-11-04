@@ -13647,12 +13647,19 @@ class SolidWorksCamTurnHolderDimensionsInput(SolidWorksCamOperationProfileInput)
     expected_holder_id: int = Field(ge=0, lt=2147483648, strict=True)
     protected_part_pins: list[dict[str, Any]] = Field(min_length=1, max_length=16)
     values_native: dict[str, float] = Field(min_length=1, max_length=3)
+    completed_length_probe: Optional[dict[str, str]] = None
     action: Literal["prepare", "apply"] = "prepare"
     expected_state_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
     allowed_affected_operations: Optional[list[SolidWorksCamToolReferenceInput]] = Field(default=None, min_length=1, max_length=512)
     receipt_path: Optional[str] = Field(default=None, min_length=1, strict=True)
     qualification_only: Literal[True]
     message_policy: Literal["vendor_default"]
+
+    @field_validator("completed_length_probe", mode="before")
+    @classmethod
+    def holder_completed_probe_pins(cls, value):
+        from scripts.sw_cam_turn_holder_continuation import validate_completed_length_probe
+        return validate_completed_length_probe(value,{"LeadAngle":0.})
 
     @field_validator("qualification_only", mode="before")
     @classmethod
@@ -13678,6 +13685,8 @@ class SolidWorksCamTurnHolderDimensionsInput(SolidWorksCamOperationProfileInput)
         fields = {"process_id", "expected_process_create_time", "expected_document_path", "expected_source_sha256",
             "setup_index", "operation_index", "expected_operation_type", "expected_operation_native_id", "expected_tool_native_id", "expected_holder_id"}
         validate(self.model_dump(include=fields), self.values_native, self.protected_part_pins)
+        from scripts.sw_cam_turn_holder_continuation import validate_completed_length_probe
+        validate_completed_length_probe(self.completed_length_probe,self.values_native)
         guards = (self.expected_state_sha256, self.allowed_affected_operations, self.receipt_path)
         if self.action == "prepare":
             if any(x is not None for x in guards):
