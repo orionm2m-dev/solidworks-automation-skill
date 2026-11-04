@@ -1,0 +1,1189 @@
+{
+  "row": {
+    "rough": {
+      "scope": "ROUGH_ENTRY_DEPTH_ALLOWANCE_RAW_READER_V1",
+      "read_only": true,
+      "entry": {
+        "GetEntryExitType": {
+          "raw": 1,
+          "storage_type": "LONG",
+          "enum_binding_verified": false,
+          "confirmed_enum_name": null,
+          "reason": "Method declares LONG; no named enum binding is documented."
+        },
+        "GetEntryHoleAttr": {
+          "raw": "Drill",
+          "storage_type": "BSTR"
+        },
+        "GetRampAngle": {
+          "raw": 90.0,
+          "quantity_from_member_name": "angle",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetSpiralRadius": {
+          "raw": 0.2,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetSpiralPitch": {
+          "raw": 0.1,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetHoleCentreEntry": {
+          "raw": false,
+          "storage_type": "VARIANT_BOOL",
+          "interpretation": "Raw flag only; no additional mode semantics inferred."
+        },
+        "GetEntryLengthAngle": {
+          "raw": false,
+          "storage_type": "VARIANT_BOOL",
+          "interpretation": "Raw flag only; no additional mode semantics inferred."
+        },
+        "GetEntryLength": {
+          "raw": 0.0,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetEntryAngle": {
+          "raw": 0.0,
+          "quantity_from_member_name": "angle",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetAutoCorrectEntryLengthAngle": {
+          "raw": false,
+          "storage_type": "VARIANT_BOOL",
+          "interpretation": "Raw flag only; no additional mode semantics inferred."
+        },
+        "GetEntryStartPtX": {
+          "raw": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "storage_type": "VARIANT",
+          "observed_variant_kind": "tuple_sequence",
+          "observed_python_shape": {
+            "python_type": "tuple",
+            "length": 3,
+            "items": [
+              {
+                "python_type": "float"
+              },
+              {
+                "python_type": "float"
+              },
+              {
+                "python_type": "float"
+              }
+            ]
+          },
+          "original_variant_tag_verified": false,
+          "array_element_semantics_verified": false,
+          "multiple_out_interpretation": false,
+          "coordinate_frame_verified": false,
+          "coordinate_interpreted": false,
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "reason": "One VARIANT retval is declared. comtypes may unpack its SAFEARRAY as tuples; exact native tag and element semantics are not observed. No tuple arity, frame/unit, expression or coordinate interpretation."
+        },
+        "GetEntryStartPtY": {
+          "raw": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "storage_type": "VARIANT",
+          "observed_variant_kind": "tuple_sequence",
+          "observed_python_shape": {
+            "python_type": "tuple",
+            "length": 3,
+            "items": [
+              {
+                "python_type": "float"
+              },
+              {
+                "python_type": "float"
+              },
+              {
+                "python_type": "float"
+              }
+            ]
+          },
+          "original_variant_tag_verified": false,
+          "array_element_semantics_verified": false,
+          "multiple_out_interpretation": false,
+          "coordinate_frame_verified": false,
+          "coordinate_interpreted": false,
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "reason": "One VARIANT retval is declared. comtypes may unpack its SAFEARRAY as tuples; exact native tag and element semantics are not observed. No tuple arity, frame/unit, expression or coordinate interpretation."
+        }
+      },
+      "depth": {
+        "DepthMethod": {
+          "raw": 0,
+          "storage_type": "LONG",
+          "enum_binding_verified": false,
+          "confirmed_enum_name": null,
+          "reason": "Method declares LONG; no named enum binding is documented."
+        },
+        "DepthAllow": {
+          "raw": 1.0,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "FirstDepthAmt": {
+          "raw": 10.0,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "SbsqDepthAmt": {
+          "raw": 10.0,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "FinCutAmt": {
+          "raw": 0.0,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetStartDepth": {
+          "raw": [
+            false,
+            10.0
+          ],
+          "is_percent": false,
+          "value_native": 10.0,
+          "storage_types": [
+            "VARIANT_BOOL",
+            "DOUBLE"
+          ],
+          "value_mode": "percent_flag_clear",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "percent_reference_basis_verified": false,
+          "percent_scale_conversion_performed": false,
+          "reason": "Keep the explicit native percent flag and value together; reference basis and unit conversion are not established."
+        },
+        "GetSubsequentDepthAmount": {
+          "raw": [
+            false,
+            10.0
+          ],
+          "is_percent": false,
+          "value_native": 10.0,
+          "storage_types": [
+            "VARIANT_BOOL",
+            "DOUBLE"
+          ],
+          "value_mode": "percent_flag_clear",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "percent_reference_basis_verified": false,
+          "percent_scale_conversion_performed": false,
+          "reason": "Keep the explicit native percent flag and value together; reference basis and unit conversion are not established."
+        }
+      },
+      "boundary": {
+        "PocketMethod": {
+          "raw": 1,
+          "storage_type": "LONG",
+          "enum_binding_verified": false,
+          "confirmed_enum_name": null,
+          "reason": "Method declares LONG; no named enum binding is documented."
+        },
+        "SideAllow": {
+          "raw": 1.0,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetStepOver": {
+          "raw": [
+            true,
+            50.0
+          ],
+          "is_percent": true,
+          "value_native": 50.0,
+          "storage_types": [
+            "VARIANT_BOOL",
+            "DOUBLE"
+          ],
+          "value_mode": "percent_flag_set",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "percent_reference_basis_verified": false,
+          "percent_scale_conversion_performed": false,
+          "reason": "Keep the explicit native percent flag and value together; reference basis and unit conversion are not established."
+        },
+        "GetZAllowance": {
+          "raw": 1.0,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetContainType": {
+          "raw": 0,
+          "storage_type": "LONG",
+          "enum_binding_verified": false,
+          "confirmed_enum_name": null,
+          "reason": "Method declares LONG; no named enum binding is documented."
+        },
+        "GetContainAllowance": {
+          "raw": 0.00254,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetXYClearance": {
+          "raw": 0.00254,
+          "quantity_from_member_name": "length",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        },
+        "GetToolDiameterPercent": {
+          "raw": 0.0,
+          "quantity_from_member_name": "percent_scalar",
+          "documented_unit": null,
+          "unit_binding_verified": false,
+          "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+          "conversion_performed": false
+        }
+      },
+      "nc_flags": {
+        "GetClrPlaneUseSetupStatus": {
+          "raw": true,
+          "storage_type": "VARIANT_BOOL",
+          "interpretation": "Raw flag only; no additional mode semantics inferred."
+        },
+        "GetRpdPlaneUseSetupStatus": {
+          "raw": true,
+          "storage_type": "VARIANT_BOOL",
+          "interpretation": "Raw flag only; no additional mode semantics inferred."
+        },
+        "GetRetractType": {
+          "raw": 0,
+          "storage_type": "LONG",
+          "enum_binding_verified": false,
+          "confirmed_enum_name": null,
+          "reason": "Method declares LONG; no named enum binding is documented."
+        }
+      },
+      "native_units_verified": false,
+      "coordinate_frame_verified": false,
+      "enum_bindings_verified": false,
+      "engineering_parameters_qualified": false,
+      "caller_target_binding_required": true,
+      "caller_guarded_readback_required": true,
+      "document_lookup_performed": false,
+      "mutation_attempted": false,
+      "rapid_clearance_values_read": false,
+      "production_qualified": false,
+      "may_continue": false,
+      "gaps": [
+        {
+          "code": "NC_PLANE_POINTER_BINDING_NOT_QUALIFIED",
+          "interface": "ICWNCParam",
+          "members": [
+            "GetRpdPlnPrms",
+            "GetClrPlanePrms"
+          ],
+          "method_contract": "HRESULT(DOUBLE*, LONG*); SDK flags [none], TLB flags [].",
+          "invocation_attempted": false,
+          "values_observed": false,
+          "reason": "Explicit pointer ownership, initialization, output direction and HRESULT behavior are not established by an existing qualified reader. No guessed tuple or native invocation."
+        },
+        {
+          "code": "ENUM_BINDINGS_UNDOCUMENTED",
+          "members": [
+            "GetEntryExitType",
+            "DepthMethod",
+            "PocketMethod",
+            "GetContainType",
+            "GetRetractType"
+          ],
+          "reason": "Strict LONG values retained. Similar enum names do not prove method-to-enum correspondence."
+        },
+        {
+          "code": "NUMERIC_UNITS_AND_COORDINATE_FRAME_UNDOCUMENTED",
+          "reason": "Raw scalar/VARIANT values and percentage flags retained. No degree/radian, millimetre/inch, percent-basis or coordinate-frame conversion."
+        }
+      ],
+      "parameter_reads_complete": true,
+      "native_getter_calls": 31,
+      "interface_queries": 3
+    },
+    "rough_diagnostic": {
+      "scope": "ROUGH_ENTRY_DEPTH_ALLOWANCE_RAW_READER_V1",
+      "read_complete": true,
+      "read_only": true,
+      "stage": "complete",
+      "native_getter_calls": 31,
+      "interface_queries": 3,
+      "observations": [
+        {
+          "member": "GetEntryExitType",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "int",
+          "raw_observation": {
+            "recorded": true,
+            "raw": 1,
+            "python_shape": {
+              "python_type": "int"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": 1,
+            "storage_type": "LONG",
+            "enum_binding_verified": false,
+            "confirmed_enum_name": null,
+            "reason": "Method declares LONG; no named enum binding is documented."
+          }
+        },
+        {
+          "member": "GetEntryHoleAttr",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "str",
+          "raw_observation": {
+            "recorded": true,
+            "raw": "Drill",
+            "python_shape": {
+              "python_type": "str"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": "Drill",
+            "storage_type": "BSTR"
+          }
+        },
+        {
+          "member": "GetRampAngle",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "float",
+          "raw_observation": {
+            "recorded": true,
+            "raw": 90.0,
+            "python_shape": {
+              "python_type": "float"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": 90.0,
+            "quantity_from_member_name": "angle",
+            "documented_unit": null,
+            "unit_binding_verified": false,
+            "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+            "conversion_performed": false
+          }
+        },
+        {
+          "member": "GetSpiralRadius",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "float",
+          "raw_observation": {
+            "recorded": true,
+            "raw": 0.2,
+            "python_shape": {
+              "python_type": "float"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": 0.2,
+            "quantity_from_member_name": "length",
+            "documented_unit": null,
+            "unit_binding_verified": false,
+            "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+            "conversion_performed": false
+          }
+        },
+        {
+          "member": "GetSpiralPitch",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "float",
+          "raw_observation": {
+            "recorded": true,
+            "raw": 0.1,
+            "python_shape": {
+              "python_type": "float"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": 0.1,
+            "quantity_from_member_name": "length",
+            "documented_unit": null,
+            "unit_binding_verified": false,
+            "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+            "conversion_performed": false
+          }
+        },
+        {
+          "member": "GetHoleCentreEntry",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "bool",
+          "raw_observation": {
+            "recorded": true,
+            "raw": false,
+            "python_shape": {
+              "python_type": "bool"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": false,
+            "storage_type": "VARIANT_BOOL",
+            "interpretation": "Raw flag only; no additional mode semantics inferred."
+          }
+        },
+        {
+          "member": "GetEntryLengthAngle",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "bool",
+          "raw_observation": {
+            "recorded": true,
+            "raw": false,
+            "python_shape": {
+              "python_type": "bool"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": false,
+            "storage_type": "VARIANT_BOOL",
+            "interpretation": "Raw flag only; no additional mode semantics inferred."
+          }
+        },
+        {
+          "member": "GetEntryLength",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "float",
+          "raw_observation": {
+            "recorded": true,
+            "raw": 0.0,
+            "python_shape": {
+              "python_type": "float"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": 0.0,
+            "quantity_from_member_name": "length",
+            "documented_unit": null,
+            "unit_binding_verified": false,
+            "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+            "conversion_performed": false
+          }
+        },
+        {
+          "member": "GetEntryAngle",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "float",
+          "raw_observation": {
+            "recorded": true,
+            "raw": 0.0,
+            "python_shape": {
+              "python_type": "float"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": 0.0,
+            "quantity_from_member_name": "angle",
+            "documented_unit": null,
+            "unit_binding_verified": false,
+            "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+            "conversion_performed": false
+          }
+        },
+        {
+          "member": "GetAutoCorrectEntryLengthAngle",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "bool",
+          "raw_observation": {
+            "recorded": true,
+            "raw": false,
+            "python_shape": {
+              "python_type": "bool"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": false,
+            "storage_type": "VARIANT_BOOL",
+            "interpretation": "Raw flag only; no additional mode semantics inferred."
+          }
+        },
+        {
+          "member": "GetEntryStartPtX",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "tuple",
+          "raw_observation": {
+            "recorded": true,
+            "raw": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "python_shape": {
+              "python_type": "tuple",
+              "length": 3,
+              "items": [
+                {
+                  "python_type": "float"
+                },
+                {
+                  "python_type": "float"
+                },
+                {
+                  "python_type": "float"
+                }
+              ]
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "storage_type": "VARIANT",
+            "observed_variant_kind": "tuple_sequence",
+            "observed_python_shape": {
+              "python_type": "tuple",
+              "length": 3,
+              "items": [
+                {
+                  "python_type": "float"
+                },
+                {
+                  "python_type": "float"
+                },
+                {
+                  "python_type": "float"
+                }
+              ]
+            },
+            "original_variant_tag_verified": false,
+            "array_element_semantics_verified": false,
+            "multiple_out_interpretation": false,
+            "coordinate_frame_verified": false,
+            "coordinate_interpreted": false,
+            "documented_unit": null,
+            "unit_binding_verified": false,
+            "reason": "One VARIANT retval is declared. comtypes may unpack its SAFEARRAY as tuples; exact native tag and element semantics are not observed. No tuple arity, frame/unit, expression or coordinate interpretation."
+          }
+        },
+        {
+          "member": "GetEntryStartPtY",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "tuple",
+          "raw_observation": {
+            "recorded": true,
+            "raw": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "python_shape": {
+              "python_type": "tuple",
+              "length": 3,
+              "items": [
+                {
+                  "python_type": "float"
+                },
+                {
+                  "python_type": "float"
+                },
+                {
+                  "python_type": "float"
+                }
+              ]
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "storage_type": "VARIANT",
+            "observed_variant_kind": "tuple_sequence",
+            "observed_python_shape": {
+              "python_type": "tuple",
+              "length": 3,
+              "items": [
+                {
+                  "python_type": "float"
+                },
+                {
+                  "python_type": "float"
+                },
+                {
+                  "python_type": "float"
+                }
+              ]
+            },
+            "original_variant_tag_verified": false,
+            "array_element_semantics_verified": false,
+            "multiple_out_interpretation": false,
+            "coordinate_frame_verified": false,
+            "coordinate_interpreted": false,
+            "documented_unit": null,
+            "unit_binding_verified": false,
+            "reason": "One VARIANT retval is declared. comtypes may unpack its SAFEARRAY as tuples; exact native tag and element semantics are not observed. No tuple arity, frame/unit, expression or coordinate interpretation."
+          }
+        },
+        {
+          "member": "DepthMethod",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "int",
+          "raw_observation": {
+            "recorded": true,
+            "raw": 0,
+            "python_shape": {
+              "python_type": "int"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": 0,
+            "storage_type": "LONG",
+            "enum_binding_verified": false,
+            "confirmed_enum_name": null,
+            "reason": "Method declares LONG; no named enum binding is documented."
+          }
+        },
+        {
+          "member": "DepthAllow",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "float",
+          "raw_observation": {
+            "recorded": true,
+            "raw": 1.0,
+            "python_shape": {
+              "python_type": "float"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": 1.0,
+            "quantity_from_member_name": "length",
+            "documented_unit": null,
+            "unit_binding_verified": false,
+            "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+            "conversion_performed": false
+          }
+        },
+        {
+          "member": "FirstDepthAmt",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "float",
+          "raw_observation": {
+            "recorded": true,
+            "raw": 10.0,
+            "python_shape": {
+              "python_type": "float"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": 10.0,
+            "quantity_from_member_name": "length",
+            "documented_unit": null,
+            "unit_binding_verified": false,
+            "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+            "conversion_performed": false
+          }
+        },
+        {
+          "member": "SbsqDepthAmt",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "float",
+          "raw_observation": {
+            "recorded": true,
+            "raw": 10.0,
+            "python_shape": {
+              "python_type": "float"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": 10.0,
+            "quantity_from_member_name": "length",
+            "documented_unit": null,
+            "unit_binding_verified": false,
+            "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+            "conversion_performed": false
+          }
+        },
+        {
+          "member": "FinCutAmt",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "float",
+          "raw_observation": {
+            "recorded": true,
+            "raw": 0.0,
+            "python_shape": {
+              "python_type": "float"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": 0.0,
+            "quantity_from_member_name": "length",
+            "documented_unit": null,
+            "unit_binding_verified": false,
+            "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+            "conversion_performed": false
+          }
+        },
+        {
+          "member": "GetStartDepth",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "tuple",
+          "raw_observation": {
+            "recorded": true,
+            "raw": [
+              false,
+              10.0
+            ],
+            "python_shape": {
+              "python_type": "tuple",
+              "length": 2,
+              "items": [
+                {
+                  "python_type": "bool"
+                },
+                {
+                  "python_type": "float"
+                }
+              ]
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": [
+              false,
+              10.0
+            ],
+            "is_percent": false,
+            "value_native": 10.0,
+            "storage_types": [
+              "VARIANT_BOOL",
+              "DOUBLE"
+            ],
+            "value_mode": "percent_flag_clear",
+            "documented_unit": null,
+            "unit_binding_verified": false,
+            "percent_reference_basis_verified": false,
+            "percent_scale_conversion_performed": false,
+            "reason": "Keep the explicit native percent flag and value together; reference basis and unit conversion are not established."
+          }
+        },
+        {
+          "member": "GetSubsequentDepthAmount",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "tuple",
+          "raw_observation": {
+            "recorded": true,
+            "raw": [
+              false,
+              10.0
+            ],
+            "python_shape": {
+              "python_type": "tuple",
+              "length": 2,
+              "items": [
+                {
+                  "python_type": "bool"
+                },
+                {
+                  "python_type": "float"
+                }
+              ]
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": [
+              false,
+              10.0
+            ],
+            "is_percent": false,
+            "value_native": 10.0,
+            "storage_types": [
+              "VARIANT_BOOL",
+              "DOUBLE"
+            ],
+            "value_mode": "percent_flag_clear",
+            "documented_unit": null,
+            "unit_binding_verified": false,
+            "percent_reference_basis_verified": false,
+            "percent_scale_conversion_performed": false,
+            "reason": "Keep the explicit native percent flag and value together; reference basis and unit conversion are not established."
+          }
+        },
+        {
+          "member": "PocketMethod",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "int",
+          "raw_observation": {
+            "recorded": true,
+            "raw": 1,
+            "python_shape": {
+              "python_type": "int"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": 1,
+            "storage_type": "LONG",
+            "enum_binding_verified": false,
+            "confirmed_enum_name": null,
+            "reason": "Method declares LONG; no named enum binding is documented."
+          }
+        },
+        {
+          "member": "SideAllow",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "float",
+          "raw_observation": {
+            "recorded": true,
+            "raw": 1.0,
+            "python_shape": {
+              "python_type": "float"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": 1.0,
+            "quantity_from_member_name": "length",
+            "documented_unit": null,
+            "unit_binding_verified": false,
+            "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+            "conversion_performed": false
+          }
+        },
+        {
+          "member": "GetStepOver",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "tuple",
+          "raw_observation": {
+            "recorded": true,
+            "raw": [
+              true,
+              50.0
+            ],
+            "python_shape": {
+              "python_type": "tuple",
+              "length": 2,
+              "items": [
+                {
+                  "python_type": "bool"
+                },
+                {
+                  "python_type": "float"
+                }
+              ]
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": [
+              true,
+              50.0
+            ],
+            "is_percent": true,
+            "value_native": 50.0,
+            "storage_types": [
+              "VARIANT_BOOL",
+              "DOUBLE"
+            ],
+            "value_mode": "percent_flag_set",
+            "documented_unit": null,
+            "unit_binding_verified": false,
+            "percent_reference_basis_verified": false,
+            "percent_scale_conversion_performed": false,
+            "reason": "Keep the explicit native percent flag and value together; reference basis and unit conversion are not established."
+          }
+        },
+        {
+          "member": "GetZAllowance",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "float",
+          "raw_observation": {
+            "recorded": true,
+            "raw": 1.0,
+            "python_shape": {
+              "python_type": "float"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": 1.0,
+            "quantity_from_member_name": "length",
+            "documented_unit": null,
+            "unit_binding_verified": false,
+            "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+            "conversion_performed": false
+          }
+        },
+        {
+          "member": "GetContainType",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "int",
+          "raw_observation": {
+            "recorded": true,
+            "raw": 0,
+            "python_shape": {
+              "python_type": "int"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": 0,
+            "storage_type": "LONG",
+            "enum_binding_verified": false,
+            "confirmed_enum_name": null,
+            "reason": "Method declares LONG; no named enum binding is documented."
+          }
+        },
+        {
+          "member": "GetContainAllowance",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "float",
+          "raw_observation": {
+            "recorded": true,
+            "raw": 0.00254,
+            "python_shape": {
+              "python_type": "float"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": 0.00254,
+            "quantity_from_member_name": "length",
+            "documented_unit": null,
+            "unit_binding_verified": false,
+            "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+            "conversion_performed": false
+          }
+        },
+        {
+          "member": "GetXYClearance",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "float",
+          "raw_observation": {
+            "recorded": true,
+            "raw": 0.00254,
+            "python_shape": {
+              "python_type": "float"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": 0.00254,
+            "quantity_from_member_name": "length",
+            "documented_unit": null,
+            "unit_binding_verified": false,
+            "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+            "conversion_performed": false
+          }
+        },
+        {
+          "member": "GetToolDiameterPercent",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "float",
+          "raw_observation": {
+            "recorded": true,
+            "raw": 0.0,
+            "python_shape": {
+              "python_type": "float"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": 0.0,
+            "quantity_from_member_name": "percent_scalar",
+            "documented_unit": null,
+            "unit_binding_verified": false,
+            "unit_documentation": "Unit/scale not stated in saved SDK method or TLB contract.",
+            "conversion_performed": false
+          }
+        },
+        {
+          "member": "IGetNCParam",
+          "attempted": true,
+          "returned": true,
+          "validated": true
+        },
+        {
+          "member": "GetClrPlaneUseSetupStatus",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "bool",
+          "raw_observation": {
+            "recorded": true,
+            "raw": true,
+            "python_shape": {
+              "python_type": "bool"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": true,
+            "storage_type": "VARIANT_BOOL",
+            "interpretation": "Raw flag only; no additional mode semantics inferred."
+          }
+        },
+        {
+          "member": "GetRpdPlaneUseSetupStatus",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "bool",
+          "raw_observation": {
+            "recorded": true,
+            "raw": true,
+            "python_shape": {
+              "python_type": "bool"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": true,
+            "storage_type": "VARIANT_BOOL",
+            "interpretation": "Raw flag only; no additional mode semantics inferred."
+          }
+        },
+        {
+          "member": "GetRetractType",
+          "attempted": true,
+          "returned": true,
+          "validated": true,
+          "returned_type": "int",
+          "raw_observation": {
+            "recorded": true,
+            "raw": 0,
+            "python_shape": {
+              "python_type": "int"
+            },
+            "original_variant_tag_verified": false
+          },
+          "value": {
+            "raw": 0,
+            "storage_type": "LONG",
+            "enum_binding_verified": false,
+            "confirmed_enum_name": null,
+            "reason": "Method declares LONG; no named enum binding is documented."
+          }
+        }
+      ],
+      "mutation_attempted": false,
+      "units_verified": false,
+      "coordinate_frame_verified": false,
+      "enum_bindings_verified": false,
+      "rapid_clearance_values_read": false,
+      "physical_tool_qualified": false,
+      "production_qualified": false,
+      "may_continue": false
+    }
+  }
+}

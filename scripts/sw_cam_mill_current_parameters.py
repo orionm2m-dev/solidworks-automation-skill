@@ -94,6 +94,10 @@ def capture(state,native,v,authority,*,document,read,typed,boundary):
         retained=dict(operation_native_id=oid,read_complete=False);state['retained_operation_nc']=retained
         retained['nc']=definitions.read_own_nc(raw,read=read,typed=typed);retained['read_complete']=True
     require(state==authority['state'],'Fresh full captured state differs from saved authority')
+    capture_rows(state,native,authority['targets'],feature_id=v['expected_feature_native_id'],read=read,typed=typed,boundary=boundary)
+
+def capture_rows(state,native,targets,*,feature_id,read,typed,boundary):
+    """Own scalar observations from explicit fresh inventory rows; no authority adapter."""
     class Batch:
         def read(self,*a):return read(*a)
         def typed(self,*a):return typed(*a)
@@ -102,7 +106,7 @@ def capture(state,native,v,authority,*,document,read,typed,boundary):
             return read(raw,'QueryInterface',IDispatch)
     batch=Batch();feature=batch.feature_dispatch(native['selected_feature']);doc=native['doc'];cache={}
     state['operation_parameters']=[];state['parameter_capture_complete']=False
-    for row in authority['targets']:
+    for row in targets:
         boundary();oid=row['native_id'];raw=native['operations'][oid]
         found=read(doc,'GetCWObjectFromID',3,oid)
         require(type(found) in (tuple,list) and len(found)==2 and found[1] is True,'Exact operation lookup required')
@@ -113,7 +117,7 @@ def capture(state,native,v,authority,*,document,read,typed,boundary):
             require(links==row['linked_feature_ids'],'Own feature links differ')
             generic,tool=read_generic_tool(op,doc,read,typed)
             require(generic==row['assigned_tool'],'Own assigned tool changed')
-        out=dict(operation_native_id=oid,operation_type=row['mill_operation_type'],feature_native_id=v['expected_feature_native_id'],read_complete=False)
+        out=dict(operation_native_id=oid,operation_type=row['mill_operation_type'],feature_native_id=feature_id,read_complete=False)
         state['operation_parameters'].append(out)
         out['levels']=pocket.read_levels(raw,feature,read=read,typed=typed,feature_dispatch=batch.feature_dispatch)
         if row['mill_operation_type']==0:

@@ -10368,11 +10368,52 @@ def _cam_guide_configuration_sealed_payload(request_path, request_sha256, proces
     return payload
 
 
+class SolidWorksCamCurrentSavedConfigurationInput(SolidWorksCamCurrentSavedCompoundInput):
+    """既有配置入口的显式 current_saved prepare/apply；不更改旧 sealed 分支。"""
+    configuration_mode: Literal["current_saved"]
+    action: Literal["prepare","apply"] = "prepare"
+    observation: Literal["operation_parameters"] = "operation_parameters"
+    candidate_tool_native_id: int = Field(gt=0,le=4294967295,strict=True)
+    expected_candidate_consumer_ids: list[Annotated[int,Field(gt=0,le=4294967295,strict=True)]] = Field(max_length=32,strict=True)
+    current_read_request_path: str = Field(min_length=1,strict=True)
+    current_read_request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    current_read_receipt_path: str = Field(min_length=1,strict=True)
+    current_read_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    recipe_path: str = Field(min_length=1,strict=True)
+    recipe_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    prepare_receipt_path: Optional[str] = Field(default=None,min_length=1,strict=True)
+    prepare_receipt_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+    save_after_verified: bool = Field(default=False,strict=True)
+    acknowledge_qualification_only: bool = Field(strict=True)
+    attempt_registry_path: str = Field(min_length=1,strict=True)
+    receipt_path: str = Field(min_length=1,strict=True)
+
+    @model_validator(mode="after")
+    def current_saved_configuration_contract(self):
+        from scripts.sw_cam_current_saved_parameter_batch import validate
+        validate(self.model_dump(exclude={"addin_clsid","expected_document_title","response_format"}))
+        return self
+
+
 @mcp.tool(name="solidworks_cam_configure_guide_definitions",
-    title="Configure Four Guide Definitions",
+    title="Configure Explicit MILL Definitions",
     annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
-def solidworks_cam_configure_guide_definitions(params: SolidWorksCamGuideConfigurationInput) -> str:
-    """Assign the qualified tool and explicit fields to four verified definitions; one guarded Save, no GTP."""
+def solidworks_cam_configure_guide_definitions(params: SolidWorksCamCurrentSavedConfigurationInput | SolidWorksCamGuideConfigurationInput) -> str:
+    """当前保存模式只改显式工具/字段并验证保存；旧四导向配置仍使用 sealed 请求。"""
+    if isinstance(params,SolidWorksCamCurrentSavedConfigurationInput):
+        def current_op():
+            _runtime_identity.assert_current()
+            if type(_selected_process_id) is not int or _selected_process_id!=params.process_id:
+                raise ValueError("Explicitly connected process must match process_id")
+            from scripts.sw_cam_current_saved_parameter_batch import run_current_saved_configuration,runtime_finish
+            sw,registration=_cam_target(params)
+            values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format"})
+            result=run_current_saved_configuration(sw,registration["clsid"],
+                typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"),runtime_check=_runtime_identity.assert_current,**values)
+            try:_runtime_identity.assert_current()
+            except Exception as error:return runtime_finish(result,error)
+            return runtime_finish(result)
+        return _run_locked(current_op,params.response_format)
     def op():
         if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
             raise ValueError("Explicit owned process connection required")
