@@ -208,7 +208,10 @@
         "151 项离线 focused+legacy regression PASS；当前 append 模式尚未原生验证。必须先 native prepare 并复核实际catalogue，测试通过不证明默认操作适合加工。",
         "可选 save_after_verified 仅允许 apply；验证 ICWApp.SaveActiveDocument 的确切无参数 HRESULT ABI，沿用已观察 int0 返回；未知返回或部分保存仅保留证据，不重试。",
         "保存后完整捕获两次；只允许文件 SHA 更新和文档 dirty→clean，其余已采集状态必须完全一致。尚无此 current_saved 组合写入与保存的原生成功证明；不证明 reopen 持久性或生产资格。",
-        "复用 solidworks_cam_append_mill_operations；不增加工具入口。参见 references/cam-current-saved-append.md。"
+        "复用 solidworks_cam_append_mill_operations；不增加工具入口。参见 references/cam-current-saved-append.md。",
+        "既有 current_saved endpoint 新增 selected_insert 模式：真实成功保存 receipt + 当前双读取，两个明确无轨迹旧定义 Suppressed=True，复用 InsertOperation 的 Rough0/Finish1 选择插入。",
+        "逐步双读取验证，仅允许指定抑制标志和两个新定义；整个批次独占 once marker，事件/身份/代码变化立即停止，不自动重试或回滚。",
+        "可复用已验证 Save 序列；无 GOP/GTP、策略/工具赋值或 TechDB 写入。新组合分支尚无原生成功证明。"
       ],
       "allowed_modes": [
         "interactive",

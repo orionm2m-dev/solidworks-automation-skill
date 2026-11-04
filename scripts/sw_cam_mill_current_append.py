@@ -2,6 +2,7 @@
 from copy import deepcopy
 from pathlib import Path
 from scripts import sw_cam_mill_current_compound_read as current
+from scripts import sw_cam_mill_selected_insert as selected_insert
 from scripts.sw_cam import _member, _error, document_snapshot
 from scripts.sw_cam_generation import _typed, _write_receipt
 from scripts.sw_cam_thread import _file_hash, _object_id
@@ -56,21 +57,24 @@ def qualified_read(v,clsid=None):
 
 
 def binding(v):
+    if selected_insert.selected(v):
+        return {k:deepcopy(v[k]) for k in READ_KEYS+('definition_mode',)+selected_insert.KEYS}
     return {k:deepcopy(v[k]) for k in READ_KEYS+tuple(x for pair in PIN_PAIRS for x in pair)}
 
 
 def validate(v):
     """校验 prepare/apply、真实双文件证据与独立独占 dispatch marker。"""
-    current.validate(v)
+    current.validate(v);selected_insert.validate_choices(v)
     require(v['planning_mode']=='current_saved' and v['action'] in ('prepare','apply') and v['observation']=='three_step_profile','Explicit current-saved three-step append mode required')
     require(type(v['save_after_verified']) is bool and v['acknowledge_disposable_copy'] is True,'Strict save choice and qualification acknowledgement required')
     require(v['action']=='apply' or v['save_after_verified'] is False,'Prepare is read-only and cannot request Save')
     receipt=Path(v['receipt_path'])
     require(type(v['receipt_path']) is str and absolute_document_path(v['receipt_path']) and receipt.suffix.casefold()=='.json' and receipt.parent.is_dir() and not receipt.exists() and not receipt.is_symlink(),'Unique output JSON required')
-    state,pins=qualified_read(v)
+    if selected_insert.selected(v):state,pins,_=selected_insert.authority(v)
+    else:state,pins=qualified_read(v)
     marker=attempt_marker(v['attempt_registry_path'],v['expected_document_path'],v['expected_source_sha256'],v['expected_feature_native_id'])
     require(not marker.exists() and not marker.is_symlink(),'Prior attempt exists; inspect outcome, never replay')
-    paths=[Path(v[k]).resolve() for k,_ in PIN_PAIRS]+[receipt.resolve(),marker.resolve()]
+    paths=[Path(v[k]).resolve() for k,_ in (selected_insert.PAIRS if selected_insert.selected(v) else PIN_PAIRS)]+[receipt.resolve(),marker.resolve()]
     require(len(paths)==len(set(paths)),'Distinct input/output/marker paths required')
     if v['action']=='prepare':
         require(v['prepare_receipt_path'] is None and v['prepare_receipt_sha256'] is None,'Prepare cannot consume another prepare')
@@ -130,7 +134,11 @@ def run_current_saved_append(sw,clsid,typelib_path,*,runtime_check,**v):
     def persist():
         if report['receipt_created']:_write_receipt(Path(v['receipt_path']),report)
     try:
-        marker,reference,pins=validate(v);qualified_read(v,clsid);current._abi(typelib_path);gop_abi(typelib_path)
+        marker,reference,pins=validate(v);current._abi(typelib_path)
+        selected=selected_insert.selected(v);authority_state=None
+        if selected:
+            _,_,authority_state=selected_insert.authority(v);selected_insert.abi(typelib_path)
+        else:qualified_read(v,clsid);gop_abi(typelib_path)
         if v['save_after_verified']:save_abi(typelib_path)
         report.update(dispatch_marker_path=str(marker),qualified_read_pins=pins)
         _write_receipt(Path(v['receipt_path']),report,create=True);report['receipt_created']=True;persist()
@@ -141,7 +149,9 @@ def run_current_saved_append(sw,clsid,typelib_path,*,runtime_check,**v):
             doc=document_snapshot(sw);require(type(doc) is dict and type(doc.get('type')) is int and doc['type']==1 and type(doc.get('needs_save')) is bool,'Saved part required')
             check_document_target(doc['path'],doc['title'],expected_path=v['expected_document_path'],required=True)
             if verify_source:require(_file_hash(v['expected_document_path'])==current_source,'Source file changed')
-            for (pathkey,shakey),expected in zip(PIN_PAIRS,(pins['request'],pins['result'])):require(read_pin(v[pathkey],v[shakey])[1]==expected,'Pinned read evidence changed')
+            pairs=selected_insert.PAIRS if selected else PIN_PAIRS
+            expected_pins=(pins['authority'],) if selected else (pins['request'],pins['result'])
+            for (pathkey,shakey),expected in zip(pairs,expected_pins):require(read_pin(v[pathkey],v[shakey])[1]==expected,'Pinned authority evidence changed')
             return doc
         with solidworks_operation_lock(timeout_seconds=1,process_id=v['process_id']):
             initial=identity();require(initial['needs_save'] is False,'Prepare/apply must start from clean saved source')
@@ -154,7 +164,7 @@ def run_current_saved_append(sw,clsid,typelib_path,*,runtime_check,**v):
             reads=0
             def read(obj,name,*args):
                 nonlocal reads
-                check();reads+=1;require(reads<=10000,'Bounded read budget exceeded');report['phase']=name
+                check();reads+=1;require(reads<=(20000 if selected else 10000),'Bounded read budget exceeded');report['phase']=name
                 diagnostic=None
                 if name in current._STEP_GETTERS:
                     diagnostic=dict(method=name,arguments=list(args),returned=False);report['step_getter_diagnostics'].append(diagnostic)
@@ -178,11 +188,13 @@ def run_current_saved_append(sw,clsid,typelib_path,*,runtime_check,**v):
                 details={};state['strategy_diagnostics']=details
                 read_compound_strategy(strategy_state,native,read,typed,details,feature_id=v['expected_feature_native_id'],owner_id=v['expected_feature_setup_native_id'],step_count=3,expected_header=state['target_header'],boundary=boundary,observation='strategy')
                 state['default_operation_catalogues']=read_catalogues(native['selected_feature'],read=read,typed=typed)
+                if not after and selected:require(state==authority_state,'Current complete state differs from saved authority')
                 boundary();persist();return state,native
             with session:
                 before,native=capture('before');confirm,native=capture('confirm_before')
                 require(before==confirm,'Two complete prepare captures differ')
-                require(len(before['operations'])<32 and before['selected_operation_setup']['operation_count']==0 and not any(v['expected_feature_native_id'] in row['linked_feature_ids'] for row in before['operations']),'Target must be unplanned in empty setup with capacity')
+                if selected:report['selected_definition_plan']=selected_insert.plan(before,v)
+                else:require(len(before['operations'])<32 and before['selected_operation_setup']['operation_count']==0 and not any(v['expected_feature_native_id'] in row['linked_feature_ids'] for row in before['operations']),'Target must be unplanned in empty setup with capacity')
                 report['state_sha256']=_digest(before)
                 strategy=before['strategy_diagnostics']['compound_strategy'];report['selected_strategy']=deepcopy(strategy);report['default_operation_catalogues']=deepcopy(before['default_operation_catalogues']);persist()
                 final=confirm
@@ -193,13 +205,16 @@ def run_current_saved_append(sw,clsid,typelib_path,*,runtime_check,**v):
                     check();require(identity()==initial,'Identity changed before claim');runtime_check();require(read_pin(v['prepare_receipt_path'],v['prepare_receipt_sha256'])[1]==ppin,'Prepare pin changed')
                     _write_receipt(marker,dict(scope=SCOPE,status='claimed_no_replay',binding=binding(v),receipt_path=v['receipt_path'],automatic_replay=False),create=True);report['marker_created']=True;persist()
                     check();require(identity()==initial,'Identity changed after exclusive claim');runtime_check()
-                    report.update(phase='GenerateOpPlan',mutation_attempted=True,GOP_attempted=True,native_call_attempted=True,native_dispatch_pending=True);persist()
-                    returned=_member(feature,'GenerateOpPlan',1)
-                    report.update(native_call_returned=True,native_dispatch_pending=False,native_return_type=type(returned).__name__,native_hresult=returned if type(returned) is int else None);persist();check()
-                    require(returned is None or (type(returned) is int and returned==0),'Unexpected HRESULT-only return; no replay')
-                    after,_=capture('after',True);report['new_operations']=verify_added_plan(before,after,v['expected_feature_native_id'],v['expected_operation_setup_native_id'],current_saved=True);persist()
-                    final,_=capture('confirm_after',True);require(final==after,'Two post-plan captures differ');verify_added_plan(before,final,v['expected_feature_native_id'],v['expected_operation_setup_native_id'],current_saved=True)
-                    report['operation_delta_verified']=True
+                    if selected:
+                        final=selected_insert.execute(v,report,before,native,read=read,typed=typed,capture=capture,check=check,identity=identity,runtime_check=runtime_check,persist=persist)
+                    else:
+                        report.update(phase='GenerateOpPlan',mutation_attempted=True,GOP_attempted=True,native_call_attempted=True,native_dispatch_pending=True);persist()
+                        returned=_member(feature,'GenerateOpPlan',1)
+                        report.update(native_call_returned=True,native_dispatch_pending=False,native_return_type=type(returned).__name__,native_hresult=returned if type(returned) is int else None);persist();check()
+                        require(returned is None or (type(returned) is int and returned==0),'Unexpected HRESULT-only return; no replay')
+                        after,_=capture('after',True);report['new_operations']=verify_added_plan(before,after,v['expected_feature_native_id'],v['expected_operation_setup_native_id'],current_saved=True);persist()
+                        final,_=capture('confirm_after',True);require(final==after,'Two post-plan captures differ');verify_added_plan(before,final,v['expected_feature_native_id'],v['expected_operation_setup_native_id'],current_saved=True)
+                        report['operation_delta_verified']=True
                     if v['save_after_verified']:
                         check();runtime_check();require(identity()==final['document'],'Identity changed before verified Save')
                         target_app=typed(app,'ICWApp')

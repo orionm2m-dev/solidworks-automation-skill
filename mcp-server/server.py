@@ -8358,14 +8358,20 @@ class SolidWorksCamCurrentSavedAppendInput(SolidWorksCamCurrentSavedCompoundInpu
     planning_mode: Literal["current_saved"] = "current_saved"
     action: Literal["prepare","apply"] = "prepare"
     observation: Literal["three_step_profile"] = "three_step_profile"
-    current_read_request_path: str = Field(min_length=1,strict=True)
-    current_read_request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
-    current_read_receipt_path: str = Field(min_length=1,strict=True)
-    current_read_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    current_read_request_path: Optional[str] = Field(default=None,min_length=1,strict=True)
+    current_read_request_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+    current_read_receipt_path: Optional[str] = Field(default=None,min_length=1,strict=True)
+    current_read_receipt_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
     prepare_receipt_path: Optional[str] = Field(default=None,min_length=1,strict=True)
     prepare_receipt_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
     expected_strategy_id: Optional[int] = Field(default=None,ge=-2147483648,le=2147483647,strict=True)
     expected_strategy_name: Optional[str] = Field(default=None,min_length=1,max_length=4096,strict=True)
+    definition_mode: Literal["retain_plan","selected_insert"] = "retain_plan"
+    saved_authority_receipt_path: Optional[str] = Field(default=None,min_length=1,strict=True)
+    saved_authority_receipt_sha256: Optional[str] = Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+    anchor_operation_native_id: Optional[int] = Field(default=None,ge=1,le=2147483647,strict=True)
+    insert_operations: Optional[list[dict[str,Any]]] = Field(default=None,min_length=2,max_length=2)
+    suppress_operation_native_ids: Optional[list[Annotated[int,Field(strict=True)]]] = Field(default=None,min_length=2,max_length=2)
     save_after_verified: bool = Field(default=False,strict=True)
     acknowledge_disposable_copy: bool = Field(strict=True)
     attempt_registry_path: str = Field(min_length=1,strict=True)
@@ -8382,7 +8388,7 @@ class SolidWorksCamCurrentSavedAppendInput(SolidWorksCamCurrentSavedCompoundInpu
     title="Append One Compound MILL Feature Plan and Optionally Save",
     annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
 def solidworks_cam_append_mill_operations(params: SolidWorksCamCurrentSavedAppendInput | SolidWorksCamAppendMillOperationsInput) -> str:
-    """One RETAIN plan for a pinned three-step feature; preserve prior tools and optional checked save."""
+    """Prepare one RETAIN plan or two explicit selected definitions; preserve captured prior work and optional checked Save."""
     def op():
         if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
             raise ValueError("Additive MILL planning requires the explicitly connected process")
