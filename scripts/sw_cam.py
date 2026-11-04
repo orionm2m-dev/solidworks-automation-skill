@@ -77,14 +77,34 @@ def select_registration(inventory, clsid):
 
 
 def _error(exc):
-    """保留错误类型及 HRESULT，不输出可能包含许可证内容的错误文本。"""
+    """Retain diagnostic metadata and numeric COM codes, never EXCEPINFO text."""
     frames = traceback.extract_tb(exc.__traceback__)[-3:]
-    return {"type": type(exc).__name__, "hresult": getattr(exc, "hresult", None),
+    result = {"type": type(exc).__name__, "hresult": getattr(exc, "hresult", None),
             **{key: getattr(exc, key) for key in ("code", "bridge_stage", "error_type",
                                                 "input_type", "source_type") if hasattr(exc, key)},
             "actual_return_type": getattr(exc, "actual_return_type", None),
             "locations": [{"file": Path(f.filename).name, "function": f.name, "line": f.lineno}
                           for f in frames]}
+    try:
+        info = getattr(exc, "excepinfo", None)
+    except Exception:
+        info = None
+    if type(info) in (tuple, list) and len(info) == 6:
+        codes = {}
+        # Standard EXCEPINFO: wCode, source, description, helpFile, helpContext, scode.
+        for key, value, low, high in (("wCode", info[0], 0, 2**16-1),
+                                      ("scode", info[5], -(2**31), 2**32-1)):
+            if type(value) is int and low <= value <= high:
+                codes[key] = value
+        if codes:
+            result["excepinfo_codes"] = codes
+    try:
+        argerror = getattr(exc, "argerror", None)
+    except Exception:
+        argerror = None
+    if type(argerror) is int and 0 <= argerror < 2**32:
+        result["argerror"] = argerror
+    return result
 
 
 def _snapshot_error(exc, stage):
