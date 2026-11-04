@@ -187,6 +187,33 @@
   ],
   "capabilities": [
     {
+      "id": "cam_current_saved_compound_read",
+      "label": "当前保存铣削多台阶特征读取",
+      "level": "pilot",
+      "backends": [
+        "solidworks-com-pywin32",
+        "solidworks-com-comtypes"
+      ],
+      "verified_versions": [],
+      "dependencies": [
+        "SolidWorks",
+        "SOLIDWORKS CAM",
+        "pywin32",
+        "comtypes"
+      ],
+      "limitations": [
+        "独立 current_saved 只读模式，精确 PID/创建时间、已保存清洁文档路径/SHA、特征/setup ID 与全部操作 ID/路径计数；不读取或放宽旧计划证据。",
+        "两次受事件门禁保护的完整采集；复用现有 header/操作/三台阶读取器。GetSetup DISP30 与四个 compound getter 先检查声明 ABI。",
+        "header_and_count 不访问索引；three_step_profile 仅在实际数量严格为三时读取0..2，其他类型或计数无回退。",
+        "仅离线测试及本地生成类型库 ABI 检查，当前保存模式原生资格待验证。不得声称世界坐标、单位、完整隐蔽刀具几何、旧 CL 坐标或生产资格。",
+        "无 setter、AFR/GOP/GTP、保存、导出或 TechDB 写入；失败保留已返回诊断，停止，不自动重试。见 references/cam-current-saved-compound-read.md。"
+      ],
+      "allowed_modes": [
+        "interactive",
+        "reviewed"
+      ]
+    },
+    {
       "id": "cam_shallow_guide_operation_groups",
       "label": "CAM 浅导向槽定义与参数批处理",
       "level": "pilot",

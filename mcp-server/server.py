@@ -8174,6 +8174,63 @@ def solidworks_cam_inspect_saved_compound_strategy(params: SolidWorksCamSavedCom
     return _run_locked(op, params.response_format)
 
 
+class SolidWorksCamCurrentSavedCompoundInput(SolidWorksCamTargetInput):
+    """显式读取当前保存 MILL 多台阶特征；不加载旧计划证据。"""
+    model_config = ConfigDict(extra="forbid",str_strip_whitespace=False)
+    process_id: int = Field(gt=0,le=4294967295,strict=True)
+    expected_process_create_time: float = Field(gt=0,strict=True,allow_inf_nan=False)
+    expected_document_path: str = Field(min_length=1,strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    expected_feature_native_id: int = Field(gt=0,le=4294967295,strict=True)
+    expected_feature_setup_native_id: int = Field(gt=0,le=4294967295,strict=True)
+    expected_operation_setup_native_id: int = Field(gt=0,le=4294967295,strict=True)
+    expected_operation_native_ids: list[int] = Field(max_length=32,strict=True)
+    expected_generated_operation_count: int = Field(ge=0,le=32,strict=True)
+    expected_total_record_count: int = Field(ge=0,le=100000,strict=True)
+    read_mode: Literal["current_saved"] = "current_saved"
+    observation: Literal["header_and_count","three_step_profile"] = "header_and_count"
+    qualification_only: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+
+    @field_validator("expected_operation_native_ids",mode="before")
+    @classmethod
+    def strict_operation_ids(cls,value):
+        if type(value) is not list or any(type(x) is not int for x in value):
+            raise ValueError("Strict ordered operation IDs required")
+        return value
+
+    @model_validator(mode="after")
+    def current_saved_compound_contract(self):
+        from scripts.sw_cam_mill_current_compound_read import validate
+        if self.expected_document_title is not None:raise ValueError("Exact document path required")
+        validate(self.model_dump(exclude={"addin_clsid","expected_document_title","response_format"}))
+        return self
+
+
+@mcp.tool(name="solidworks_cam_inspect_current_saved_compound",title="Inspect Current Saved MILL Compound",
+          annotations={"readOnlyHint":True,"destructiveHint":False,"idempotentHint":True,"openWorldHint":False})
+def solidworks_cam_inspect_current_saved_compound(params: SolidWorksCamCurrentSavedCompoundInput) -> str:
+    """以当前保存文件和进程生命周期读取两次；保留原始坐标，不生成或保存。"""
+    def op():
+        _runtime_identity.assert_current()
+        if type(_selected_process_id) is not int or _selected_process_id!=params.process_id:
+            raise ValueError("Explicitly connected process must match process_id")
+        from scripts.sw_cam_mill_current_compound_read import inspect_current_saved_compound
+        sw,registration=_cam_target(params)
+        values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format"})
+        result=inspect_current_saved_compound(sw,registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"),**values)
+        try:_runtime_identity.assert_current()
+        except Exception as error:
+            result.update(status="error",observation_verified=False,readback_verified=False,
+                guards_verified=False,may_continue=False,runtime_unchanged=False,
+                reason="RUNTIME_CHANGED_AFTER_READ",runtime_error=str(error))
+            return result
+        result["runtime_unchanged"]=True
+        return result
+    return _run_locked(op,params.response_format)
+
+
 class SolidWorksCamSavedMillPlanSessionInput(SolidWorksCamSavedMillPlanToolsInput):
     """Verify one explicitly owned new session against unchanged saved evidence."""
     previous_process_id: int = Field(gt=0, le=4294967295, strict=True)
