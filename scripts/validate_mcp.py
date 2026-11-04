@@ -58,6 +58,7 @@ REQUIRED_TOOLS = {
     "solidworks_cam_reorder_turn_operations",
     "solidworks_cam_inspect_turn_bore_options",
     "solidworks_cam_inspect_turn_cutoff_options",
+    "solidworks_cam_probe_turn_post_parameter",
     "solidworks_cam_inspect_turn_tool_contours",
     "solidworks_cam_inspect_turn_setup_context",
     "solidworks_cam_qualify_turn_reverse_setup",

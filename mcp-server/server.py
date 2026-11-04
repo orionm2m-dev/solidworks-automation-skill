@@ -13782,6 +13782,51 @@ def solidworks_cam_inspect_turn_cutoff_options(params: SolidWorksCamTurnCutoffOp
     return _run_locked(op, params.response_format)
 
 
+class SolidWorksCamTurnPostParameterProbeInput(SolidWorksCamTargetInput):
+    """限定读取 TURN 机器参数数量和索引零；拒绝写入及遍历参数。"""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    process_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_process_create_time: float = Field(gt=0, strict=True, allow_inf_nan=False)
+    expected_document_path: str = Field(min_length=1, strict=True)
+    expected_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_operation_count: int = Field(ge=0,le=512,strict=True)
+    expected_generated_operation_count: int = Field(ge=0,le=512,strict=True)
+    expected_total_record_count: int = Field(ge=0,le=1000000,strict=True)
+    action: Literal["probe_index_zero"] = "probe_index_zero"
+    qualification_only: bool = Field(strict=True)
+    message_policy: Literal["vendor_default"] = "vendor_default"
+
+    @model_validator(mode="after")
+    def post_parameter_probe_contract(self):
+        from scripts.sw_cam_turn_post_parameter_probe import validate
+        validate(self.model_dump(exclude={"addin_clsid","expected_document_title","response_format"}))
+        return self
+
+
+@mcp.tool(name="solidworks_cam_probe_turn_post_parameter", title="Probe TURN Machine Post Parameter Index Zero",
+          annotations={"readOnlyHint":True,"destructiveHint":False,"idempotentHint":True,"openWorldHint":False})
+def solidworks_cam_probe_turn_post_parameter(params: SolidWorksCamTurnPostParameterProbeInput) -> str:
+    """按 params 的精确身份读取数量及可选索引零；返回原始诊断 JSON，不推断 Preset。"""
+    def op():
+        _runtime_identity.assert_current()
+        if type(_selected_process_id) is not int or _selected_process_id!=params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_turn_post_parameter_probe import probe_turn_post_parameter
+        sw,registration=_cam_target(params)
+        values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format"})
+        result=probe_turn_post_parameter(sw,registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent/"camworks.tlb"),**values)
+        try: _runtime_identity.assert_current()
+        except Exception as error:
+            result.update(status="error",observation_verified=False,guards_verified=False,
+                index_zero_acceptance_verified=False,readback_verified=False,runtime_unchanged=False,
+                reason="RUNTIME_CHANGED_AFTER_READ",runtime_error=str(error),may_continue=False)
+            return result
+        result["runtime_unchanged"]=True
+        return result
+    return _run_locked(op,params.response_format)
+
+
 class SolidWorksCamTurnHolderWriteThroughInput(SolidWorksCamOperationProfileInput):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
     process_id: int = Field(gt=0, le=4294967295, strict=True)

@@ -1854,6 +1854,8 @@ A native reorder qualification completed four moves with HRESULT zero and exact 
 
 For eighteen declared CutOff scalars and their explicit parameter limits, see [Existing TURN CutOff options](cam-turn-cutoff-options.md).
 
+For a single count and conditional index-zero qualification read, see [TURN machine post parameter probe](cam-turn-post-parameter-probe.md). It does not establish Preset values or a complete catalogue.
+
 For bounded rough/finish insert and holder contour reads, see [Existing TURN bore tool contours](cam-turn-tool-contours.md).
 
 For native setup links, direction and frame metadata, see [Existing TURN setup context](cam-turn-setup-context.md).

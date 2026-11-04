@@ -262,3 +262,5 @@ V2 附带 **37 个 deterministic reliability scenarios**，覆盖正常执行、
 `solidworks_create_frame_cut` 支持 `2 * radius_mm == min(width_mm, height_mm)`。宽高相等时轮廓为圆；仅短边等于直径时为胶囊槽。精确为零的直线段不调用 CreateLine，四段圆弧仍组成闭合轮廓。坐标由显式正交框架转换，AddToDB 禁止自动吸附。生产使用仍须重建、导出并回读实际轮廓和轴线。输入验证有离线测试；新增轮廓的实机证据单独记录。
 
 现有车削镗杆 STL 定义（pilot）：[受限共享刀具写入](references/cam-turn-holder-stl.md)固定源文件、进程和全部使用操作，分开回读文件字段与几何资格；不修改刀片、不生成轨迹、不保存。
+
+车削后处理参数读取（pilot）：[数量与索引零限定探测](references/cam-turn-post-parameter-probe.md)只读取一次数量及可选索引零，保留原始诊断；不把单条结果视为完整目录或 Preset 验证。

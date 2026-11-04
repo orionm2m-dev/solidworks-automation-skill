@@ -253,6 +253,33 @@
       ]
     },
     {
+      "id": "cam_turn_post_parameter_probe",
+      "label": "车削机器后处理参数索引零读取",
+      "level": "pilot",
+      "backends": [
+        "solidworks-com-pywin32",
+        "solidworks-com-comtypes"
+      ],
+      "verified_versions": [],
+      "dependencies": [
+        "SolidWorks",
+        "SOLIDWORKS CAM",
+        "pywin32",
+        "comtypes"
+      ],
+      "limitations": [
+        "仅调用一次 ICWMachine5.GetNumPostParam；数量为严格 1..512 时仅调用一次 GetPostParam(0)，不遍历或换索引。",
+        "精确 PID、进程创建时间、文档/文件哈希及操作/生成/记录计数；活动事件会话内比较前后全部操作 ID 与已收集库存。保留已有未保存状态，拒绝变化。",
+        "82 项离线程序测试包含生成类型库 ABI、异常与事件停止、原始结果保留及运行时代码漂移。尚未进行原生应用调用验证。",
+        "observation_verified 仅表示一次受保护观察。readback_verified、完整目录、零基索引约定、Preset、单位、坐标系及生产资格均不成立。",
+        "False 或异常不触发重试；不调用 setter、控制器查找/选择、GTP、GOP、CL 导出或 Save。参见 references/cam-turn-post-parameter-probe.md。"
+      ],
+      "allowed_modes": [
+        "interactive",
+        "reviewed"
+      ]
+    },
+    {
       "id": "cam_turn_cutoff_option_inspection",
       "label": "TURN CutOff scalar option inspection",
       "level": "pilot",
