@@ -13964,5 +13964,80 @@ def solidworks_cam_qualify_turn_feature_copy(params: SolidWorksCamTurnFeatureCop
     return _run_locked(op, params.response_format)
 
 
+class SolidWorksCamTurnFeaturePlanAppendInput(SolidWorksCamTurnSetupContextInput):
+    """Prepare or apply one append-only TURN feature plan qualification on a saved copy."""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+    expected_feature_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_operation_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    target_feature_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    target_operation_setup_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_source_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_copied_feature_native_id: int = Field(gt=0, le=4294967295, strict=True)
+    expected_copied_feature_sha256: str = Field(pattern=r"^[0-9a-f]{64}$", strict=True)
+    expected_new_operation_types: list[StrictInt] = Field(min_length=1, max_length=4, strict=True)
+    action: Literal["prepare", "apply"] = "prepare"
+    protected_part_pins: list[dict] = Field(min_length=2, max_length=16)
+    qualification_only: Literal[True]
+    message_policy: Literal["vendor_default"]
+    expected_state_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$", strict=True)
+    receipt_path: str | None = Field(default=None, min_length=1, strict=True)
+
+    @field_validator("qualification_only", mode="before")
+    @classmethod
+    def feature_plan_append_explicit_qualification(cls, value):
+        if type(value) is not bool:
+            raise ValueError("qualification_only must be an explicit JSON Boolean")
+        return value
+
+    @model_validator(mode="after")
+    def feature_plan_append_exact_request(self):
+        from scripts.sw_cam_turn_feature_plan_append import validate_request
+        config = self.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format",
+            "protected_part_pins", "action", "expected_state_sha256", "receipt_path",
+            "qualification_only", "message_policy"})
+        validate_request(config, self.protected_part_pins, self.action, self.expected_state_sha256,
+            self.receipt_path, self.qualification_only, self.message_policy)
+        return self
+
+
+@mcp.tool(name="solidworks_cam_qualify_turn_feature_plan_append", title="Qualify One Append-only TURN Feature Plan",
+          annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False})
+def solidworks_cam_qualify_turn_feature_plan_append(params: SolidWorksCamTurnFeaturePlanAppendInput) -> str:
+    """Prepare or apply one feature GenerateOpPlan(RETAIN=1); no attribute change, toolpath or Save."""
+    def op():
+        _runtime_identity.assert_current()
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("process_id must match the explicitly connected SOLIDWORKS instance")
+        from scripts.sw_cam_turn_feature_plan_append import qualify_turn_feature_plan_append
+        sw, registration = _cam_target(params)
+        values = params.model_dump(exclude={"addin_clsid", "expected_document_title", "response_format"})
+        result = qualify_turn_feature_plan_append(sw, registration["clsid"],
+            typelib_path=str(Path(registration["addin_path"]).parent / "camworks.tlb"), **values)
+        try:
+            _runtime_identity.assert_current()
+        except Exception as exc:
+            from scripts.sw_cam import _error
+            from scripts.sw_cam_generation import _write_receipt
+            result = dict(result)
+            result["outcome_before_runtime_check"] = {key: result.get(key) for key in
+                ("status", "readback_verified", "apply_eligible", "reason")}
+            result.update(status="uncertain" if result.get("mutation_attempted") is True else "error",
+                phase="finished", failed_phase="post_call_runtime_identity", readback_verified=False,
+                apply_eligible=False, runtime_identity_changed=True, runtime_identity_issue=_error(exc),
+                runtime_drift_receipt_updated=False, reason="RUNTIME_IDENTITY_CHANGED_AFTER_FEATURE_PLAN")
+            # Only the exclusively created receipt belonging to this core invocation.
+            if (params.action == "apply" and result.get("receipt_created") is True
+                    and type(result.get("receipt_path")) is str
+                    and Path(result["receipt_path"]) == Path(params.receipt_path)):
+                try:
+                    result["runtime_drift_receipt_updated"] = True
+                    _write_receipt(Path(result["receipt_path"]), result)
+                except Exception as write_error:
+                    result.update(runtime_drift_receipt_updated=False,
+                        receipt_write_error=_error(write_error))
+        return result
+    return _run_locked(op, params.response_format)
+
+
 if __name__ == "__main__":
     main()
