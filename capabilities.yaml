@@ -260,7 +260,7 @@
         "solidworks-com-pywin32",
         "solidworks-com-comtypes"
       ],
-      "verified_versions": [],
+      "verified_versions": ["2026"],
       "dependencies": [
         "SolidWorks",
         "SOLIDWORKS CAM",
@@ -270,7 +270,7 @@
       "limitations": [
         "仅调用一次 ICWMachine5.GetNumPostParam；数量为严格 1..512 时仅调用一次 GetPostParam(0)，不遍历或换索引。",
         "精确 PID、进程创建时间、文档/文件哈希及操作/生成/记录计数；活动事件会话内比较前后全部操作 ID 与已收集库存。保留已有未保存状态，拒绝变化。",
-        "82 项离线程序测试包含生成类型库 ABI、异常与事件停止、原始结果保留及运行时代码漂移。尚未进行原生应用调用验证。",
+        "82 项离线程序测试包含生成类型库 ABI、异常与事件停止、原始结果保留及运行时代码漂移。SOLIDWORKS 2026 SP4 单次原生观察返回参数数量零，未调用 GetPostParam；进程、文档、保存文件、已收集库存与操作 ID 保持一致，事件数零。仅验证此输入的零数量分支，Preset 仍不可用。",
         "observation_verified 仅表示一次受保护观察。readback_verified、完整目录、零基索引约定、Preset、单位、坐标系及生产资格均不成立。",
         "False 或异常不触发重试；不调用 setter、控制器查找/选择、GTP、GOP、CL 导出或 Save。参见 references/cam-turn-post-parameter-probe.md。"
       ],
