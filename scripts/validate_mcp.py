@@ -77,6 +77,7 @@ REQUIRED_TOOLS = {
     "solidworks_cam_export_mill_generic_cl",
     "solidworks_cam_configure_mill_qualification",
     "solidworks_cam_inspect_current_saved_compound",
+    "solidworks_cam_inspect_operation_geometry",
     "solidworks_cam_configure_mill_stock",
     "solidworks_cam_inspect_thread_records",
     "solidworks_cam_inspect_thread_tool",

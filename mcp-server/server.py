@@ -14475,5 +14475,61 @@ def solidworks_cam_qualify_turn_holder_stl(params: SolidWorksCamTurnHolderSTLInp
     return _run_locked(op, params.response_format)
 
 
+class SolidWorksCamOperationGeometryInput(SolidWorksCamTargetInput):
+    """固定当前配置证据和操作/特征对，只读取声明的 toolpath feature 参数。"""
+    model_config=ConfigDict(extra="forbid",str_strip_whitespace=False)
+    process_id: int=Field(gt=0,le=2147483647,strict=True)
+    expected_process_create_time: float=Field(gt=0,strict=True,allow_inf_nan=False)
+    expected_document_path: str=Field(min_length=1,strict=True)
+    expected_source_sha256: str=Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    configuration_receipt_path: str=Field(min_length=1,strict=True)
+    configuration_receipt_sha256: str=Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    anchor_operation_native_id: int=Field(gt=0,le=2147483647,strict=True)
+    targets: list[dict[str,Annotated[int,Field(strict=True)]]]=Field(min_length=1,max_length=4,strict=True)
+    qualification_only: bool=Field(default=True,strict=True)
+    message_policy: Literal["vendor_default"]="vendor_default"
+
+    @field_validator("targets")
+    @classmethod
+    def exact_operation_geometry_targets(cls,targets):
+        names={"operation_native_id","feature_native_id","feature_setup_native_id","operation_setup_native_id","mill_operation_type"}
+        for target in targets:
+            if set(target)!=names or any(type(v) is not int or not (0 if k=="mill_operation_type" else 1)<=v<=2147483647 for k,v in target.items()):
+                raise ValueError("Exact typed bounded operation/feature target required")
+        if len({x["operation_native_id"] for x in targets})!=len(targets):raise ValueError("Duplicate operation target")
+        return targets
+
+    @model_validator(mode="after")
+    def saved_geometry_target(self):
+        if self.expected_document_title is not None:raise ValueError("Saved document path required")
+        if not absolute_document_path(self.expected_document_path) or Path(self.expected_document_path).suffix.casefold()!=".sldprt":raise ValueError("Absolute saved part required")
+        if self.qualification_only is not True:raise ValueError("Read-only qualification scope required")
+        return self
+
+
+@mcp.tool(name="solidworks_cam_inspect_operation_geometry",title="Inspect MILL Operation Toolpath Feature Geometry",
+          annotations={"readOnlyHint":True,"destructiveHint":False,"idempotentHint":True,"openWorldHint":False})
+def solidworks_cam_inspect_operation_geometry(params: SolidWorksCamOperationGeometryInput) -> str:
+    """读取有限个操作的三项 DOUBLE、模式布尔和三个指针存在状态；不推断空刀路原因。"""
+    def op():
+        _runtime_identity.assert_current()
+        if type(_selected_process_id) is not int or _selected_process_id!=params.process_id:
+            raise ValueError("Explicit connected process must match process_id")
+        from scripts import sw_cam_mill_operation_geometry as core
+        values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format"})
+        core.validate(values,params.addin_clsid)
+        sw,registration=_cam_target(params)
+        result=core.inspect_operation_geometry(sw,registration["clsid"],str(Path(registration["addin_path"]).parent/"camworks.tlb"),
+            **values,runtime_check=_runtime_identity.assert_current)
+        try:_runtime_identity.assert_current()
+        except Exception as error:
+            result.update(status="error",observation_verified=False,readback_verified=False,guards_verified=False,
+                parameters_complete=False,may_continue=False,runtime_unchanged=False,reason="RUNTIME_CHANGED_AFTER_READ",runtime_error=str(error))
+            return result
+        result["runtime_unchanged"]=True
+        return result
+    return _run_locked(op,params.response_format)
+
+
 if __name__ == "__main__":
     main()

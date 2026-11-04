@@ -1051,6 +1051,32 @@
         "interactive",
         "reviewed"
       ]
+    },
+    {
+      "id": "cam_mill_operation_geometry_read",
+      "label": "铣削操作自身刀路特征几何参数读取",
+      "level": "pilot",
+      "backends": [
+        "solidworks-com-pywin32",
+        "solidworks-com-comtypes"
+      ],
+      "verified_versions": [],
+      "dependencies": [
+        "SolidWorks",
+        "SOLIDWORKS CAM",
+        "pywin32",
+        "comtypes"
+      ],
+      "limitations": [
+        "Explicit owned process/lifetime/source and completed current-saved configuration anchor; one to four exact operation/feature/setup/type targets.",
+        "Two bounded equal route/target observations; two exact raw getters return three finite DOUBLEs, canonical Boolean and three nullable IDispatch-presence observations. No guessed geometry-interface traversal.",
+        "Native getter failures/null or exact declared-interface E_NOINTERFACE remain per-target diagnostics with guarded comparison; other unsafe/unsupported conditions stop. No mutation, GTP/GOP/Save or implicit retry.",
+        "Software tests only; no native geometry, units/frame, empty-toolpath cause or production qualification. See references/cam-mill-operation-geometry.md."
+      ],
+      "allowed_modes": [
+        "interactive",
+        "reviewed"
+      ]
     }
   ]
 }
