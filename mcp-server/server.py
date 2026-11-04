@@ -14073,5 +14073,32 @@ def solidworks_cam_qualify_turn_feature_plan_append(params: SolidWorksCamTurnFea
     return _run_locked(op, params.response_format)
 
 
+class SolidWorksReconcileOwnedStartupInput(BaseInput):
+    process_id: int = Field(gt=0,lt=2**31,strict=True)
+    expected_creation_filetime: int = Field(gt=116444736000000000,lt=2**63,strict=True)
+    expected_executable_path: str = Field(min_length=1,max_length=32767,strict=True)
+    startup_receipt_path: str = Field(min_length=1,max_length=32767,strict=True)
+    startup_receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    receipt_path: str = Field(min_length=1,max_length=32767,strict=True)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @model_validator(mode="after")
+    def exact_owned_startup_reconciliation(self):
+        from scripts.sw_owned_startup_reconciliation import parameters
+        parameters(self.model_dump(exclude={"response_format"}))
+        return self
+
+
+@mcp.tool(name="solidworks_reconcile_owned_startup", title="Reconcile Owned SOLIDWORKS Startup",
+    annotations={"readOnlyHint":True,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+def solidworks_reconcile_owned_startup(params: SolidWorksReconcileOwnedStartupInput) -> str:
+    """Verify a recorded ROT-wait launch against its exact live empty process; separate receipt, no setters or exit."""
+    def op():
+        if type(_selected_process_id) is not int or _selected_process_id!=params.process_id:
+            raise ValueError("Exact owned process must already be selected")
+        from scripts.sw_owned_startup_reconciliation import reconcile_owned_startup
+        return reconcile_owned_startup(params.model_dump(exclude={"response_format"}))
+    return _run_locked(op,params.response_format,load_automation=False,desktop_guard=True)
+
 if __name__ == "__main__":
     main()

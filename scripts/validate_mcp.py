@@ -61,6 +61,7 @@ REQUIRED_TOOLS = {
     "solidworks_cam_qualify_turn_reverse_setup",
     "solidworks_cam_qualify_turn_feature_copy",
     "solidworks_cam_qualify_turn_feature_plan_append",
+    "solidworks_reconcile_owned_startup",
     "solidworks_cam_qualify_feature_operation_plan",
     "solidworks_cam_configure_thread_pitch",
     "solidworks_cam_inspect_material_catalogue",
