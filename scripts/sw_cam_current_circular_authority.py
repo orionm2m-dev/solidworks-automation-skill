@@ -96,7 +96,10 @@ def _actions(d,kinds):
 def load_pocket(path,sha,*,process_id,source_path,source_sha256):
     """从原始 completed 配置到 sketch/feature/rough/Save 的逐步证据，不伪造旧类型。"""
     from scripts import sw_cam_current_saved_generation as generation
-    d,pin=read_pin(path,sha);b=_completed(d,POCKET_SCOPE);_identity(d,b,process_id,source_path,source_sha256)
+    d,pin=read_pin(path,sha)
+    if d.get('action')=='resume_after_feature':
+        return _load_resumed_pocket(d,pin,process_id=process_id,source_path=source_path,source_sha256=source_sha256)
+    b=_completed(d,POCKET_SCOPE);_identity(d,b,process_id,source_path,source_sha256)
     require(all(d.get(k) is True for k in FLAGS),'Circular creation/Save/runtime flags incomplete')
     actions=_actions(d,['CreateSketch','CreateMillFeature2','InsertOperation','SaveActiveDocument'])
     require(actions[-1].get('native_result')==dict(return_type='int',hresult=0),'Exact circular Save action result required')
@@ -123,6 +126,53 @@ def load_pocket(path,sha,*,process_id,source_path,source_sha256):
     require(fields.equal(base,loaded['state']),'Circular initial capture differs from original completed configuration')
     return dict(receipt=d,pin=pin,state=deepcopy(saved),binding=deepcopy(b),original=loaded,restore=dict(new_feature_native_id=fid,new_operations=deepcopy(ops),created_names=deepcopy(names)),addin_clsid=loaded['addin_clsid'],source_sha256=source_sha256,
         pins=dict(pocket=pin,original=ap,**{'original_'+k:p for k,p in loaded['pins'].items()},**{'history_'+k:p for k,p in loaded.get('recovery_pins',{}).items()}))
+
+
+
+def _load_resumed_pocket(d,pin,*,process_id,source_path,source_sha256):
+    """只接受已保存的真实 feature 后续动作；历史创建证据保持独立且不可变。"""
+    from scripts import sw_cam_current_saved_generation as generation
+    from scripts.sw_cam_current_circular_resume_evidence import load_history
+    require(d.get('scope')==POCKET_SCOPE and d.get('action')=='resume_after_feature' and d.get('status')=='review_required' and d.get('phase')=='finished','Exact completed feature continuation required')
+    require(not any(k in d for k in ('issue','failed_phase','runtime_error','receipt_write_error','cleanup_error')),'Partial or failed continuation rejected')
+    require(d.get('continuation_stage')=='after_feature' and d.get('continuation_verified') is True and d.get('creation_replayed') is False,'Verified nonreplayed feature continuation required')
+    for key in ('GOP_attempted','GTP_attempted','AFR_attempted','native_dispatch_pending'):
+        require(d.get(key) is False,'Unexpected continuation side effect or pending outcome: '+key)
+    clean_events(d)
+    b=d.get('binding');require(type(b) is dict and b.get('continuation_mode')=='after_feature' and d.get('request_pin')==dict(kind='canonical_binding',sha256=_digest(b)),'Exact canonical feature-continuation binding required')
+    _identity(d,b,process_id,source_path,source_sha256)
+    require(all(d.get(k) is True for k in FLAGS),'Continuation creation/Save/runtime flags incomplete')
+    require(type(d.get('save_hresult')) is int and d['save_hresult']==0,'One strict successful continuation Save required')
+    actions=_actions(d,['InsertOperation','SaveActiveDocument'])
+    require(actions[0].get('native_result',{}).get('nonnull') is True and actions[-1].get('native_result')==dict(return_type='int',hresult=0),'Actual nonnull insert and exact Save result required')
+    ap=d.get('authority_pin');require(type(ap) is dict,'Original completed configuration pin required')
+    _,actual=read_pin(ap['path'],ap['sha256']);require(actual==ap,'Original configuration pin differs')
+    require(Path(b.get('configuration_receipt_path','')).resolve()==Path(ap['path']).resolve() and b.get('configuration_receipt_sha256')==ap['sha256'],'Original configuration binding/pin differs')
+    loaded=generation.load_completed_configuration(ap['path'],ap['sha256'],process_id=process_id,source_path=source_path,source_sha256=d['source_before_sha256'],selected_ids=[b['anchor_operation_native_id']])
+    require(b['expected_source_sha256']==d['source_before_sha256'] and type(b['expected_process_create_time']) is type(loaded['binding']['expected_process_create_time']) and b['expected_process_create_time']==loaded['binding']['expected_process_create_time'],'Original continuation source/lifetime differs')
+    history=load_history(b,loaded)
+    require(fields.equal(d.get('continuation_pins'),history['pins']),'Immutable continuation history pins differ')
+    expected_keys=dict(before='before',after_sketch='confirm_after_sketch',after_feature='confirm_after_feature')
+    require(fields.equal(d.get('historical_capture_keys'),expected_keys),'Exact historical capture provenance required')
+    for key,hkey in (('historical_before','historical_before'),('historical_after_sketch','historical_after_sketch'),('historical_after_feature','expected_state')):
+        require(fields.equal(d.get(key),history[hkey]),'Raw historical capture differs: '+key)
+    original_binding=history['original_binding']
+    require(original_binding['expected_source_sha256']==d['source_before_sha256'],'Historical source differs')
+    fid=d.get('new_feature_native_id');ops=d.get('new_operations');names=d.get('created_names')
+    require(type(fid) is int and fid>0 and fid==history['new_feature_native_id'] and fields.equal(names,history['created_names']),'Actual retained feature/sketch identity differs')
+    require(type(ops) is list and len(ops)==1 and type(ops[0].get('native_id')) is int and ops[0]['native_id']>0,'Exactly one actual inserted rough required')
+    oid=ops[0]['native_id'];require(type(d.get('new_operation_native_id')) is int and d['new_operation_native_id']==oid,'Recorded new operation ID differs')
+    before=_pair(d,'before');insert=_pair(d,'after_insert');saved=_pair(d,'saved')
+    require(all(x.get('extended_capture_complete') is True for x in (before,insert,saved)),'Complete extended continuation captures required')
+    require(circular_state_equal(before,history['expected_state']),'Fresh feature continuation differs from immutable retained state')
+    pocket.verify_feature(history['historical_after_sketch'],before,original_binding,fid)
+    actual_op=pocket.verify_insert(before,insert,original_binding,oid,fid)
+    require(fields.equal(ops,[actual_op]),'Recorded operation differs from actual insertion capture')
+    pocket.verify_saved(insert,saved,source_sha256)
+    require(saved['document']['needs_save'] is False and saved['sketch_state']['needs_save'] is False and saved['parameter_capture_complete'] is True and saved['parameter_batch']['read_complete'] is True,'Clean saved continuation with complete own parameters required')
+    pins=dict(pocket=pin,original=ap,**{'original_'+k:p for k,p in loaded['pins'].items()},**{'history_'+k:p for k,p in loaded.get('recovery_pins',{}).items()})
+    pins.update({'creation_resume_'+k:p for k,p in history['pins'].items()})
+    return dict(receipt=d,pin=pin,state=deepcopy(saved),binding=deepcopy(original_binding),original=loaded,restore=dict(new_feature_native_id=fid,new_operations=deepcopy(ops),created_names=deepcopy(names)),addin_clsid=loaded['addin_clsid'],source_sha256=source_sha256,pins=pins)
 
 
 def load_inputs(v,clsid=None):

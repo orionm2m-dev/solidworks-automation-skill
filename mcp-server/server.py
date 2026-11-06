@@ -8592,6 +8592,15 @@ class SolidWorksCamCurrentCircularPocketInput(SolidWorksCamTargetInput):
     model_config=ConfigDict(extra="forbid",str_strip_whitespace=False)
     mode: Literal["current_saved"]
     action: Literal["prepare","apply"]
+    continuation_mode: Literal["none","after_feature"]="none"
+    partial_receipt_path: str | None=Field(default=None,strict=True)
+    partial_receipt_sha256: str | None=Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+    old_marker_path: str | None=Field(default=None,strict=True)
+    old_marker_sha256: str | None=Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+    original_apply_request_path: str | None=Field(default=None,strict=True)
+    original_apply_request_sha256: str | None=Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+    original_prepare_receipt_path: str | None=Field(default=None,strict=True)
+    original_prepare_receipt_sha256: str | None=Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
     process_id: int=Field(gt=0,le=2147483647,strict=True)
     expected_process_create_time: float=Field(gt=0,strict=True,allow_inf_nan=False)
     expected_document_path: str=Field(min_length=1,strict=True)
@@ -8624,6 +8633,9 @@ class SolidWorksCamCurrentCircularPocketInput(SolidWorksCamTargetInput):
         if self.expected_document_title is not None or not absolute_document_path(self.expected_document_path) or Path(self.expected_document_path).suffix.lower()!=".sldprt":raise ValueError("Exact saved part path required")
         if self.qualification_only is not True or self.save_after_verified is not True:raise ValueError("Qualification and checked Save required")
         geometry_spec(self.model_dump())
+        pins=[getattr(self,key+suffix) for key in ('partial_receipt','old_marker','original_apply_request','original_prepare_receipt') for suffix in ('_path','_sha256')]
+        if self.continuation_mode=='after_feature' and not all(pins):raise ValueError('Four immutable feature-stage history pins required')
+        if self.continuation_mode=='none' and any(x is not None for x in pins):raise ValueError('Ordinary creation rejects continuation history')
         if self.action=="apply" and not (self.prepare_receipt_path and self.prepare_receipt_sha256):raise ValueError("Exact prior prepare required")
         if self.action=="prepare" and (self.prepare_receipt_path is not None or self.prepare_receipt_sha256 is not None):raise ValueError("Prepare has no prior prepare")
         return self

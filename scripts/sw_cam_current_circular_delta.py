@@ -56,14 +56,20 @@ def verify_geometry(state,v,new_id):
     h=state['target_header'];g=state['target_geometry'];spec=geometry_spec(v);p=spec['profile'];depth=v['depth_native'];axis=v['expected_setup_axis'];diam=2*p['radius_mm']
     require(h['native_id']==g['native_id']==new_id and h['volume_type']==g['volume_type']==2 and h['suppressed'] is False and g['suppressed'] is False,'Exact active closed pocket required')
     for row in (h,g):
-        require(vector(row['axis_native'],axis) and vector(row['start_native'],p['center_model_mm']) and vector(row['bounds_native'],[diam,diam,depth]) and close(row['depth_native'],depth),'Pocket axis/start/radius/depth readback differs')
+        require(vector(row['axis_native'],axis) and vector(row['start_native'],p['center_model_mm']) and close(row['depth_native'],depth),'Pocket axis/start/depth readback differs')
     require(h['subtype_raw']==0,'Simple closed pocket required')
-    measured=state['measured_circle'];proof=prove_mill_circle_geometry(measured,g['top_curves_native'],g['bottom_curves_native'],depth,axis)
+    for row in (h,g):require(type(row['bounds_native']) is list and len(row['bounds_native'])==3 and all(type(x) is float and math.isfinite(x) for x in row['bounds_native']),'Three finite observed GetBoundParams values required')
+    require(equal(h['bounds_native'],g['bounds_native']),'Independent raw feature bounds differ')
+    measured=state['measured_circle']
+    require(type(measured['radius_m']) is float and math.isfinite(measured['radius_m']) and type(measured['center_model_m']) is list and len(measured['center_model_m'])==3 and all(type(x) is float and math.isfinite(x) for x in measured['center_model_m']),'Finite measured sketch circle scalars required')
+    require(close(measured['radius_m']*1000.,p['radius_mm']) and vector([x*1000. for x in measured['center_model_m']],p['center_model_mm']),'Measured sketch circle differs from requested center/radius')
+    proof=prove_mill_circle_geometry(measured,g['top_curves_native'],g['bottom_curves_native'],depth,axis)
     require(proof['contour_verified'] is True and close(proof['native_units_per_mm'],1.) and proof['relation'] in ('coplanar','depth_separated'),'Measured circular contour and native radial scale required')
     require(vector(proof['top_circle_native']['center'],p['center_model_mm']),'Native top circle differs from explicit model-space center')
     if proof['relation']=='depth_separated':
         end=[p['center_model_mm'][i]+axis[i]*depth for i in range(3)]
         require(close(proof['signed_separation_along_feature_axis_native'],depth) and vector(proof['bottom_circle_native']['center'],end),'Bottom contour is on wrong side of the requested pocket')
+    proof['observed_GetBoundParams']=deepcopy(h['bounds_native']);proof['GetBoundParams_used_as_analytic_diameter']=False
     proof['nominal_end_from_header_and_owner_direction']=[p['center_model_mm'][i]+axis[i]*depth for i in range(3)]
     proof['nominal_end_is_measured_bottom']=proof['relation']=='depth_separated'
     return proof

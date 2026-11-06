@@ -43,6 +43,8 @@ class NativeCircularContext(batch.NativeBatchContext):
     def __init__(self,sw,clsid,tlb,request,loaded,report,persist,runtime_check,*,restore=None,continuation_pins=()):
         self.request=request;self.loaded=loaded;self._native_read_limit=48000
         original=batch.load_inputs(loaded['binding'],clsid)
+        if '_feature_resume' in loaded:
+            original=deepcopy(original);original['recovery']={'expected_state':deepcopy(loaded['_feature_resume']['expected_state'])}
         v=deepcopy(loaded['binding']);v['expected_source_sha256']=request['expected_source_sha256']
         v['expected_candidate_consumer_ids']=deepcopy(loaded['state']['parameter_batch']['candidate_consumer_ids'])
         super().__init__(sw,clsid,tlb,v,original,report,persist,runtime_check)
@@ -51,7 +53,7 @@ class NativeCircularContext(batch.NativeBatchContext):
         self.reference_consumers=deepcopy(loaded['state']['parameter_batch']['candidate_consumer_ids'])
         self.pins.extend(deepcopy(list(continuation_pins)))
         if restore is not None:
-            self.new_feature_id=restore['new_feature_native_id'];self.new_operation_ids=[r['native_id'] for r in restore['new_operations']];self.created_names=list(restore['created_names']);self.new_own_tool_id=restore['new_operations'][0]['assigned_tool']['native_id']
+            self.new_feature_id=restore['new_feature_native_id'];self.new_operation_ids=[r['native_id'] for r in restore['new_operations']];self.created_names=list(restore['created_names']);self.new_own_tool_id=restore['new_operations'][0]['assigned_tool']['native_id'] if restore['new_operations'] else None
     def verify_files(self):
         for pin in self.pins:require(read_pin(pin['path'],pin['sha256'])[1]==pin,'Immutable circular authority changed')
         if self.request.get('prepare_receipt_path'):read_pin(self.request['prepare_receipt_path'],self.request['prepare_receipt_sha256'])
