@@ -55,13 +55,76 @@ class NativeCircularContext(batch.NativeBatchContext):
         if restore is not None:
             self.new_feature_id=restore['new_feature_native_id'];self.new_operation_ids=[r['native_id'] for r in restore['new_operations']];self.created_names=list(restore['created_names']);self.new_own_tool_id=restore['new_operations'][0]['assigned_tool']['native_id'] if restore['new_operations'] else None
     def verify_files(self):
-        for pin in self.pins:require(read_pin(pin['path'],pin['sha256'])[1]==pin,'Immutable circular authority changed')
-        if self.request.get('prepare_receipt_path'):read_pin(self.request['prepare_receipt_path'],self.request['prepare_receipt_sha256'])
+        if getattr(self,'_capture_pin_scope',False) is True:
+            self._capture_pin_episode['nested_checks_deferred']+=1
+            return
+        # 仅重试文件传输异常；不重放原生调用，也不放宽哈希或完整 identity。
+        from time import sleep
+        def checked(path,sha,expected=None):
+            episode=None
+            for attempt in range(1,4):
+                try:observed=read_pin(path,sha)[1]
+                except Exception as exc:
+                    cause=exc.__cause__
+                    retryable=type(exc) is ValueError and isinstance(cause,OSError)
+                    if not retryable:
+                        if episode is not None:
+                            episode.update(outcome='non_retryable_error',completed_attempt=attempt);self.persist()
+                        raise
+                    if episode is None:
+                        journal=self.report.setdefault('file_pin_read_retries',[])
+                        if len(journal)>=64:
+                            self.report['file_pin_retry_journal_limit_reached']=True;self.persist();raise
+                        episode=dict(path=path,sha256=sha,failures=[],outcome='retry_pending')
+                        journal.append(episode)
+                    episode['failures'].append(dict(attempt=attempt,errno=cause.errno if type(cause.errno) is int else None,winerror=getattr(cause,'winerror',None) if type(getattr(cause,'winerror',None)) is int else None))
+                    episode.update(outcome='retry_budget_exhausted' if attempt==3 else 'retry_pending',completed_attempt=attempt)
+                    self.persist()
+                    if attempt==3:raise
+                    sleep(0.05);continue
+                matches=expected is None or observed==expected
+                if episode is not None:
+                    episode.update(outcome='verified_after_retry' if matches else 'pin_mismatch',completed_attempt=attempt);self.persist()
+                require(matches,'Immutable circular authority changed')
+                return observed
+        for pin in self.pins:checked(pin['path'],pin['sha256'],pin)
+        if self.request.get('prepare_receipt_path'):checked(self.request['prepare_receipt_path'],self.request['prepare_receipt_sha256'])
     def guard(self):
+        require(getattr(self,'_capture_pin_scope',False) is False,'Native dispatch forbidden inside read-only capture')
         from scripts.sw_cam_dispatch_guard import ScopedCamDispatchGuard
         expected=self.boundary()
         return ScopedCamDispatchGuard(self.sw,self.tlb,process_id=self.v['process_id'],expected_document=expected,source_sha256=self.source,evidence_pins=self.pins,verify_evidence=self.verify_files,verify_owned_process=lambda:self.boundary(),check_events=self.check)
+    def save(self,pending,returned):
+        require(getattr(self,'_capture_pin_scope',False) is False,'Save forbidden inside read-only capture')
+        return super().save(pending,returned)
     def capture(self,label,consumer_ids=None,generation_observations=None,attempted_generation_ids=()):
+        # 只在一个只读捕获内合并历史文件检查；身份、源文件、runtime、事件边界不变。
+        require(getattr(self,'_capture_pin_scope',False) is False,'Nested circular capture forbidden')
+        episode=dict(label=label,entry_verified=False,exit_verified=False,nested_checks_deferred=0)
+        self.report.setdefault('capture_pin_checks',[]).append(episode)
+        self.boundary();episode['entry_verified']=True
+        self._capture_pin_episode=episode;self._capture_pin_scope=True
+        failed=True
+        try:
+            value=self._capture_readonly(label,consumer_ids,generation_observations,attempted_generation_ids)
+            failed=False
+            return value
+        except BaseException as error:
+            episode['capture_error_type']=type(error).__name__
+            raise
+        finally:
+            self._capture_pin_scope=False;self._capture_pin_episode=None
+            try:
+                self.boundary();episode['exit_verified']=True
+            except BaseException as error:
+                failed=True;episode['exit_error_type']=type(error).__name__
+                raise
+            finally:
+                state=self.report.get(label)
+                if failed and type(state) is dict:
+                    state['capture_complete']=False;state['extended_capture_complete']=False
+                self.persist()
+    def _capture_readonly(self,label,consumer_ids=None,generation_observations=None,attempted_generation_ids=()):
         # 新操作只在实际 GTP attempt 后接受当次 route 返回的正记录数。
         if consumer_ids is None:consumer_ids=list(self.reference_consumers)+([self.new_operation_ids[0]] if self.new_operation_ids and getattr(self,'new_own_tool_id',None)==self.v['candidate_tool_native_id'] else [])
         require(all(type(x) is int for x in attempted_generation_ids) and set(attempted_generation_ids)<=set(self.new_operation_ids),'Generation scope outside actual new operations')
