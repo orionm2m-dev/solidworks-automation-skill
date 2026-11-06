@@ -14486,6 +14486,7 @@ class SolidWorksCamOperationGeometryInput(SolidWorksCamTargetInput):
     configuration_receipt_sha256: str=Field(pattern=r"^[0-9a-f]{64}$",strict=True)
     anchor_operation_native_id: int=Field(gt=0,le=2147483647,strict=True)
     targets: list[dict[str,Annotated[int,Field(strict=True)]]]=Field(min_length=1,max_length=4,strict=True)
+    observation_mode: Literal["tp_geometry","virtual_features"]="tp_geometry"
     qualification_only: bool=Field(default=True,strict=True)
     message_policy: Literal["vendor_default"]="vendor_default"
 
@@ -14504,6 +14505,7 @@ class SolidWorksCamOperationGeometryInput(SolidWorksCamTargetInput):
         if self.expected_document_title is not None:raise ValueError("Saved document path required")
         if not absolute_document_path(self.expected_document_path) or Path(self.expected_document_path).suffix.casefold()!=".sldprt":raise ValueError("Absolute saved part required")
         if self.qualification_only is not True:raise ValueError("Read-only qualification scope required")
+        if self.observation_mode=="virtual_features" and (len(self.targets)!=1 or self.targets[0]["operation_native_id"]!=self.anchor_operation_native_id):raise ValueError("Virtual observation requires the one pinned anchor operation")
         return self
 
 
@@ -14524,7 +14526,7 @@ def solidworks_cam_inspect_operation_geometry(params: SolidWorksCamOperationGeom
         try:_runtime_identity.assert_current()
         except Exception as error:
             result.update(status="error",observation_verified=False,readback_verified=False,guards_verified=False,
-                parameters_complete=False,may_continue=False,runtime_unchanged=False,reason="RUNTIME_CHANGED_AFTER_READ",runtime_error=str(error))
+                parameters_complete=False,virtual_collection_complete=False,may_continue=False,runtime_unchanged=False,reason="RUNTIME_CHANGED_AFTER_READ",runtime_error=str(error))
             return result
         result["runtime_unchanged"]=True
         return result

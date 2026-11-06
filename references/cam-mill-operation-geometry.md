@@ -56,3 +56,39 @@ diagnostics and are never accepted as valid parameters. Other nonzero or untyped
 returns still stop. None of these outcomes establishes why a toolpath is empty.
 The initial native status1/null observation motivated this bounded software change;
 the completed two-target continuation remains a separate native qualification.
+
+## Explicit virtual-feature metadata observation
+
+`observation_mode` defaults to `tp_geometry`, preserving the original two-getter
+path. `virtual_features` instead requires exactly one target equal to the pinned
+anchor operation. It reads that operation's `ICWOperation.IGetAllVirtualHoleFeatures`
+(DISP30, HRESULT with IDispatch retval) into caller-owned storage. No virtual member
+is automatically passed to GetTpBaseFeature or cast by its name.
+
+For S_OK/non-null only, standard IDispatch GetTypeInfoCount and GetTypeInfo(0,0)
+provide type metadata. Exact standard ITypeInfo binding reads GUID, raw typekind
+and at most 256 name characters. GetTypeAttr uses an owned pointer and immediate
+ReleaseTypeAttr in a finally block, including event/error exits. All IDispatch
+outputs, including collection Item, use raw wrappers to avoid automatic
+GetBestInterface discovery. GetDocumentation strings are owned BSTR buffers;
+description/help-file content is not retained.
+
+Only the observed exact ICWDispatchCollection GUID
+`{670DD771-2C33-11D6-A9A1-00062999E55F}` admits collection QI, raw Count and raw Item.
+Count must be 0 through 8 before any Item call; indices are exactly 0 through
+Count-1. Each member contributes standard type metadata only. Unknown GUIDs,
+no type information, nulls, native COM failures and integer status1 remain bounded
+diagnostics, without guessed casts, alternate enumeration or retries. Unsupported
+statuses/counts, invalid ABI, failed cleanup or unsafe context stop the observation
+and retain partial evidence. Status1 outputs never become complete metadata.
+
+`virtual_collection_complete` distinguishes an admitted fully observed collection
+from stable diagnostics; zero Count is a collection observation, not the cause of
+an empty toolpath. The existing `pointer_interfaces_traversed` flag describes the
+opaque geometry outputs of the `tp_geometry` mode; the virtual mode explicitly
+traverses only this bounded collection and standard metadata, never member
+geometry. `parameters_complete` remains false in virtual mode. Two matching
+captures and the existing source/process/event/runtime guards are still required.
+The new mode has offline software coverage only and needs separate native
+qualification; no geometry, feature binding, toolpath cause or machining claim is
+made. There is no new endpoint, mutation, Save or GTP action.

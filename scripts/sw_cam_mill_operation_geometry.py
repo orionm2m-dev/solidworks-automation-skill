@@ -64,12 +64,14 @@ def validate(v,clsid=None):
     require(type(v['expected_document_path']) is str and absolute_document_path(v['expected_document_path']) and Path(v['expected_document_path']).suffix.casefold()=='.sldprt','Absolute saved part required')
     for key in ('expected_source_sha256','configuration_receipt_sha256'):require(type(v[key]) is str and re.fullmatch('[0-9a-f]{64}',v[key]),'Exact SHA required')
     require(v['qualification_only'] is True and v['message_policy']=='vendor_default','Qualification read only required')
+    mode=v.get('observation_mode','tp_geometry');require(mode in ('tp_geometry','virtual_features'),'Fixed observation mode required')
     targets=v['targets'];require(type(targets) is list and 1<=len(targets)<=4,'One to four explicit operation/feature targets required')
     keys={'operation_native_id','feature_native_id','feature_setup_native_id','operation_setup_native_id','mill_operation_type'}
     for target in targets:
         require(type(target) is dict and set(target)==keys,'Exact target fields required')
         for key,value in target.items():integer(value,key,0 if key=='mill_operation_type' else 1)
     require(len({t['operation_native_id'] for t in targets})==len(targets),'Unique target operations required')
+    if mode=='virtual_features':require(len(targets)==1 and targets[0]['operation_native_id']==v['anchor_operation_native_id'],'Virtual observation requires the one pinned anchor operation')
     loaded=load_completed_configuration(v['configuration_receipt_path'],v['configuration_receipt_sha256'],process_id=v['process_id'],
         source_path=v['expected_document_path'],source_sha256=v['expected_source_sha256'],selected_ids=[v['anchor_operation_native_id']])
     require(loaded['binding']['expected_process_create_time']==tm,'Saved authority lifetime differs')
@@ -180,13 +182,17 @@ def capture(app,loaded,v,*,read,typed,raw_call,boundary,state):
         operation=typed(native['operations'][oid],'ICWOperation')
         require(_object_id(doc,operation,read)==oid,'Selected own operation ID differs')
         row=dict(target=deepcopy(target));state['selected'].append(row)
-        boundary();read_geometry(operation,feature,typed=typed,raw_call=raw_call,row=row,boundary=boundary)
+        boundary()
+        if v.get('observation_mode','tp_geometry')=='virtual_features':
+            from scripts.sw_cam_virtual_feature_observation import read_virtual_features
+            read_virtual_features(operation,typed=typed,raw_call=raw_call,row=row,boundary=boundary)
+        else:read_geometry(operation,feature,typed=typed,raw_call=raw_call,row=row,boundary=boundary)
     boundary();state['capture_complete']=True
 
 
 def inspect_operation_geometry(sw,clsid,typelib_path,*,process_id,expected_process_create_time,expected_document_path,
         expected_source_sha256,configuration_receipt_path,configuration_receipt_sha256,anchor_operation_native_id,
-        targets,qualification_only=True,message_policy='vendor_default',runtime_check=None):
+        targets,observation_mode='tp_geometry',qualification_only=True,message_policy='vendor_default',runtime_check=None):
     """返回两次有界原始观察；空指针或 getter COM 失败不等于空刀路原因。"""
     v=locals().copy();session=None;runtime_check=runtime_check or (lambda:None)
     report=dict(scope=SCOPE,status='running',phase='validation',read_pending=True,read_only=True,mutation_attempted=False,GTP_attempted=False,
@@ -194,9 +200,13 @@ def inspect_operation_geometry(sw,clsid,typelib_path,*,process_id,expected_proce
         observation_verified=False,readback_verified=False,guards_verified=False,may_continue=False,parameters_complete=False,
         units_verified=False,coordinate_frame_verified=False,full_contours_read=False,pointer_interfaces_traversed=False,
         empty_toolpath_cause_proven=False,production_qualified=False,native_read_count=0,raw_getter_attempts=0,
-        post_cleanup_cam_read_performed=False,targets=deepcopy(targets))
+        post_cleanup_cam_read_performed=False,targets=deepcopy(targets),observation_mode=observation_mode,virtual_collection_complete=False)
     try:
         loaded=validate(v,clsid);report['authority_pin']=deepcopy(loaded['pin']);report['getter_abi']=preflight(typelib_path);runtime_check()
+        raw_names=(RAW_BASE,RAW_PARAMS)
+        if observation_mode=='virtual_features':
+            from scripts import sw_cam_virtual_feature_observation as virtual
+            report['virtual_getter_abi']=virtual.preflight(typelib_path);raw_names=virtual.RAW_READS
         def identity():
             runtime_check()
             process=_process_identity(process_id)
@@ -223,9 +233,12 @@ def inspect_operation_geometry(sw,clsid,typelib_path,*,process_id,expected_proce
             def read(obj,name,*args):
                 admission(name);value=_member(obj,name,*args);check();return value
             def typed(obj,name):
+                if observation_mode=='virtual_features' and name=='ITypeInfo':
+                    from comtypes.typeinfo import ITypeInfo
+                    admission('QI ITypeInfo');value=obj.QueryInterface(ITypeInfo);check();return value
                 require(name in INTERFACES,'Interface outside fixed read scope');admission('QI '+name);value=_typed(obj,name,typelib_path);check();return value
             def raw_call(obj,name,args,entry,observe):
-                require(name in (RAW_BASE,RAW_PARAMS),'Only two fixed raw getters allowed');admission(name)
+                require(name in raw_names,'Only fixed raw getters allowed');admission(name)
                 entry.update(attempted=True,returned=False,owned_output_storage=True,automatic_retry=False)
                 report['raw_getter_attempts']+=1
                 try:
@@ -243,13 +256,14 @@ def inspect_operation_geometry(sw,clsid,typelib_path,*,process_id,expected_proce
             require(summary.get('active') is False and summary.get('subscribed') is True and summary.get('disconnected') is True
                 and not any(summary.get(k) for k in EVENT_ERRORS),'Event cleanup not confirmed')
             require(identity()==initial,'Identity changed after cleanup')
+            report['virtual_collection_complete']=observation_mode=='virtual_features' and all(x.get('virtual_collection_complete') is True for x in report['after']['selected'])
             report.update(status='review_required',phase='finished',read_pending=False,
                 observed_target_outcomes=[x['outcome'] for x in report['after']['selected']],
-                observation_result='complete_declared_parameters' if all(x['parameters_complete'] for x in report['after']['selected']) else 'stable_null_or_unsupported_or_COM_diagnostics',
+                observation_result='stable_virtual_collection_metadata' if report['virtual_collection_complete'] else 'complete_declared_parameters' if all(x['parameters_complete'] for x in report['after']['selected']) else 'stable_null_or_unsupported_or_COM_diagnostics',
                 observation_verified=True,readback_verified=True,guards_verified=True,
                 parameters_complete=all(x['parameters_complete'] for x in report['after']['selected']),reason='STABLE_DECLARED_OUTPUT_DIAGNOSTICS_NO_CAUSE_OR_MACHINING_CLAIM')
     except Exception as exc:
-        report.update(status='error',failed_phase=report['phase'],phase='finished',read_pending=False,issue=_error(exc),observation_verified=False,readback_verified=False,guards_verified=False,parameters_complete=False)
+        report.update(status='error',failed_phase=report['phase'],phase='finished',read_pending=False,issue=_error(exc),observation_verified=False,readback_verified=False,guards_verified=False,parameters_complete=False,virtual_collection_complete=False)
     finally:
         if session is not None:report['messages']=session.summary()
     return report
