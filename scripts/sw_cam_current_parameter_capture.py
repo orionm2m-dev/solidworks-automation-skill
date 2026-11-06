@@ -60,7 +60,7 @@ def read_own_nc(raw,out,*,read,typed,boundary):
     out['read_complete']=True
     return out
 
-def capture_parameter_batch(state,native,targets,*,feature_id,candidate_tool_native_id,expected_candidate_consumer_ids,read,typed,boundary,generation_observations=None):
+def capture_parameter_batch(state,native,targets,*,feature_id,candidate_tool_native_id,expected_candidate_consumer_ids,read,typed,boundary,generation_observations=None,expected_operation_types=(0,1)):
     """Append actual parameters, toolcrib witnesses and operation-owned NC rows.
 
     Candidate consumers are ALL route consumers, in route order. Their NC values
@@ -69,23 +69,24 @@ def capture_parameter_batch(state,native,targets,*,feature_id,candidate_tool_nat
     integer(feature_id,'feature ID',1);integer(candidate_tool_native_id,'candidate tool ID',1)
     rows,_=_inventory(state);ids=[r['native_id'] for r in rows]
     require(state.get('capture_complete') is True and set(native['operations'])==set(ids),'Complete current route handles required')
-    require(type(targets) is list and len(targets)==2,'Explicit rough/finish pair required')
+    require(type(expected_operation_types) is tuple and expected_operation_types in ((0,),(0,1)),'Explicit bounded parameter operation types required')
+    require(type(targets) is list and len(targets)==len(expected_operation_types),'Exact parameter target count required')
     require(type(expected_candidate_consumer_ids) is list and all(type(i) is int and 0<i<2**32 for i in expected_candidate_consumer_ids) and len(set(expected_candidate_consumer_ids))==len(expected_candidate_consumer_ids),'Strict ordered candidate usage IDs required')
     observations={} if generation_observations is None else deepcopy(generation_observations)
     require(type(observations) is dict and all(type(k) is int and k>0 and type(v) is list and len(v)==1 and type(v[0]) is int and 0<v[0]<=100000 for k,v in observations.items()),'Exact observed generated-count map required')
     require(set(observations)<={r['native_id'] for r in targets},'Generated observations outside explicit parameter targets')
     selected=[]
-    for kind,row in enumerate(targets):
+    for kind,row in zip(expected_operation_types,targets):
         matches=[r for r in rows if r['native_id']==row['native_id']]
         require(len(matches)==1 and matches[0]==row and type(row['mill_operation_type']) is int and row['mill_operation_type']==kind and row['linked_feature_ids']==[feature_id] and row['suppressed'] is False and row['toolpath_generated'] is bool(observations.get(row['native_id'],[])) and row['toolpath_record_counts']==observations.get(row['native_id'],[]),'Exact explicitly observed own rough/finish targets required')
         selected.append(deepcopy(row))
-    require(selected[0]['native_id']!=selected[1]['native_id'] and selected[0]['setup_native_id']==selected[1]['setup_native_id'],'Distinct targets in one setup required')
+    require(len({r['native_id'] for r in selected})==len(selected) and len({r['setup_native_id'] for r in selected})==1,'Distinct targets in one setup required')
     consumers=[r for r in rows if r['assigned_tool']['native_id']==candidate_tool_native_id]
     require([r['native_id'] for r in consumers]==expected_candidate_consumer_ids,'Candidate tool usage differs from pinned current route')
     out=dict(read_complete=False,candidate_tool=None,toolcrib_catalogue=[],source_tools={},target_nc={},candidate_consumers={},candidate_consumer_ids=list(expected_candidate_consumer_ids),full_tool_profiles_read=False,physical_tool_qualified=False,native_units_verified=False)
     state['parameter_batch']=out
     boundary();require(_object_id(native['doc'],native['selected_feature'],read)==feature_id,'Exact native parameter feature required')
-    parameters.capture_rows(state,native,selected,feature_id=feature_id,read=read,typed=typed,boundary=boundary,generation_observations=observations)
+    parameters.capture_rows(state,native,selected,feature_id=feature_id,read=read,typed=typed,boundary=boundary,generation_observations=observations,expected_operation_types=expected_operation_types)
     class Batch:
         def read(self,*a):return read(*a)
         def typed(self,*a):return typed(*a)

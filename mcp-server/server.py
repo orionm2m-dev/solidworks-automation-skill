@@ -8587,17 +8587,74 @@ class SolidWorksCamAddCircularPocketInput(SolidWorksCamSavedMillPlanToolsInput):
         return self
 
 
+class SolidWorksCamCurrentCircularPocketInput(SolidWorksCamTargetInput):
+    """当前已保存路线上的一个圆形口袋和一项显式 Rough；无 GOP/GTP。"""
+    model_config=ConfigDict(extra="forbid",str_strip_whitespace=False)
+    mode: Literal["current_saved"]
+    action: Literal["prepare","apply"]
+    process_id: int=Field(gt=0,le=2147483647,strict=True)
+    expected_process_create_time: float=Field(gt=0,strict=True,allow_inf_nan=False)
+    expected_document_path: str=Field(min_length=1,strict=True)
+    expected_source_sha256: str=Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    configuration_receipt_path: str=Field(min_length=1,strict=True)
+    configuration_receipt_sha256: str=Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    anchor_operation_native_id: int=Field(gt=0,le=2147483647,strict=True)
+    owner_setup_native_id: int=Field(gt=0,le=2147483647,strict=True)
+    operation_setup_native_id: int=Field(gt=0,le=2147483647,strict=True)
+    insert_after_operation_native_id: int=Field(gt=0,le=2147483647,strict=True)
+    expected_setup_axis: list[Annotated[float,Field(strict=True,allow_inf_nan=False)]]=Field(min_length=3,max_length=3,strict=True)
+    sketch_spec: dict
+    depth_native: float=Field(gt=0,le=1000,strict=True,allow_inf_nan=False)
+    reverse_direction: bool=Field(strict=True)
+    rough_definition: dict
+    expected_default_tool: dict
+    candidate_tool_native_id: int=Field(gt=0,le=2147483647,strict=True)
+    expected_candidate_consumer_ids: list[Annotated[int,Field(gt=0,strict=True)]]=Field(max_length=32,strict=True)
+    receipt_path: str=Field(min_length=1,strict=True)
+    attempt_registry_path: str=Field(min_length=1,strict=True)
+    prepare_receipt_path: str | None=None
+    prepare_receipt_sha256: str | None=Field(default=None,pattern=r"^[0-9a-f]{64}$")
+    save_after_verified: bool=Field(default=True,strict=True)
+    qualification_only: bool=Field(default=True,strict=True)
+    message_policy: Literal["vendor_default"]="vendor_default"
+
+    @model_validator(mode="after")
+    def circular_current_contract(self):
+        from scripts.sw_cam_current_circular_delta import geometry_spec
+        if self.expected_document_title is not None or not absolute_document_path(self.expected_document_path) or Path(self.expected_document_path).suffix.lower()!=".sldprt":raise ValueError("Exact saved part path required")
+        if self.qualification_only is not True or self.save_after_verified is not True:raise ValueError("Qualification and checked Save required")
+        geometry_spec(self.model_dump())
+        if self.action=="apply" and not (self.prepare_receipt_path and self.prepare_receipt_sha256):raise ValueError("Exact prior prepare required")
+        if self.action=="prepare" and (self.prepare_receipt_path is not None or self.prepare_receipt_sha256 is not None):raise ValueError("Prepare has no prior prepare")
+        return self
+
+
 @mcp.tool(name="solidworks_cam_add_circular_pocket_plan",
 
     title="Add One Circular Pocket and Its MILL Plan",
 
     annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False})
 
-def solidworks_cam_add_circular_pocket_plan(params: SolidWorksCamAddCircularPocketInput) -> str:
+def solidworks_cam_add_circular_pocket_plan(params: SolidWorksCamAddCircularPocketInput | SolidWorksCamCurrentCircularPocketInput) -> str:
 
     """Create and save a circle, add one pocket, RETAIN its definitions, verify and save."""
 
     def op():
+        if isinstance(params,SolidWorksCamCurrentCircularPocketInput):
+            _runtime_identity.assert_current()
+            if type(_selected_process_id) is not int or _selected_process_id!=params.process_id:raise ValueError("Explicit connected process must match")
+            from scripts import sw_cam_current_circular_pocket as current
+            values=params.model_dump(exclude={"addin_clsid","expected_document_title","response_format"})
+            current.validate(values,params.addin_clsid)
+            sw,registration=_cam_target(params)
+            result=current.run_current_circular_pocket(sw,registration["clsid"],str(Path(registration["addin_path"]).parent/"camworks.tlb"),runtime_check=_runtime_identity.assert_current,**values)
+            try:_runtime_identity.assert_current()
+            except Exception as error:
+                result.update(status="uncertain" if result.get("mutation_attempted") else "error",readback_verified=False,geometry_delta_verified=False,operation_delta_verified=False,save_readback_verified=False,model_saved=False,source_update_verified=False,runtime_unchanged=False,may_apply=False,runtime_error=str(error))
+                if result.get("receipt_created"):
+                    try:current._write_receipt(Path(params.receipt_path),result)
+                    except Exception as write_error:result["receipt_write_error"]=str(write_error)
+            return result
 
         if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
 
@@ -10403,12 +10460,53 @@ class SolidWorksCamCurrentSavedConfigurationInput(SolidWorksCamCurrentSavedCompo
 
 
 
+class SolidWorksCamCircularDependentReadback(BaseModel):
+    """显式固定的依赖读回；不允许任意字段路径。"""
+    model_config=ConfigDict(extra="forbid")
+    operation_native_id: int=Field(gt=0,le=4294967295,strict=True)
+    member: Literal["DepthAllow"]
+    expected: float=Field(ge=0,strict=True,allow_inf_nan=False)
+    new: float=Field(ge=0,strict=True,allow_inf_nan=False)
+
+
+class SolidWorksCamCircularConfigurationInput(SolidWorksCamTargetInput):
+    """已保存新圆形口袋的单 Rough 参数准备/应用；不伪造 compound 请求。"""
+    model_config=ConfigDict(extra="forbid")
+    configuration_mode: Literal["current_saved_circular"]
+    action: Literal["prepare","apply"]="prepare"
+    expected_document_path: str=Field(min_length=1,strict=True)
+    process_id: int=Field(gt=0,lt=2147483648,strict=True)
+    expected_process_create_time: float=Field(gt=0,strict=True)
+    expected_source_sha256: str=Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    pocket_receipt_path: str=Field(min_length=1,strict=True)
+    pocket_receipt_sha256: str=Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    expected_feature_native_id: int=Field(gt=0,le=4294967295,strict=True)
+    parameter_operation_native_ids: list[Annotated[int,Field(gt=0,le=4294967295,strict=True)]]=Field(min_length=1,max_length=1,strict=True)
+    candidate_tool_native_id: int=Field(gt=0,le=4294967295,strict=True)
+    expected_candidate_consumer_ids: list[Annotated[int,Field(gt=0,le=4294967295,strict=True)]]=Field(max_length=32,strict=True)
+    dependent_readbacks: list[SolidWorksCamCircularDependentReadback]=Field(default_factory=list,max_length=1,strict=True)
+    recipe_path: str=Field(min_length=1,strict=True)
+    recipe_sha256: str=Field(pattern=r"^[0-9a-f]{64}$",strict=True)
+    prepare_receipt_path: Optional[str]=Field(default=None,min_length=1,strict=True)
+    prepare_receipt_sha256: Optional[str]=Field(default=None,pattern=r"^[0-9a-f]{64}$",strict=True)
+    save_after_verified: bool=Field(default=False,strict=True)
+    acknowledge_qualification_only: bool=Field(strict=True)
+    attempt_registry_path: str=Field(min_length=1,strict=True)
+    receipt_path: str=Field(min_length=1,strict=True)
+
+    @model_validator(mode="after")
+    def circular_configuration_contract(self):
+        from scripts.sw_cam_current_circular_authority import validate
+        validate(self.model_dump(exclude={"addin_clsid","expected_document_title","response_format"}),self.addin_clsid)
+        return self
+
+
 @mcp.tool(name="solidworks_cam_configure_guide_definitions",
     title="Configure Explicit MILL Definitions",
     annotations={"readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
-def solidworks_cam_configure_guide_definitions(params: SolidWorksCamCurrentSavedConfigurationInput | SolidWorksCamGuideConfigurationInput) -> str:
+def solidworks_cam_configure_guide_definitions(params: SolidWorksCamCircularConfigurationInput | SolidWorksCamCurrentSavedConfigurationInput | SolidWorksCamGuideConfigurationInput) -> str:
     """当前保存模式只改显式工具/字段并验证保存；旧四导向配置仍使用 sealed 请求。"""
-    if isinstance(params,SolidWorksCamCurrentSavedConfigurationInput):
+    if isinstance(params,(SolidWorksCamCurrentSavedConfigurationInput,SolidWorksCamCircularConfigurationInput)):
         def current_op():
             _runtime_identity.assert_current()
             if type(_selected_process_id) is not int or _selected_process_id!=params.process_id:
@@ -12802,7 +12900,7 @@ def _cam_configured_local_group_sealed_payload(request_path, request_sha256, pro
             or payload["params"]["process_id"] != process_id):
         raise ValueError("Exact action and owned process required")
     p = payload["params"]
-    current_mode = p.get("generation_mode") == "current_saved"
+    current_mode = p.get("generation_mode") in ("current_saved","current_saved_circular")
     module = Path(SCRIPTS_DIR) / ("sw_cam_current_saved_generation.py" if current_mode else "sw_cam_local_generation.py")
     if (not module.is_file() or module.is_symlink()
             or hashlib.sha256(module.read_bytes()).hexdigest() != p.get("module_sha256")):
@@ -12832,7 +12930,7 @@ def _cam_configured_local_group_sealed_payload(request_path, request_sha256, pro
 def solidworks_cam_generate_configured_local_group(params: SolidWorksCamConfiguredLocalGenerationInput) -> str:
     """执行已封存配置的明确子集 GTP/Save/CL；旧四操作模式保持原契约。"""
     payload = _cam_configured_local_group_sealed_payload(params.request_path, params.request_sha256, params.process_id)
-    if payload["params"].get("generation_mode") == "current_saved":
+    if payload["params"].get("generation_mode") in ("current_saved","current_saved_circular"):
         def current_op():
             from copy import deepcopy
             from scripts import sw_cam_current_saved_generation as core

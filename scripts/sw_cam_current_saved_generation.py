@@ -21,6 +21,9 @@ def require(value,message):
 def load_completed_configuration(path,sha,*,process_id,source_path,source_sha256,selected_ids):
     """读取实际完成的配置/Save，绑定摘要不冒充外部 JSON 文件哈希。"""
     d,pin=read_pin(path,sha)
+    if d.get('binding',{}).get('configuration_mode')=='current_saved_circular':
+        from scripts.sw_cam_current_circular_authority import load_configured
+        return load_configured(path,sha,process_id=process_id,source_path=source_path,source_sha256=source_sha256,selected_ids=selected_ids)
     require(d.get('scope')==CONFIG_SCOPE and d.get('action') in ('apply','recover_save') and d.get('status')=='review_required' and d.get('phase')=='finished','Completed current-saved configuration receipt required')
     require(all(d.get(k) is True for k in CONFIG_FLAGS),'Configuration/Save/runtime verification incomplete')
     require(d.get('save_call_returned') is True and type(d.get('save_hresult')) is int and d['save_hresult']==0,'Exact actual successful configuration Save return required')
@@ -134,13 +137,18 @@ class Journal:
 def run_once(backend,journal,loaded):
     """preCL→明确目标 GTP→checked Save→postCL；所有失败保留实际结果而不重试。"""
     r=journal.report;reference=loaded['state'];ids=loaded['selected_ids'];completed=[]
+    proof=delta
+    circular=loaded.get('mode')=='current_saved_circular'
+    if circular:
+        from scripts.sw_cam_current_circular_continuation import CircularGenerationProof
+        proof=CircularGenerationProof(backend,reference=reference)
     r.update(scope=SCOPE,status='error',phase='preflight',configuration_receipt_pin=deepcopy(loaded['pin']),selected_operation_native_ids=list(ids),actions={},captures=[],receipt_created=False,marker_created=False,mutation_attempted=False,native_call_attempted=False,native_call_returned=False,native_dispatch_pending=False,GTP_attempted=False,GOP_attempted=False,AFR_attempted=False,save_attempted=False,CL_export_attempted=False,model_saved=False,save_readback_verified=False,readback_verified=False,source_update_verified=False,operation_creation_attempted=False,tool_assignment_attempted=False,parameter_setter_attempted=False,automatic_replay=False,automatic_rollback=False,world_geometry_verified=False,production_qualified=False,reopen_persistence_verified=False,runtime_unchanged=False,source_before_sha256=loaded['source_sha256'])
     def observe(label):
         row=dict(label=label,capture_complete=False,state={});r['captures'].append(row);r['phase']=label;journal.persist()
         value=backend.capture(label,row['state']);row['state']=deepcopy(value);row['capture_complete']=value.get('capture_complete') is True and value.get('parameter_capture_complete') is True and value.get('parameter_batch',{}).get('read_complete') is True;r[label]=deepcopy(value);journal.persist();return value
     def one_export(label,state):
         action=journal.action(label)
-        expected=delta.cl_rows(reference,state,ids,completed_ids=completed or None)
+        expected=proof.cl_rows(reference,state,ids,completed_ids=completed or None)
         detail=dict(expected_generated_operations=deepcopy(expected),output_verified=False);r[label]=detail;journal.persist()
         value=backend.export_cl(label,state,expected,detail,pending=lambda:journal.pending(label),returned=lambda x:journal.returned(label,x))
         require(action['attempted'] is True and action['returned'] is True and action['native_return_type']=='int' and type(action['native_return_value']) is int and action['native_return_value']==0,'Exact completed SaveCLFile int0 required')
@@ -149,26 +157,28 @@ def run_once(backend,journal,loaded):
     try:
         delta.select(reference,ids);journal.create();backend.start();backend.boundary()
         before=observe('before');confirm=observe('confirm_before')
-        require(delta.equal(before,reference) and delta.equal(before,confirm),'Fresh complete current state differs from completed configuration')
+        require(proof.equal(before,reference) and proof.equal(before,confirm),'Fresh complete current state differs from completed configuration')
         backend.boundary();journal.claim();backend.boundary()
         pre=one_export('preCL',before)
-        current=observe('after_preCL');require(delta.equal(current,before),'preCL changed current configuration')
+        current=observe('after_preCL');require(proof.equal(current,before),'preCL changed current configuration')
         for oid in ids:
-            fresh=observe('before_GTP_'+str(oid));require(delta.equal(fresh,current),'State changed immediately before selected GTP')
+            fresh=observe('before_GTP_'+str(oid));require(proof.equal(fresh,current),'State changed immediately before selected GTP')
             name='GTP:'+str(oid);a=journal.action(name);backend.boundary()
             backend.generate(oid,fresh,pending=lambda:journal.pending(name),returned=lambda x:journal.returned(name,x))
             require(a['attempted'] is True and a['returned'] is True and a['native_return_type']=='int' and type(a['native_return_value']) is int and a['native_return_value']==0,'Exact GenerateToolpath int0 required; no replay')
             completed.append(oid)
-            actual=observe('after_GTP_'+str(oid));r['generation_verification']=delta.verify_generation(reference,actual,ids,completed);journal.persist()
-            confirm=observe('confirm_GTP_'+str(oid));require(delta.equal(actual,confirm),'Two complete postgeneration captures differ');current=confirm
+            actual=observe('after_GTP_'+str(oid));r['generation_verification']=proof.verify_generation(reference,actual,ids,completed);journal.persist()
+            confirm=observe('confirm_GTP_'+str(oid));require(proof.equal(actual,confirm),'Two complete postgeneration captures differ');current=confirm
         r['generated']=deepcopy(current);r['save_stage']={};journal.action('SaveActiveDocument')
         def save_capture(label):
             actual=observe('before_save'if label=='before'else'saved')
-            if label=='before':require(delta.equal(actual,current),'Current CAM parameters changed before Save')
-            else:delta.verify_saved(current,actual)
-            normalized=deepcopy(actual);normalized['document']['needs_save']=False;return normalized
+            if label=='before':require(proof.equal(actual,current),'Current CAM parameters changed before Save')
+            else:proof.verify_saved(current,actual)
+            normalized=deepcopy(actual);normalized['document']['needs_save']=False
+            return proof.save_comparison_state(actual) if circular else normalized
         expected=deepcopy(current);expected['document']['needs_save']=False
-        def verify(value):require(delta.equal(value,expected),'Save altered captured CAM context')
+        if circular:expected=proof.save_comparison_state(current)
+        def verify(value):require(proof.equal(value,expected),'Save altered captured CAM context')
         def save_returned(value):
             journal.returned('SaveActiveDocument',value)
             r['save_stage'].update(native_call_returned=True,save_pending=False,native_return_type=type(value).__name__,native_return_value=value if value is None or type(value) in(bool,int,float,str)else None);journal.persist()
@@ -176,11 +186,11 @@ def run_once(backend,journal,loaded):
         def saved_hash():
             value=backend.adopt_saved_source(r['save_stage']);r.update(source_after_sha256=value,saved_file_sha256=value);journal.persist();return value
         run_one_existing_save(r['save_stage'],capture=save_capture,verify=verify,guard=backend.boundary,claim=lambda:journal.pending('SaveActiveDocument'),persist=journal.persist,save=native_save,saved_hash=saved_hash)
-        confirm_saved=observe('confirm_saved');delta.verify_saved(current,confirm_saved);require(delta.equal(confirm_saved,r['saved']),'Two complete saved captures differ')
+        confirm_saved=observe('confirm_saved');proof.verify_saved(current,confirm_saved);require(proof.equal(confirm_saved,r['saved']),'Two complete saved captures differ')
         r.update(model_saved=True,save_readback_verified=True,source_update_verified=True);journal.persist()
         post=one_export('postCL',confirm_saved)
         r['CL_preservation']=delta.compare_cl(backend.parse_cl(pre),backend.parse_cl(post),pre['expected_generated_operations'],post['expected_generated_operations'],ids);journal.persist()
-        last=observe('after_postCL');require(delta.equal(last,confirm_saved),'Post-save CL export changed captured current state')
+        last=observe('after_postCL');require(proof.equal(last,confirm_saved),'Post-save CL export changed captured current state')
         backend.boundary();backend.finish();r.update(status='review_required',phase='finished',readback_verified=True,runtime_unchanged=True)
     except Exception as exc:
         r.update(status='uncertain'if r['mutation_attempted']or r['CL_export_attempted']else'error',failed_phase=r['phase'],phase='finished',issue=_error(exc),reason=str(exc)if type(exc) is ValueError else 'NATIVE_OR_CAPTURE_FAILURE',readback_verified=False,model_saved=False,save_readback_verified=False,source_update_verified=False,runtime_unchanged=False)
@@ -204,12 +214,13 @@ def prepare_request(request):
     import math,re
     require(type(request) is dict and set(request)=={'action','params'} and request['action']=='generate_configured_local_group','Exact existing generation packet action required')
     v=deepcopy(request['params']);require(type(v) is dict and set(v)==PARAMS,'Exact current-saved generation packet fields required')
-    require(v['generation_mode']=='current_saved' and v['acknowledgement']==ACK,'Explicit selected generation/Save/CL acknowledgement required')
+    require(v['generation_mode'] in ('current_saved','current_saved_circular') and v['acknowledgement']==ACK,'Explicit selected generation/Save/CL acknowledgement required')
     require(type(v['process_id']) is int and 0<v['process_id']<2**31 and type(v['expected_process_create_time']) in(int,float) and math.isfinite(v['expected_process_create_time']) and v['expected_process_create_time']>0,'Strict process lifetime required')
     require(type(v['expected_source_sha256']) is str and re.fullmatch('[0-9a-f]{64}',v['expected_source_sha256']),'Exact saved source SHA required')
     source=Path(v['expected_document_path']);require(source.is_absolute() and source.suffix.casefold()=='.sldprt' and source.is_file() and not source.is_symlink() and _file_hash(source)==v['expected_source_sha256'],'Exact current saved source file required')
     require(type(v['module_sha256']) is str and v['module_sha256']==_file_hash(__file__),'Installed current generation implementation differs')
     loaded=load_completed_configuration(v['configuration_receipt_path'],v['configuration_receipt_sha256'],process_id=v['process_id'],source_path=str(source),source_sha256=v['expected_source_sha256'],selected_ids=v['selected_operation_native_ids'])
+    require((v['generation_mode']=='current_saved_circular') is (loaded.get('mode')=='current_saved_circular'),'Generation mode must match actual configuration authority')
     require(type(loaded['binding'].get('expected_process_create_time')) is type(v['expected_process_create_time']) and loaded['binding']['expected_process_create_time']==v['expected_process_create_time'],'Completed configuration lifetime differs')
     from scripts.sw_cam_deep_guide_cl import _fresh_path
     before=_fresh_path(v['before_cl_path']);after=_fresh_path(v['saved_cl_path'])
@@ -251,6 +262,9 @@ def dispatch_current_saved(sw,clsid,tlb,request,*,runtime_check,_backend_factory
     if _backend_factory is None:
         from scripts.sw_cam_current_generation_native import NativeGenerationContext
         _backend_factory=NativeGenerationContext
+        if loaded.get('mode')=='current_saved_circular':
+            from scripts.sw_cam_current_circular_continuation import CircularGenerationContext
+            _backend_factory=CircularGenerationContext
     r=dict(receipt_path=v['receipt_path'],dispatch_marker_path=str(marker),request=deepcopy(request),request_sha256=_digest(request),runtime_unchanged=False)
     class ProgressJournal(Journal):
         progress_created=False

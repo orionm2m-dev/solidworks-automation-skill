@@ -93,10 +93,11 @@ class NativeGenerationContext(batch.NativeBatchContext):
         doc=self.boundary();require(doc['needs_save'] is False and self.source==_file_hash(self.v['expected_document_path']),'Exact clean saved source required')
         return self.source
     def export_cl(self,label,state,rows,diagnostic,*,pending,returned):
+        same=getattr(self,'_captured_state_equal',delta.equal)
         path=self.args['before_cl_path'if label=='preCL'else'saved_cl_path'];output=_fresh_path(path);canonical=str(output.resolve())
         source=self.source;document=self.boundary();diagnostic.update(source_sha256=source,document=deepcopy(document),output_path=str(output),native_dispatch_pending=False,native_call_returned=False)
         before={};diagnostic['before']=before;self.persist();self.capture(label+'_before',before)
-        require(delta.equal(before,state),'CL pre-capture differs from exact expected current state')
+        require(same(before,state),'CL pre-capture differs from exact expected current state')
         with self.guard() as guard:
             part=guard.typed(self.native['doc'],'ICWPartDoc');machine=guard.typed(guard.read(part,'IGetMachine'),'ICWMachine')
             require(guard.read(machine,'MachType')==1,'Current MILL machine required')
@@ -109,7 +110,7 @@ class NativeGenerationContext(batch.NativeBatchContext):
             result=guard.dispatch_once(invoke,persist_pending=claim)
         require(type(result) is int and result==0,'Exact SaveCLFile int0 required')
         after={};diagnostic['after']=after;self.persist();self.capture(label+'_after',after)
-        require(delta.equal(before,after),'CL export changed full captured configuration')
+        require(same(before,after),'CL export changed full captured configuration')
         with self.guard() as guard:
             machine=guard.typed(self.native['machine'],'ICWMachine5');controller_after=_controller(guard.read(machine,'GetController2'))
         require(controller_after==controller and self.boundary()==document and self.source==source,'CL export changed controller/source/document')

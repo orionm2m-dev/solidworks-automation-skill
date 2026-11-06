@@ -29,6 +29,9 @@ RECOVERY_ACTIONS=('prepare_recover_save','recover_save')
 require=fields.require
 
 def binding(v):
+    if v.get('configuration_mode')=='current_saved_circular':
+        from scripts.sw_cam_current_circular_authority import binding as circular_binding
+        return circular_binding(v)
     return {k:deepcopy(v[k]) for k in READ_KEYS+EXTRA}
 
 def load_inputs(v,clsid=None):
@@ -80,6 +83,9 @@ def load_recovery(v,data):
     return marker,info,pins
 
 def validate(v,clsid=None):
+    if v.get('configuration_mode')=='current_saved_circular':
+        from scripts.sw_cam_current_circular_authority import validate as circular_validate
+        return circular_validate(v,clsid)
     current.validate(v)
     require(v['configuration_mode']=='current_saved' and v['observation']=='operation_parameters' and v['action'] in ('prepare','apply',*RECOVERY_ACTIONS),'Explicit current-saved parameter mode required')
     require(type(v['candidate_tool_native_id']) is int and 0<v['candidate_tool_native_id']<2**32,'Strict existing candidate ID required')
@@ -130,7 +136,7 @@ class NativeBatchContext:
         self.check();d=self.identity();self.runtime_check();self.check();return d
     def read(self,obj,name,*args):
         self.check();self.report['phase']=name;self.report['native_read_count']+=1
-        require(self.report['native_read_count']<=24000,'Bounded read budget exceeded')
+        require(self.report['native_read_count']<=getattr(self,'_native_read_limit',24000),'Bounded read budget exceeded')
         value=_member(obj,name,*args)
         last=dict(method=name,returned=True,converted_output_shape=current._converted_shape(value))
         try:last['raw']=parameters.pocket.rough.bounded_raw_observation(value)
@@ -245,6 +251,15 @@ def run_current_saved_configuration(sw,clsid,typelib_path,*,runtime_check,_conte
         production_qualified=False,cutting_conditions_qualified=False,physical_tool_qualified=False,full_hidden_geometry_preservation_verified=False,cl_coordinates_compared=False,
         source_before_sha256=v['expected_source_sha256'],receipt_path=v['receipt_path'],receipt_created=False,marker_created=False,actions=[],captures=[],native_read_count=0)
     marker=None;ctx=None
+    circular=v.get('configuration_mode')=='current_saved_circular'
+    proof=fields
+    if circular:
+        from scripts.sw_cam_current_circular_authority import CircularParameterProof
+        proof=CircularParameterProof(v['dependent_readbacks'])
+        if _context_factory is NativeBatchContext:
+            from scripts.sw_cam_current_circular_continuation import CircularBatchContext
+            _context_factory=CircularBatchContext
+    same=proof.equal if circular else fields.equal
     def persist():
         if report['receipt_created']:_write_receipt(Path(v['receipt_path']),report)
     def action(kind,row=None,change=None):
@@ -265,18 +280,20 @@ def run_current_saved_configuration(sw,clsid,typelib_path,*,runtime_check,_conte
         ctx=_context_factory(sw,clsid,typelib_path,v,data,report,persist,runtime_check)
         with ctx:
             consumers=list(data['recovery']['consumer_ids'] if recovering else v['expected_candidate_consumer_ids']);before=ctx.capture('before',consumers);confirm=ctx.capture('confirm_before',consumers)
-            require(fields.equal(before,confirm),'Two full prepare captures differ')
+            require(same(before,confirm),'Two full prepare captures differ')
             if recovering:
                 require(fields.equal(before,data['recovery']['expected_state']),'Fresh complete state differs from verified historical setter outcomes')
                 fields.verify_final(data['recovery']['historical_before'],before,data['plan'],{v['candidate_tool_native_id']:before['parameter_batch']['candidate_tool']},observed_floor_alias=True)
                 report['recovery_verified']=True
             else:
-                reference=deepcopy(before);reference.pop('parameter_batch');require(fields.equal(reference,data['baseline']),'Fresh parameters differ from pinned actual read')
+                reference=deepcopy(before)
+                if not circular:reference.pop('parameter_batch')
+                require(same(reference,data['baseline']),'Fresh parameters differ from pinned actual read')
                 fields.compile_plan(before,data['plan'])
             report['state_sha256']=_digest(before);persist();final=confirm
             candidate=deepcopy(before['parameter_batch']['candidate_tool']);candidates={v['candidate_tool_native_id']:candidate}
             if v['action'] in ('apply','recover_save'):
-                require(fields.equal(data['prepare']['before'],before),'Fresh state differs from reviewed prepare')
+                require(same(data['prepare']['before'],before),'Fresh state differs from reviewed prepare')
                 ctx.boundary();runtime_check();_write_receipt(marker,dict(scope=SCOPE,status='claimed_no_replay',binding=binding(v),receipt_path=v['receipt_path'],automatic_replay=False),create=True);report['marker_created']=True;persist();ctx.boundary();runtime_check()
                 if recovering:
                     report['after']=deepcopy(before);report['confirm_after']=deepcopy(confirm);report['after_capture_references']=['before','confirm_before']
@@ -287,8 +304,8 @@ def run_current_saved_configuration(sw,clsid,typelib_path,*,runtime_check,_conte
                             ctx.set_tool(row,candidate,pending,returned)
                             consumers=[r['native_id'] for r in final['operations'] if r['assigned_tool']['native_id']==v['candidate_tool_native_id'] or r['native_id']==row['operation_native_id']]
                             observed=ctx.capture('after_tool_'+str(row['operation_native_id']),consumers)
-                            fields.verify_assignment_delta(final,observed,row,candidate)
-                            confirmed=ctx.capture('confirm_tool_'+str(row['operation_native_id']),consumers);require(fields.equal(observed,confirmed),'Two SetTool barrier captures differ')
+                            proof.verify_assignment_delta(final,observed,row,candidate)
+                            confirmed=ctx.capture('confirm_tool_'+str(row['operation_native_id']),consumers);require(same(observed,confirmed),'Two SetTool barrier captures differ')
                             out['readback_verified']=True;out['capture']='after_tool_'+str(row['operation_native_id']);persist();final=confirmed
                         for change in row['fields']:
                             if fields.equal(change['expected'],change['new']):continue
@@ -297,8 +314,8 @@ def run_current_saved_configuration(sw,clsid,typelib_path,*,runtime_check,_conte
                             observed=ctx.read_field(row,change,out.setdefault('observed',{}))
                             require(fields.equal(observed,change['new']),'Immediate field readback differs')
                             out['readback_verified']=True;persist()
-                    after=ctx.capture('after',consumers);fields.verify_final(before,after,data['plan'],candidates)
-                    final=ctx.capture('confirm_after',consumers);require(fields.equal(after,final),'Two final captures differ');fields.verify_final(before,final,data['plan'],candidates)
+                    after=ctx.capture('after',consumers);proof.verify_final(before,after,data['plan'],candidates)
+                    final=ctx.capture('confirm_after',consumers);require(same(after,final),'Two final captures differ');proof.verify_final(before,final,data['plan'],candidates)
                 report['parameter_delta_verified']=True;persist()
                 if v['save_after_verified']:
                     out,pending,returned=action('SaveActiveDocument')
@@ -306,9 +323,12 @@ def run_current_saved_configuration(sw,clsid,typelib_path,*,runtime_check,_conte
                     def save_returned(value):
                         report.update(save_call_returned=True,save_hresult=value if type(value) is int else None);returned(value)
                     ctx.save(save_pending,save_returned)
-                    saved=ctx.capture('saved',consumers);expected=deepcopy(final);expected['document']['needs_save']=False
-                    require(fields.equal(saved,expected),'Save changed protected captured state')
-                    confirm_saved=ctx.capture('confirm_saved',consumers);require(fields.equal(saved,confirm_saved),'Two saved captures differ')
+                    saved=ctx.capture('saved',consumers)
+                    if circular:proof.pocket.verify_saved(final,saved,ctx.source)
+                    else:
+                        expected=deepcopy(final);expected['document']['needs_save']=False
+                        require(fields.equal(saved,expected),'Save changed protected captured state')
+                    confirm_saved=ctx.capture('confirm_saved',consumers);require(same(saved,confirm_saved),'Two saved captures differ')
                     final=confirm_saved;out['readback_verified']=True;report.update(save_readback_verified=True,model_saved=True,source_update_verified=True,saved_file_sha256=ctx.source);persist()
                 ctx.boundary()
             ctx.boundary()

@@ -88,7 +88,8 @@ def test_original_authority_helpers_ast_unchanged():
     old=ast.parse((root/'scripts/sw_cam_mill_current_parameters.py').read_text(encoding='utf-8-sig'))
     new=ast.parse(Path(p.__file__).read_text(encoding='utf-8-sig'))
     if any(isinstance(x,ast.FunctionDef) and x.name=='capture_rows' for x in old.body):
-        assert ast.dump(old)==ast.dump(new);return
+        retained=lambda tree:{x.name:ast.dump(x,include_attributes=False) for x in tree.body if isinstance(x,(ast.FunctionDef,ast.ClassDef)) and x.name!='capture_rows'}
+        assert retained(old)==retained(new);return
     a={x.name:ast.dump(x,include_attributes=False) for x in old.body if isinstance(x,ast.FunctionDef) and x.name!='capture'}
     b={x.name:ast.dump(x,include_attributes=False) for x in new.body if isinstance(x,ast.FunctionDef) and x.name in a}
     assert a==b

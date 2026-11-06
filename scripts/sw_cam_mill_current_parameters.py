@@ -96,8 +96,10 @@ def capture(state,native,v,authority,*,document,read,typed,boundary):
     require(state==authority['state'],'Fresh full captured state differs from saved authority')
     capture_rows(state,native,authority['targets'],feature_id=v['expected_feature_native_id'],read=read,typed=typed,boundary=boundary)
 
-def capture_rows(state,native,targets,*,feature_id,read,typed,boundary,generation_observations=None):
+def capture_rows(state,native,targets,*,feature_id,read,typed,boundary,generation_observations=None,expected_operation_types=(0,1)):
     """Own scalar observations from explicit fresh inventory rows; no authority adapter."""
+    require(type(expected_operation_types) is tuple and expected_operation_types in ((0,),(0,1)),'Explicit bounded parameter operation types required')
+    require(type(targets) is list and tuple(r['mill_operation_type'] for r in targets)==expected_operation_types,'Exact selected parameter types required')
     observations={} if generation_observations is None else deepcopy(generation_observations)
     require(type(observations) is dict and all(type(k) is int and k>0 and type(v) is list and len(v)==1 and type(v[0]) is int and 0<v[0]<=100000 for k,v in observations.items()),'Exact observed generated-count map required')
     require(set(observations)<={r['native_id'] for r in targets},'Generated observations outside explicit parameter targets')
@@ -134,5 +136,5 @@ def capture_rows(state,native,targets,*,feature_id,read,typed,boundary,generatio
         if tid not in cache:cache[tid]=read_tool_dimensions(tool,generic,batch)
         require(cache[tid]['generic']==generic,'Shared assigned tool differs')
         out['tool']=deepcopy(cache[tid]);out['read_complete']=True;boundary()
-    require(len(state['operation_parameters'])==2 and all(r['read_complete'] for r in state['operation_parameters']),'Two complete parameter observations required')
+    require(len(state['operation_parameters'])==len(expected_operation_types) and all(r['read_complete'] for r in state['operation_parameters']),'Complete explicitly selected parameter observations required')
     state['parameter_capture_complete']=True
