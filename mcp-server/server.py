@@ -100,6 +100,7 @@ def _load_automation_modules() -> None:
         "new_document": connect.new_document,
         "open_document": connect.open_document,
         "save_document": connect.save_document,
+        "close_all_documents_scoped": connect.close_all_documents_scoped,
         "extrude_boss": part.extrude_boss,
         "extrude_cut": part.extrude_cut,
         "extrude_cut_midplane": part.extrude_cut_midplane,
@@ -3563,6 +3564,8 @@ class SolidWorksCloseDocumentsInput(ActiveDocumentInput):
 
     close_all: bool = Field(default=False, description="Close all documents when true; otherwise close active document.")
     save_changes: bool = Field(default=False, description="Whether SolidWorks should save changed documents when closing all.")
+    allowed_document_roots: Optional[list[str]] = Field(default=None, min_length=1, max_length=20,
+        description="With close_all: every open document (including hidden referenced documents) must be saved, unchanged and located under one of these absolute directories, otherwise nothing is closed. Replaces the single-document guard for close_all.")
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
@@ -7424,10 +7427,17 @@ def solidworks_close_documents(params: SolidWorksCloseDocumentsInput = SolidWork
     """Close the active document or all documents in the current SolidWorks session."""
 
     def op():
+        if params.close_all and params.allowed_document_roots:
+            if params.expected_document_path or params.expected_document_title:
+                raise ValueError("close_all with allowed_document_roots does not take a single-document guard.")
+            sw, _model = connect_solidworks(wait_seconds=1)
+            result = close_all_documents_scoped(sw, params.allowed_document_roots)
+            clear_sketch_selection_cache()
+            return {"status": "ok", "closed": "all", **result}
         sw, model = _active_model_required(params)
         if params.close_all:
             if params.expected_document_path or params.expected_document_title:
-                raise ValueError("A single-document guard cannot authorize close_all. Close each expected document separately.")
+                raise ValueError("A single-document guard cannot authorize close_all. Pass allowed_document_roots or close each expected document separately.")
             sw.CloseAllDocuments(bool(params.save_changes))
             # 文档已关闭，其 ISketch 引用必须立即释放；否则常驻进程会一直持有
             # 已关闭文档的 COM 对象，导致 SolidWorks 侧无法释放文档。

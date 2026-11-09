@@ -710,6 +710,65 @@ def snapshot_open_documents(sw):
     return titles
 
 
+def list_open_document_rows(sw):
+    """
+    枚举进程中全部打开文档（含隐藏的引用文档）的路径、标题与未保存标记。
+
+    GetDocuments 在无文档时可能返回 None；从未存盘的新文档 GetPathName 为空字符串。
+    """
+    rows = []
+    documents = get_com_member(sw, "GetDocuments")
+    for document in documents or ():
+        rows.append({
+            "path": str(get_com_member(document, "GetPathName") or ""),
+            "title": str(get_com_member(document, "GetTitle") or ""),
+            "needs_save": bool(get_com_member(document, "GetSaveFlag")),
+        })
+    return rows
+
+
+def _normalized_directory(path):
+    """目录绝对路径的规范化形式，末尾带分隔符，便于安全的前缀判断。"""
+    return os.path.join(os.path.normcase(os.path.abspath(str(path))), "")
+
+
+def close_all_documents_scoped(sw, allowed_document_roots):
+    """
+    在显式目录范围内关闭进程中的全部文档。
+
+    拒绝条件：范围为空或含相对路径；任一文档从未存盘；任一文档有未保存修改；
+    任一文档位于范围之外。通过后调用 CloseAllDocuments(False)（只关闭已保存文档），
+    再回读文档列表，必须为空。返回被关闭文档的路径列表与数量。
+    """
+    roots = [str(root) for root in allowed_document_roots if str(root).strip()]
+    if not roots:
+        raise ValueError("allowed_document_roots must list at least one absolute directory")
+    if any(not os.path.isabs(root) for root in roots):
+        raise ValueError("allowed_document_roots must be absolute directories")
+    prefixes = [_normalized_directory(root) for root in roots]
+    rows = list_open_document_rows(sw)
+    untitled = [row["title"] for row in rows if not row["path"]]
+    if untitled:
+        raise ValueError(f"Never-saved documents must be saved or closed individually first: {untitled}")
+    dirty = [row["path"] for row in rows if row["needs_save"]]
+    if dirty:
+        raise ValueError(f"Documents with unsaved changes must be saved or closed individually first: {dirty}")
+    outside = [row["path"] for row in rows
+               if not any(os.path.normcase(os.path.abspath(row["path"])).startswith(prefix) for prefix in prefixes)]
+    if outside:
+        raise ValueError(f"Open documents outside allowed_document_roots: {outside}")
+    get_com_member(sw, "CloseAllDocuments", False)
+    remaining = list_open_document_rows(sw)
+    if remaining:
+        raise RuntimeError("Documents still open after CloseAllDocuments: "
+                           f"{[row['path'] or row['title'] for row in remaining]}")
+    return {
+        "closed_count": len(rows),
+        "closed_paths": [row["path"] for row in rows],
+        "allowed_document_roots": roots,
+    }
+
+
 def _find_new_document(sw, preexisting_titles):
     """
     在新建文档后定位真正的新文档。
