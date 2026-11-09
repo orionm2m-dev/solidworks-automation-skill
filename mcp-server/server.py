@@ -3220,7 +3220,7 @@ class SolidWorksSketchOnPlaneInput(ActiveDocumentInput):
     """Input for sketching on a plane and creating a boss extrude."""
 
     plane_name: str = Field(default="Front Plane", description="Sketch plane, English or Chinese name.")
-    shape: Literal["circle", "rectangle", "corner_rectangle", "slot", "polygon", "profile"] = Field(
+    shape: Literal["circle", "ring", "rectangle", "corner_rectangle", "slot", "polygon", "profile"] = Field(
         default="circle", description="Profile shape to draw."
     )
     profile_points_mm: Optional[list[list[float]]] = Field(
@@ -3234,6 +3234,10 @@ class SolidWorksSketchOnPlaneInput(ActiveDocumentInput):
     center_x_mm: float = Field(default=0.0, description="Profile center X on the sketch plane, mm.")
     center_y_mm: float = Field(default=0.0, description="Profile center Y on the sketch plane, mm.")
     radius_mm: Optional[float] = Field(default=None, gt=0.0, le=2500.0, description="Circle radius, mm.")
+    inner_radius_mm: Optional[float] = Field(
+        default=None, gt=0.0, le=2500.0,
+        description="Inner radius for shape='ring', mm; must be smaller than radius_mm. Two concentric circles extrude as an annulus.",
+    )
     width_mm: Optional[float] = Field(default=None, gt=0.0, le=5000.0, description="Rectangle width, mm.")
     height_mm: Optional[float] = Field(default=None, gt=0.0, le=5000.0, description="Rectangle height, mm.")
     corner_x2_mm: Optional[float] = Field(default=None, description="Corner rectangle second corner X, mm.")
@@ -6427,7 +6431,7 @@ def _profile_vertices_m(points_mm):
     annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
 )
 def solidworks_sketch_and_extrude(params: SolidWorksSketchOnPlaneInput) -> str:
-    """Draw a circle, rectangle, slot, polygon, or closed line/arc profile on a plane and extrude it as a boss or cut.
+    """Draw a circle, ring (annulus), rectangle, slot, polygon, or closed line/arc profile on a plane and extrude it as a boss or cut.
 
     This is the main modeling entry point: one call creates a sketch and the feature built
     from it, so the sketch object reference is never lost between calls.
@@ -6438,6 +6442,8 @@ def solidworks_sketch_and_extrude(params: SolidWorksSketchOnPlaneInput) -> str:
 
         if params.shape == "circle" and params.radius_mm is None:
             raise ValueError("shape='circle' requires radius_mm.")
+        if params.shape == "ring" and (params.radius_mm is None or params.inner_radius_mm is None or params.inner_radius_mm >= params.radius_mm):
+            raise ValueError("shape='ring' requires radius_mm and a smaller inner_radius_mm.")
         if params.shape == "rectangle" and (params.width_mm is None or params.height_mm is None):
             raise ValueError("shape='rectangle' requires width_mm and height_mm.")
         if params.shape == "corner_rectangle" and (params.corner_x2_mm is None or params.corner_y2_mm is None):
@@ -6452,6 +6458,9 @@ def solidworks_sketch_and_extrude(params: SolidWorksSketchOnPlaneInput) -> str:
         with sketch(model, params.plane_name) as sketch_ref:
             if params.shape == "circle":
                 sketch_circle(model, mm(params.center_x_mm), mm(params.center_y_mm), mm(params.radius_mm))
+            elif params.shape == "ring":
+                sketch_circle(model, mm(params.center_x_mm), mm(params.center_y_mm), mm(params.radius_mm))
+                sketch_circle(model, mm(params.center_x_mm), mm(params.center_y_mm), mm(params.inner_radius_mm))
             elif params.shape == "rectangle":
                 sketch_rectangle(model, mm(params.center_x_mm), mm(params.center_y_mm),
                                  mm(params.width_mm), mm(params.height_mm))
