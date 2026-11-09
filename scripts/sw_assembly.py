@@ -947,6 +947,47 @@ def _component_box_mm(component):
     return [round(float(v) * 1000.0, 6) for v in raw_box]
 
 
+def _component_path_key(component):
+    """@brief 组件文档路径的规范化比较键；读取失败返回空串。"""
+    try:
+        return os.path.normcase(str(safe_get_com_member(component, "GetPathName") or ""))
+    except Exception:
+        return ""
+
+
+def _locate_moved_component(after_components, expected_name, target_name, path_key, transform_before,
+                            claimed, transform_matches):
+    """
+    @brief 移动后定位组件：优先按预期名称；若 SolidWorks 已把实例改名为文件名，则在目标内
+           按文档路径与移动前变换唯一匹配。
+    @return (新名称, IComponent2)。
+    @raise RuntimeError 既无预期名称，也没有唯一的同文件同位置候选。
+    """
+    component = after_components.get(expected_name)
+    if component is not None and expected_name not in claimed:
+        return expected_name, component
+
+    def parent(name):
+        return name.rsplit("/", 1)[0] if "/" in name else None
+
+    candidates = []
+    for candidate_name, candidate in after_components.items():
+        if candidate_name in claimed or parent(candidate_name) != target_name:
+            continue
+        if _component_path_key(candidate) != path_key:
+            continue
+        values = _component_transform_values(candidate)
+        if (transform_before is not None and values is not None
+                and transform_matches(values, transform_before, 1e-6, 1e-6)):
+            candidates.append((candidate_name, candidate))
+    if len(candidates) == 1:
+        return candidates[0]
+    inside = sorted(name for name in after_components if parent(name) == target_name)
+    raise RuntimeError(
+        f"移动后未找到组件 {expected_name!r}，同文件同位置候选 {len(candidates)} 个；目标内组件: {inside[:30]}"
+    )
+
+
 def _component_names(asm_model, top_level_only):
     """
     @brief 列出组件实例名（Name2）。
@@ -982,8 +1023,9 @@ def reorganize_components(asm_model, component_names, target_component_name=None
     @raise ValueError 名称为空、重复，目标在移动列表中，或组件已在目标内。
     @raise RuntimeError 目标不是已加载的子装配体、调用返回 False、移动后找不到组件或位置改变。
 
-    ReorganizeComponents 会重建组件对象，因此移动后一律按新名称重新查找组件，
-    不复用移动前的 IComponent2 引用。
+    ReorganizeComponents 会重建组件对象，因此移动后一律重新查找组件，不复用移动前的
+    IComponent2 引用：先按预期名称（目标名/原叶名）查找；SolidWorks 可能把移入子装配体的
+    实例改名为其文件名，此时在目标内按文档路径与变换唯一匹配，moved 项的 renamed 为 True。
     """
     try:
         from .sw_rigid_transform import transform_matches
@@ -1005,7 +1047,8 @@ def reorganize_components(asm_model, component_names, target_component_name=None
             raise RuntimeError(f"目标组件 {target_name!r} 不是子装配体")
     sources = [find_component_by_exact_name(asm_model, name) for name in names]
     before = {
-        name: (_component_transform_values(component), _component_box_mm(component))
+        name: (_component_transform_values(component), _component_box_mm(component),
+               _component_path_key(component))
         for name, component in zip(names, sources)
     }
     top_count_before = len(_component_names(asm_model, True))
@@ -1023,13 +1066,14 @@ def reorganize_components(asm_model, component_names, target_component_name=None
         for component in (safe_get_com_member(asm_model, "GetComponents", False) or [])
     }
     moved = []
+    claimed = set()
     for name in names:
         leaf = name.split("/")[-1]
-        new_name = f"{target_name}/{leaf}" if target_name else leaf
-        component = after_components.get(new_name)
-        if component is None:
-            raise RuntimeError(f"移动后未找到组件 {new_name!r}；当前组件: {sorted(after_components)[:30]}")
-        transform_before, box_before = before[name]
+        expected_name = f"{target_name}/{leaf}" if target_name else leaf
+        transform_before, box_before, path_before = before[name]
+        new_name, component = _locate_moved_component(
+            after_components, expected_name, target_name, path_before, transform_before, claimed, transform_matches)
+        claimed.add(new_name)
         transform_after = _component_transform_values(component)
         box_after = _component_box_mm(component)
         preserved = (
@@ -1051,6 +1095,7 @@ def reorganize_components(asm_model, component_names, target_component_name=None
             "box_mm_before": box_before,
             "box_mm_after": box_after,
             "position_preserved": True,
+            "renamed": new_name != expected_name,
         })
     return {
         "target": target_name,
