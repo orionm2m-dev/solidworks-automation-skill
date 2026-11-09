@@ -786,6 +786,21 @@ def new_document(sw, doc_type="part", template_path=None):
     return model
 
 
+INTERCONNECT_PART_EXTS = (".ipt", ".catpart", ".prt", ".par", ".psm")
+INTERCONNECT_ASSEMBLY_EXTS = (".iam", ".catproduct", ".asm")
+SW_TOGGLE_ENABLE_3D_INTERCONNECT = 691  # swUserPreferenceToggle_e.swMultiCAD_Enable3DInterconnect
+
+
+def interconnect_document_type(file_path):
+    """@brief 返回 3D Interconnect 文档类型：6 零件、7 装配体，非此类文件返回 None。"""
+    ext = os.path.splitext(str(file_path))[1].lower()
+    if ext in INTERCONNECT_PART_EXTS:
+        return 6
+    if ext in INTERCONNECT_ASSEMBLY_EXTS:
+        return 7
+    return None
+
+
 def open_document(sw, file_path, read_only=False, silent=False, raise_on_error=False):
     """
     打开已有文档。
@@ -820,7 +835,11 @@ def open_document(sw, file_path, read_only=False, silent=False, raise_on_error=F
 
     ext = os.path.splitext(file_path)[1].lower()
     foreign_exts = {".step", ".stp", ".igs", ".iges"}
+    # 3D Interconnect 原生格式（Inventor、CATIA、Creo、Solid Edge）按 swDocIMPORTED_PART/ASSEMBLY 打开；
+    # 按普通零件类型打开 .iam/.ipt 会得到 swFileRequiresRepairError。
     type_map = {".sldprt": 1, ".sldasm": 2, ".slddrw": 3}
+    type_map.update(dict.fromkeys(INTERCONNECT_PART_EXTS, 6))
+    type_map.update(dict.fromkeys(INTERCONNECT_ASSEMBLY_EXTS, 7))
 
     errors = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
     warnings = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)

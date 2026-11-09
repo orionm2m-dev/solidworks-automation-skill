@@ -231,6 +231,7 @@ claude mcp add --scope user solidworks -- python C:\path\to\solidworks-automatio
 | `solidworks_set_component_transform` | 按局部坐标轴方向与原点（刚体变换）放置顶层组件并回读核对，不保存 | 是 |
 | `solidworks_set_component_visibility` | 在当前显示状态中隐藏或显示顶层组件（不压缩），回读核对，不保存 | 是 |
 | `solidworks_save_component_copy` | 把组件（含导入装配体的虚拟组件）另存为独立副本文件，装配体引用不变 | 是 |
+| `solidworks_set_component_suppression` | 压缩或解压顶层组件（SetSuppression2），回读 IsSuppressed，不保存 | 是 |
 | `solidworks_list_circular_edges` | 只读列出零件圆形边的圆心、轴向与直径（毫米），导入实体同样可用 | 否 |
 | `solidworks_add_thread_feature` | 按圆心与直径定位起始边，创建原生螺纹特征（库规格如 M10x1.5），回读体积与面数变化，不保存 | 是 |
 | `solidworks_save_document` | 保存或另存为活动文档 | 是 |

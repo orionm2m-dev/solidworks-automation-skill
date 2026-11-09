@@ -891,6 +891,24 @@ def unsuppress_component(asm_model, component_name):
     asm_model.EditUnsuppress()
 
 
+def set_component_suppression(asm_model, component, suppressed):
+    """
+    @brief 压缩或解压一个组件并回读状态（压缩后的组件不参与干涉检查与质量计算）。
+    @param asm_model 装配体 IModelDoc2/IAssemblyDoc。
+    @param component IComponent2 对象（顶层）。
+    @param suppressed True=压缩，False=解压（完全还原）。
+    @return 回读到的 IsSuppressed（bool）。
+    @raise RuntimeError 回读与目标不一致。
+    """
+    # swComponentSuppressionState_e: 0 Suppressed, 2 FullyResolved
+    target_state = 0 if suppressed else 2
+    result = component.SetSuppression2(target_state)
+    actual = bool(safe_get_com_member(component, "IsSuppressed"))
+    if actual != bool(suppressed):
+        raise RuntimeError(f"组件压缩状态回读为 {actual}，目标为 {bool(suppressed)}（SetSuppression2 返回 {result}）")
+    return actual
+
+
 def replace_component(asm_model, old_component_name, new_part_path):
     """
     替换装配体中的组件

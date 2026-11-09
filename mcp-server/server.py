@@ -56,6 +56,7 @@ from scripts.sw_operation_guard import (  # noqa: E402
 
 from scripts.sw_runtime_identity import RuntimeIdentity, RuntimeIdentityError  # noqa: E402
 from scripts.sw_rigid_transform import build_rigid_transform_data  # noqa: E402
+from scripts.sw_connect import SW_TOGGLE_ENABLE_3D_INTERCONNECT, interconnect_document_type  # noqa: E402
 from scripts.sw_thread_feature import (  # noqa: E402
     THREAD_TYPES, add_thread_feature, find_circular_edge, list_circular_edges,
 )
@@ -174,6 +175,7 @@ def _load_automation_modules() -> None:
         "list_component_transforms": assembly.list_component_transforms,
         "set_component_visibility": assembly.set_component_visibility,
         "save_component_model_copy": assembly.save_component_model_copy,
+        "set_component_suppression": assembly.set_component_suppression,
         "get_component_feature_entity": assembly.get_component_feature_entity,
         "get_components": assembly.get_components,
         "resolve_component": assembly.resolve_component,
@@ -3532,6 +3534,7 @@ class SolidWorksOpenDocumentInput(BaseInput):
     path: str = Field(..., min_length=1, description="Absolute path to .SLDPRT/.SLDASM/.SLDDRW or importable file.")
     read_only: bool = Field(default=False, description="Open document read-only.")
     silent: bool = Field(default=True, description="Use SolidWorks silent open option.")
+    enable_3d_interconnect: bool = Field(default=False, description="For Inventor/CATIA/Creo/Solid Edge native files (.ipt/.iam/.catpart/.catproduct/.prt/.asm/.par/.psm): turn on Tools > Options > Import > Enable 3D Interconnect when it is off. This changes a user setting; the result reports it. Off by default: such a file then fails with a clear message instead of silently changing options.")
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
     @field_validator("path")
@@ -3677,6 +3680,14 @@ class SolidWorksThreadFeatureInput(ActiveDocumentInput):
         if self.thread_type not in THREAD_TYPES:
             raise ValueError(f"thread_type must be one of {THREAD_TYPES}")
         return self
+
+
+class SolidWorksSetComponentSuppressionInput(ActiveDocumentInput):
+    """压缩或解压一个顶层装配体组件。"""
+
+    component_name: str = Field(..., min_length=1, description="Exact top-level component instance name (Name2), e.g. 'Gasket-1'.")
+    suppressed: bool = Field(..., description="True suppresses the component (excluded from interference and mass results), False fully resolves it.")
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
 class SolidWorksExportInput(ActiveDocumentInput):
@@ -6970,6 +6981,15 @@ def solidworks_open_document(params: SolidWorksOpenDocumentInput) -> str:
 
     def op():
         sw, _ = connect_solidworks(wait_seconds=1)
+        interconnect = None
+        if interconnect_document_type(params.path) is not None:
+            was_enabled = bool(get_com_member(sw, "GetUserPreferenceToggle", SW_TOGGLE_ENABLE_3D_INTERCONNECT))
+            if not was_enabled and not params.enable_3d_interconnect:
+                raise RuntimeError("3D Interconnect is off in SOLIDWORKS options; pass enable_3d_interconnect=true to turn it on for this native CAD file.")
+            if not was_enabled:
+                get_com_member(sw, "SetUserPreferenceToggle", SW_TOGGLE_ENABLE_3D_INTERCONNECT, True)
+            interconnect = {"document_type": interconnect_document_type(params.path), "was_enabled": was_enabled,
+                            "enabled_now": bool(get_com_member(sw, "GetUserPreferenceToggle", SW_TOGGLE_ENABLE_3D_INTERCONNECT))}
         model = open_document(
             sw,
             params.path,
@@ -6980,7 +7000,10 @@ def solidworks_open_document(params: SolidWorksOpenDocumentInput) -> str:
         # 显式打开已加载的原生文件时也必须激活它，后续目标检查才有确定的上下文。
         if Path(params.path).suffix.lower() in {".sldprt", ".sldasm", ".slddrw"}:
             model = activate_source_document(sw, model, params.path)
-        return {"status": "ok", "document": _model_summary(model)}
+        result = {"status": "ok", "document": _model_summary(model)}
+        if interconnect is not None:
+            result["three_d_interconnect"] = interconnect
+        return result
 
     return _run_locked(op, params.response_format)
 
@@ -7246,6 +7269,29 @@ def solidworks_add_thread_feature(params: SolidWorksThreadFeatureInput) -> str:
             "document": _model_summary(model),
         })
         return result
+
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_set_component_suppression",
+    title="Suppress Or Resolve Assembly Component",
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def solidworks_set_component_suppression(params: SolidWorksSetComponentSuppressionInput) -> str:
+    """Suppress or fully resolve one top-level component (IComponent2.SetSuppression2) and read the state back; does not save."""
+
+    def op():
+        _sw, asm = _active_assembly_required(params)
+        component = find_component_by_exact_name(asm, params.component_name)
+        suppressed = set_component_suppression(asm, component, params.suppressed)
+        get_com_member(asm, "EditRebuild3")
+        return {"status": "ok", "component": _component_summary(component), "suppressed": suppressed, "saved": False, "document": _model_summary(asm)}
 
     return _run_locked(op, params.response_format)
 

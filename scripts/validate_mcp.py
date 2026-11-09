@@ -134,6 +134,7 @@ REQUIRED_TOOLS = {
     "solidworks_set_component_transform",
     "solidworks_set_component_visibility",
     "solidworks_save_component_copy",
+    "solidworks_set_component_suppression",
     "solidworks_list_circular_edges",
     "solidworks_add_thread_feature",
     "solidworks_save_document",

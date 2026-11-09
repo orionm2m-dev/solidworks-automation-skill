@@ -337,3 +337,33 @@ def test_save_component_copy_rejects_wrong_extension_and_failed_save(tmp_path) -
         _sw_assembly().save_component_model_copy(assembly, "Gland-1", str(tmp_path / "gland.SLDPRT"))
     with pytest.raises(RuntimeError, match="应唯一"):
         _sw_assembly().save_component_model_copy(assembly, "Missing-1", str(tmp_path / "x.SLDPRT"))
+
+
+class SuppressComponent:
+    """@brief 模拟 SetSuppression2 / IsSuppressed。"""
+
+    def __init__(self, honour=True):
+        self._suppressed = False
+        self.honour = honour
+        self.calls = []
+
+    def SetSuppression2(self, state):
+        self.calls.append(state)
+        if self.honour:
+            self._suppressed = state == 0
+        return 1
+
+    def IsSuppressed(self):
+        return self._suppressed
+
+
+def test_set_component_suppression_round_trip() -> None:
+    component = SuppressComponent()
+    assert _sw_assembly().set_component_suppression(object(), component, True) is True
+    assert _sw_assembly().set_component_suppression(object(), component, False) is False
+    assert component.calls == [0, 2]
+
+
+def test_set_component_suppression_reports_ignored_request() -> None:
+    with pytest.raises(RuntimeError, match="压缩状态"):
+        _sw_assembly().set_component_suppression(object(), SuppressComponent(honour=False), True)
