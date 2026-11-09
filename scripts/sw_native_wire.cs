@@ -27,6 +27,7 @@ public static class NativeWireTools {
  static IModelDoc2 Guard(ISldWorks sw,string path){var d=(IModelDoc2)sw.ActiveDoc;if(d==null||string.IsNullOrEmpty(d.GetPathName())||!Same(d.GetPathName(),path))throw new Exception("Active document target mismatch");return d;}
  static IBody2[] Bodies(IModelDoc2 d){return ((object[])((IPartDoc)d).GetBodies2(-1,false)??new object[0]).Cast<IBody2>().ToArray();}
  static IComponent2[] Components(IModelDoc2 d){return ((object[])((IAssemblyDoc)d).GetComponents(false)??new object[0]).Cast<IComponent2>().ToArray();}
+ static IComponent2[] TopComponents(IModelDoc2 d){return ((object[])((IAssemblyDoc)d).GetComponents(true)??new object[0]).Cast<IComponent2>().ToArray();}
  static double[] Bounds(IBody2 b){return ((double[])b.GetBodyBox()).Select(v=>v*1000).ToArray();}
  static double[] BodyColor(IBody2 b){var c=b.MaterialPropertyValues2 as double[];return c!=null&&c.Length>=3&&c.Take(3).All(v=>v>=0&&v<=1)?c.Take(3).ToArray():null;}
  static object BodyRow(IBody2 b){var m=b.GetMassProperties(1) as double[];return new {name=b.Name,type=b.GetType(),color=BodyColor(b),bounds_mm=Bounds(b),volume_mm3=m==null?0:m[3]*1e9,face_count=b.GetFaceCount()};}
@@ -93,11 +94,11 @@ public static class NativeWireTools {
    var f=(IFeature)d.FeatureManager.InsertDeleteBody2(false);if(f==null)throw new Exception("Body exclusion failed");f.Name=r.feature_name;d.ClearSelection2(true);d.ForceRebuild3(false);
    if(Bodies(d).Length!=all.Length-selected.Length)throw new Exception("Body exclusion count mismatch");result["excluded"]=selected.Select(b=>b.Name).ToArray();result["bodies"]=Bodies(d).Select(BodyRow).ToArray();
   }else if(r.action=="replace"){
-   if(d.GetType()!=2)throw new Exception("Assembly required");var before=Components(d);var old=before.Single(c=>c.Name2==r.component_name);if(!old.IsFixed())throw new Exception("Only fixed components supported");var matrix=(double[])old.Transform2.ArrayData;string oldPath=old.GetPathName();
+   if(d.GetType()!=2)throw new Exception("Assembly required");var before=TopComponents(d);var old=before.Single(c=>c.Name2==r.component_name);if(!old.IsFixed())throw new Exception("Only fixed components supported");var matrix=(double[])old.Transform2.ArrayData;string oldPath=old.GetPathName();
    if(before.Count(c=>Same(c.GetPathName(),oldPath))!=1||before.Any(c=>Same(c.GetPathName(),r.replacement_path)))throw new Exception("Unique source and new replacement required");
    var other=before.Where(c=>c.Name2!=r.component_name).ToDictionary(c=>c.Name2,c=>new{path=c.GetPathName(),transform=(double[])c.Transform2.ArrayData});
    d.ClearSelection2(true);if(!old.Select4(false,null,false)||!((IAssemblyDoc)d).ReplaceComponents2(r.replacement_path,r.configuration,false,1,false))throw new Exception("Component replacement failed");d.ClearSelection2(true);
-   var after=Components(d);if(after.Length!=before.Length)throw new Exception("Component count changed");var current=after.Single(c=>Same(c.GetPathName(),r.replacement_path));
+   var after=TopComponents(d);if(after.Length!=before.Length)throw new Exception("Top-level component count changed");var current=after.Single(c=>Same(c.GetPathName(),r.replacement_path));
    current.Transform2=(MathTransform)((IMathUtility)sw.GetMathUtility()).CreateTransform(matrix);
    if(!current.IsFixed()){current.Select4(false,null,false);((IAssemblyDoc)d).FixComponent();d.ClearSelection2(true);}
    if(!d.ForceRebuild3(false))throw new Exception("Rebuild failed");

@@ -112,7 +112,7 @@ def register_tools(mcp, connect, run_locked, response_enum):
 
     @mcp.tool(name='solidworks_replace_component_preserving_transform',annotations={'readOnlyHint':False,'destructiveHint':False})
     def replace(params:ReplaceInput)->str:
-        """按精确实例名替换一个固定组件，保留变换并校验其余组件；不保存。"""
+        """按精确实例名替换一个顶层固定组件（零件或子装配体均可），保留变换并仅校验其余顶层组件；不保存。"""
         path=Path(params.replacement_path)
         if not path.is_absolute() or not path.is_file() or path.suffix.lower() not in {'.sldprt','.sldasm'}: raise ValueError('Existing absolute native component required')
         return run(params,'replace',component_name=params.component_name,replacement_path=str(path),configuration=params.configuration)
