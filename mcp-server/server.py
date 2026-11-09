@@ -177,6 +177,8 @@ def _load_automation_modules() -> None:
         "set_component_visibility": assembly.set_component_visibility,
         "save_component_model_copy": assembly.save_component_model_copy,
         "set_component_suppression": assembly.set_component_suppression,
+        "reorganize_components": assembly.reorganize_components,
+        "delete_components": assembly.delete_components,
         "get_component_feature_entity": assembly.get_component_feature_entity,
         "get_components": assembly.get_components,
         "resolve_component": assembly.resolve_component,
@@ -3552,6 +3554,7 @@ class SolidWorksSaveDocumentInput(ActiveDocumentInput):
     """Input for saving the active document."""
 
     path: Optional[str] = Field(default=None, description="Optional Save As path. Omit to save current document.")
+    save_referenced: bool = Field(default=False, description="Also save referenced documents modified in this session (subassemblies that received components, edited parts); swSaveAsOptions_SaveReferenced. Off by default: only the active document is written.")
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
@@ -3691,6 +3694,46 @@ class SolidWorksSetComponentSuppressionInput(ActiveDocumentInput):
     component_name: str = Field(..., min_length=1, description="Exact component instance name (Name2), e.g. 'Gasket-1'; a nested component by its full path, e.g. 'Board-1/XBT1-1'.")
     suppressed: bool = Field(..., description="True suppresses the component (excluded from interference and mass results), False fully resolves it.")
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+
+class SolidWorksReorganizeComponentsInput(ActiveDocumentInput):
+    """把装配体组件移入已插入的子装配体组件（或移回顶层），位置保持不变。"""
+
+    component_names: list[str] = Field(..., min_length=1, max_length=500, description="Exact component instance names (Name2) to move, e.g. ['Body-1', 'Detail-1']; a nested component by its full path 'Board-1/XBT1-1'.")
+    target_component_name: Optional[str] = Field(default=None, min_length=1, description="Exact instance name of an already inserted subassembly component that receives the components, e.g. 'Housing-1'; omit to move them to the top level.")
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+    @model_validator(mode="after")
+    def names_unique_and_target_separate(self):
+        """在调用 COM 之前拒绝重复名称、空名称以及把目标列入移动列表。"""
+        names = [name.strip() for name in self.component_names]
+        if any(not name for name in names):
+            raise ValueError("component_names must not contain empty names")
+        if len(set(names)) != len(names):
+            raise ValueError("component_names must be unique")
+        if self.target_component_name is not None and self.target_component_name.strip() in names:
+            raise ValueError("target_component_name must not be one of component_names")
+        return self
+
+
+class SolidWorksDeleteComponentsInput(ActiveDocumentInput):
+    """删除顶层装配体中的若干组件及依赖它们的配合。"""
+
+    component_names: list[str] = Field(..., min_length=1, max_length=500, description="Exact top-level component instance names (Name2) to delete, e.g. ['Gasket_frame-1', 'Gasket_model-1']. Nested paths are rejected: open the subassembly document to delete inside it.")
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+    @model_validator(mode="after")
+    def names_unique_and_top_level(self):
+        """在调用 COM 之前拒绝重复名称、空名称与嵌套路径。"""
+        names = [name.strip() for name in self.component_names]
+        if any(not name for name in names):
+            raise ValueError("component_names must not contain empty names")
+        if len(set(names)) != len(names):
+            raise ValueError("component_names must be unique")
+        nested = [name for name in names if "/" in name]
+        if nested:
+            raise ValueError(f"Only top-level components can be deleted here; nested paths: {nested}")
+        return self
 
 
 class SolidWorksExportInput(ActiveDocumentInput):
@@ -7300,6 +7343,48 @@ def solidworks_set_component_suppression(params: SolidWorksSetComponentSuppressi
 
 
 @mcp.tool(
+    name="solidworks_reorganize_components",
+    title="Move Assembly Components Into Subassembly",
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def solidworks_reorganize_components(params: SolidWorksReorganizeComponentsInput) -> str:
+    """Move components into an already inserted subassembly component (or back to the top level) with IAssemblyDoc.ReorganizeComponents; transforms and bounding boxes are read before and after and must match; does not save."""
+
+    def op():
+        _sw, asm = _active_assembly_required(params)
+        moved = reorganize_components(asm, params.component_names, params.target_component_name)
+        return {"status": "ok", **moved, "saved": False, "document": _model_summary(asm)}
+
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_delete_components",
+    title="Delete Assembly Components",
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def solidworks_delete_components(params: SolidWorksDeleteComponentsInput) -> str:
+    """Delete top-level components and the mates that depend on them (IModelDocExtension.DeleteSelection2), verify they are gone and return the remaining top-level composition; does not save."""
+
+    def op():
+        _sw, asm = _active_assembly_required(params)
+        removed = delete_components(asm, params.component_names)
+        return {"status": "ok", **removed, "saved": False, "document": _model_summary(asm)}
+
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
     name="solidworks_save_document",
     title="Save Active SolidWorks Document",
     annotations={
@@ -7314,10 +7399,11 @@ def solidworks_save_document(params: SolidWorksSaveDocumentInput = SolidWorksSav
 
     def op():
         _sw, model = _active_model_required(params)
-        success = save_document(model, params.path)
+        success = save_document(model, params.path, save_referenced=params.save_referenced)
         return {
             "status": "ok" if success else "failed",
             "success": bool(success),
+            "save_referenced": bool(params.save_referenced),
             "document": _model_summary(model),
         }
 

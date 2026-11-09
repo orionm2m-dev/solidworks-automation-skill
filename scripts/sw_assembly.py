@@ -918,6 +918,192 @@ def set_component_suppression(asm_model, component, suppressed):
     return actual
 
 
+SW_DELETE_CHILDREN = 1
+SW_DELETE_ABSORBED = 2
+
+
+def _component_transform_values(component):
+    """
+    @brief 读取组件变换的 ArrayData（16 个浮点数）；组件没有变换时返回 None。
+    @param component IComponent2 对象。
+    """
+    transform = component.Transform2
+    if transform is None:
+        return None
+    return [float(v) for v in transform.ArrayData]
+
+
+def _component_box_mm(component):
+    """
+    @brief 读取组件在装配体坐标系中的包围盒（毫米）；读取失败返回 None。
+    @param component IComponent2 对象。
+    """
+    try:
+        raw_box = component.GetBox(False, False)
+    except Exception:
+        return None
+    if raw_box is None or len(raw_box) != 6:
+        return None
+    return [round(float(v) * 1000.0, 6) for v in raw_box]
+
+
+def _component_names(asm_model, top_level_only):
+    """
+    @brief 列出组件实例名（Name2）。
+    @param top_level_only True=仅顶层；False=全部层级（名称含 "/" 路径）。
+    """
+    components = safe_get_com_member(asm_model, "GetComponents", bool(top_level_only)) or []
+    return [str(safe_get_com_member(component, "Name2")) for component in components]
+
+
+def _unique_component_names(component_names):
+    """
+    @brief 校验组件名列表非空且无重复，返回字符串列表。
+    @raise ValueError 列表为空或存在重复名称。
+    """
+    names = [str(name) for name in component_names]
+    if not names:
+        raise ValueError("component_names 不能为空")
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        raise ValueError(f"组件名重复: {duplicates}")
+    return names
+
+
+def reorganize_components(asm_model, component_names, target_component_name=None):
+    """
+    @brief 把若干组件移入已插入的子装配体组件（IAssemblyDoc.ReorganizeComponents）或移回顶层，
+           移动前后回读各组件的变换与包围盒，位置必须保持不变。
+    @param asm_model 顶层装配体 IModelDoc2/IAssemblyDoc。
+    @param component_names 要移动的组件实例名列表（Name2，子装配体层级用 "/" 分隔），区分大小写。
+    @param target_component_name 接收组件的子装配体实例名；None 表示移到顶层。
+    @return dict：target、moved（每项含 from、to、origin_mm_before/after、box_mm_before/after、
+            position_preserved）、component_count_before/after（顶层组件数）。
+    @raise ValueError 名称为空、重复，目标在移动列表中，或组件已在目标内。
+    @raise RuntimeError 目标不是已加载的子装配体、调用返回 False、移动后找不到组件或位置改变。
+
+    ReorganizeComponents 会重建组件对象，因此移动后一律按新名称重新查找组件，
+    不复用移动前的 IComponent2 引用。
+    """
+    try:
+        from .sw_rigid_transform import transform_matches
+    except ImportError:
+        from sw_rigid_transform import transform_matches
+    names = _unique_component_names(component_names)
+    target = None
+    target_name = None
+    if target_component_name is not None:
+        target_name = str(target_component_name)
+        if target_name in names:
+            raise ValueError(f"目标组件 {target_name!r} 不能同时是被移动的组件")
+        inside = [name for name in names if name.startswith(target_name + "/")]
+        if inside:
+            raise ValueError(f"组件已在目标子装配体中: {inside}")
+        target = find_component_by_exact_name(asm_model, target_name)
+        target_model = get_component_model(target)
+        if int(safe_get_com_member(target_model, "GetType")) != 2:
+            raise RuntimeError(f"目标组件 {target_name!r} 不是子装配体")
+    sources = [find_component_by_exact_name(asm_model, name) for name in names]
+    before = {
+        name: (_component_transform_values(component), _component_box_mm(component))
+        for name, component in zip(names, sources)
+    }
+    top_count_before = len(_component_names(asm_model, True))
+    asm_model.ClearSelection2(True)
+    source_array = VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_DISPATCH, sources)
+    target_argument = target if target is not None else VARIANT(pythoncom.VT_DISPATCH, None)
+    moved_ok = asm_model.ReorganizeComponents(source_array, target_argument)
+    if not moved_ok:
+        raise RuntimeError(
+            "ReorganizeComponents 返回 False（组件与目标须属于同一顶层装配体，目标不能位于被移动组件内部）"
+        )
+    safe_get_com_member(asm_model, "EditRebuild3")
+    after_components = {
+        str(safe_get_com_member(component, "Name2")): component
+        for component in (safe_get_com_member(asm_model, "GetComponents", False) or [])
+    }
+    moved = []
+    for name in names:
+        leaf = name.split("/")[-1]
+        new_name = f"{target_name}/{leaf}" if target_name else leaf
+        component = after_components.get(new_name)
+        if component is None:
+            raise RuntimeError(f"移动后未找到组件 {new_name!r}；当前组件: {sorted(after_components)[:30]}")
+        transform_before, box_before = before[name]
+        transform_after = _component_transform_values(component)
+        box_after = _component_box_mm(component)
+        preserved = (
+            transform_before is not None and transform_after is not None
+            and transform_matches(transform_after, transform_before, 1e-6, 1e-6)
+        )
+        if not preserved:
+            raise RuntimeError(
+                f"组件 {name!r} 移动后位置改变: "
+                f"before={[round(v, 6) for v in (transform_before or [])[:12]]} "
+                f"after={[round(v, 6) for v in (transform_after or [])[:12]]}; "
+                f"box_before={box_before} box_after={box_after}"
+            )
+        moved.append({
+            "from": name,
+            "to": new_name,
+            "origin_mm_before": [round(v * 1000.0, 6) for v in transform_before[9:12]],
+            "origin_mm_after": [round(v * 1000.0, 6) for v in transform_after[9:12]],
+            "box_mm_before": box_before,
+            "box_mm_after": box_after,
+            "position_preserved": True,
+        })
+    return {
+        "target": target_name,
+        "moved": moved,
+        "component_count_before": top_count_before,
+        "component_count_after": len(_component_names(asm_model, True)),
+    }
+
+
+def delete_components(asm_model, component_names, delete_options=SW_DELETE_CHILDREN | SW_DELETE_ABSORBED):
+    """
+    @brief 删除若干顶层组件及依赖它们的配合等子项（IModelDocExtension.DeleteSelection2），
+           并回读顶层组件列表核对。
+    @param asm_model 顶层装配体 IModelDoc2/IAssemblyDoc。
+    @param component_names 顶层组件实例名列表（Name2），区分大小写；不接受含 "/" 的嵌套路径，
+           子装配体内的组件须打开该子装配体文档后删除。
+    @param delete_options swDeleteSelectionOptions_e 位掩码，默认 1|2（子项与吸收特征一并删除）。
+    @return dict：deleted、delete_options、component_count_before/after、remaining（顶层组件名）。
+    @raise ValueError 名称为空、重复或含嵌套路径。
+    @raise RuntimeError 组件不唯一、选择失败、删除调用返回 False 或删除后组件仍在。
+    """
+    names = _unique_component_names(component_names)
+    nested = [name for name in names if "/" in name]
+    if nested:
+        raise ValueError(f"只能删除顶层组件，嵌套路径请在子装配体文档中操作: {nested}")
+    components = [find_component_by_exact_name(asm_model, name) for name in names]
+    before = _component_names(asm_model, True)
+    asm_model.ClearSelection2(True)
+    for index, (name, component) in enumerate(zip(names, components)):
+        append = index > 0
+        try:
+            selected = bool(component.Select4(append, _empty_callout(), False))
+        except Exception:
+            selected = False
+        if not selected:
+            selected = bool(_select_by_id(asm_model.Extension, name, "COMPONENT", append=append))
+        if not selected:
+            raise RuntimeError(f"无法选择组件 {name!r}")
+    deleted = bool(asm_model.Extension.DeleteSelection2(int(delete_options)))
+    safe_get_com_member(asm_model, "EditRebuild3")
+    remaining = _component_names(asm_model, True)
+    left = [name for name in names if name in remaining]
+    if not deleted or left:
+        raise RuntimeError(f"组件删除失败（DeleteSelection2 返回 {deleted}），仍存在: {left}")
+    return {
+        "deleted": names,
+        "delete_options": int(delete_options),
+        "component_count_before": len(before),
+        "component_count_after": len(remaining),
+        "remaining": remaining,
+    }
+
+
 def replace_component(asm_model, old_component_name, new_part_path):
     """
     替换装配体中的组件
