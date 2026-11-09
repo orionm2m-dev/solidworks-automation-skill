@@ -558,6 +558,193 @@ def apply_component_transform_x(component, tx, ty, tz, angle_rad=0.0):
         return False
 
 
+def find_component_by_exact_name(asm_model, name):
+    """
+    @brief 按完整实例名（Name2）查找唯一的顶层组件。
+    @param asm_model 装配体 IModelDoc2/IAssemblyDoc。
+    @param name 组件实例名，例如 "Board-1"，区分大小写。
+    @return 唯一匹配的 IComponent2 对象。
+    @raise RuntimeError 没有匹配或匹配多于一个。
+    """
+    components = safe_get_com_member(asm_model, "GetComponents", True) or []
+    matches = [c for c in components if str(safe_get_com_member(c, "Name2")) == str(name)]
+    if len(matches) != 1:
+        raise RuntimeError(f"顶层组件 {name!r} 应唯一，实际找到 {len(matches)} 个")
+    return matches[0]
+
+
+SW_SAVE_AS_SILENT = 1
+SW_SAVE_AS_COPY = 2
+SW_DOC_SUFFIX = {1: ".sldprt", 2: ".sldasm"}
+
+
+def save_component_model_copy(asm_model, component_name, output_path):
+    """
+    @brief 把一个组件（含导入装配体中的虚拟组件）的模型另存为独立副本文件。
+    @param asm_model 装配体 IModelDoc2/IAssemblyDoc。
+    @param component_name 完整实例名（Name2，子装配体层级用 "/" 分隔），区分大小写。
+    @param output_path 新文件的绝对路径；扩展名必须与组件文档类型一致。
+    @return dict：组件名、输出路径、文档类型。
+    @raise RuntimeError 组件不唯一、模型未加载、类型不符或保存失败。
+
+    使用“另存为副本”选项：装配体仍引用原组件，副本不会替换它。
+    """
+    components = safe_get_com_member(asm_model, "GetComponents", False) or []
+    matches = [c for c in components if str(safe_get_com_member(c, "Name2")) == str(component_name)]
+    if len(matches) != 1:
+        raise RuntimeError(f"组件 {component_name!r} 应唯一，实际找到 {len(matches)} 个")
+    model = safe_get_com_member(matches[0], "GetModelDoc2")
+    if model is None:
+        raise RuntimeError("组件模型未加载（轻化或压缩状态）")
+    doc_type = int(safe_get_com_member(model, "GetType"))
+    expected_suffix = SW_DOC_SUFFIX.get(doc_type)
+    if expected_suffix is None or not str(output_path).lower().endswith(expected_suffix):
+        raise RuntimeError(f"输出扩展名与组件文档类型 {doc_type} 不符，应为 {expected_suffix}")
+    errors = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+    warnings = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+    saved = model.Extension.SaveAs(
+        str(output_path), 0, SW_SAVE_AS_SILENT | SW_SAVE_AS_COPY,
+        VARIANT(pythoncom.VT_DISPATCH, None), errors, warnings,
+    )
+    if not saved or not os.path.isfile(str(output_path)):
+        raise RuntimeError(f"组件副本保存失败, 错误码: {errors.value}, 警告码: {warnings.value}")
+    return {"component": str(component_name), "output_path": str(output_path), "doc_type": doc_type}
+
+
+SW_COMPONENT_HIDDEN = 0
+SW_COMPONENT_VISIBLE = 1
+
+
+def set_component_visibility(component, visible):
+    """
+    @brief 在当前显示状态中隐藏或显示组件并回读核对（不压缩，不影响质量与干涉计算）。
+    @param component IComponent2 对象。
+    @param visible True=显示，False=隐藏。
+    @return 回读到的可见性（bool）。
+    @raise RuntimeError 回读与目标不一致。
+    """
+    target = SW_COMPONENT_VISIBLE if visible else SW_COMPONENT_HIDDEN
+    component.Visible = target
+    actual = int(safe_get_com_member(component, "Visible"))
+    if actual != target:
+        raise RuntimeError(f"组件可见性回读为 {actual}，目标为 {target}")
+    return bool(actual)
+
+
+def list_component_transforms(asm_model, top_level_only=True, name_contains=None, limit=200):
+    """
+    @brief 只读列出组件的刚体变换（局部坐标轴方向 + 原点）与包围盒。
+    @param asm_model 装配体 IModelDoc2/IAssemblyDoc。
+    @param top_level_only True=仅顶层组件；False=含子装配体内的全部组件。
+    @param name_contains 可选，按实例名子串过滤（不区分大小写）。
+    @param limit 最多返回的行数；matched 仍统计全部匹配数。
+    @return dict：matched 为匹配总数，rows 为组件行（长度单位毫米）。
+    """
+    components = safe_get_com_member(asm_model, "GetComponents", bool(top_level_only)) or []
+    needle = str(name_contains).lower() if name_contains else None
+    rows = []
+    matched = 0
+    for component in components:
+        name = str(safe_get_com_member(component, "Name2"))
+        if needle and needle not in name.lower():
+            continue
+        matched += 1
+        if len(rows) >= limit:
+            continue
+        transform = component.Transform2
+        data = [float(v) for v in transform.ArrayData] if transform is not None else None
+        box = None
+        try:
+            raw_box = component.GetBox(False, False)
+            if raw_box is not None and len(raw_box) == 6:
+                box = [round(float(v) * 1000.0, 6) for v in raw_box]
+        except Exception:
+            box = None
+        rows.append({
+            "name": name,
+            "path": safe_get_com_member(component, "GetPathName"),
+            "fixed": bool(safe_get_com_member(component, "IsFixed")),
+            "suppressed": bool(safe_get_com_member(component, "IsSuppressed")),
+            "x_axis": data[0:3] if data else None,
+            "y_axis": data[3:6] if data else None,
+            "z_axis": data[6:9] if data else None,
+            "origin_mm": [round(v * 1000.0, 6) for v in data[9:12]] if data else None,
+            "scale": data[12] if data and len(data) > 12 else None,
+            "box_mm": box,
+        })
+    return {"matched": matched, "rows": rows}
+
+
+def _call_com_method(obj, name, *args):
+    """
+    @brief 先把成员标记为方法再调用，避免 pywin32 动态代理以 PROPERTYGET 提前执行。
+    @param obj COM 对象（或测试用假对象）。
+    @param name 方法名。
+    @return 方法返回值。
+    """
+    flag = getattr(type(obj), "_FlagAsMethod", None)
+    if flag is not None:
+        flag(obj, name)
+    return getattr(obj, name)(*args)
+
+
+def apply_component_rigid_transform(component, array_data, sw=None):
+    """
+    @brief 把刚体变换写入组件并回读核对。
+    @param component IComponent2 对象，调用方负责先浮动固定组件。
+    @param array_data build_rigid_transform_data 生成的 16 元组。
+    @param sw SolidWorks 应用对象；提供时用 MathUtility.CreateTransform 新建变换。
+        组件处于单位变换时 Transform2 返回的对象会忽略 ArrayData 赋值，
+        因此只有拿不到应用对象时才退回到修改现有变换。
+    @return dict：method 为实际生效的写入方式，array_data 为回读值。
+    @raise RuntimeError 组件无 Transform2、写入失败或回读与目标不一致。
+    """
+    try:
+        from .sw_rigid_transform import transform_matches
+    except ImportError:
+        from sw_rigid_transform import transform_matches
+    data = tuple(float(v) for v in array_data)
+    attempts = []
+    transform = None
+    if sw is not None:
+        math_utility = _call_com_method(sw, "GetMathUtility")
+        transform = _call_com_method(
+            math_utility, "CreateTransform", VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_R8, data)
+        )
+        attempts.append("CreateTransform")
+    if transform is None:
+        transform = component.Transform2
+        if transform is None:
+            raise RuntimeError("组件没有可用 Transform2")
+        transform.ArrayData = data
+        attempts.append("ArrayData 赋值")
+    method = None
+    try:
+        solved = component.SetTransformAndSolve2(transform)
+        attempts.append(f"SetTransformAndSolve2={solved!r}")
+        if solved:
+            method = "SetTransformAndSolve2"
+    except Exception as error:
+        attempts.append(f"SetTransformAndSolve2 异常: {error}")
+    if method is None:
+        try:
+            component.Transform2 = transform
+            method = "Transform2"
+            attempts.append("Transform2 已赋值")
+        except Exception as error:
+            raise RuntimeError(f"组件变换写入失败: {error}; {'; '.join(attempts)}") from error
+    readback = component.Transform2
+    values = tuple(float(v) for v in (readback.ArrayData if readback is not None else ()))
+    if not transform_matches(values, array_data):
+        staged = tuple(float(v) for v in transform.ArrayData)
+        raise RuntimeError(
+            "组件变换回读与目标不一致（可能被配合或固定约束覆盖）: "
+            f"{'; '.join(attempts)}; staged={[round(v, 6) for v in staged[:12]]}; "
+            f"readback={[round(v, 6) for v in values[:12]]}"
+        )
+    return {"method": method, "array_data": list(values[:16])}
+
+
 def iter_feature_tree(model, include_subfeatures=True):
     """
     @brief 遍历模型特征树，兼容 FirstFeature/GetNextFeature 伪可调用属性。

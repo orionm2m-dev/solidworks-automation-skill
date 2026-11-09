@@ -55,6 +55,10 @@ from scripts.sw_operation_guard import (  # noqa: E402
 
 
 from scripts.sw_runtime_identity import RuntimeIdentity, RuntimeIdentityError  # noqa: E402
+from scripts.sw_rigid_transform import build_rigid_transform_data  # noqa: E402
+from scripts.sw_thread_feature import (  # noqa: E402
+    THREAD_TYPES, add_thread_feature, find_circular_edge, list_circular_edges,
+)
 
 _runtime_identity = RuntimeIdentity.capture(REPO_DIR)
 
@@ -161,10 +165,15 @@ def _load_automation_modules() -> None:
         "SW_MATE_COINCIDENT": assembly.SW_MATE_COINCIDENT,
         "SW_MATE_DISTANCE": assembly.SW_MATE_DISTANCE,
         "assembly_add_component": assembly.add_component,
+        "apply_component_rigid_transform": assembly.apply_component_rigid_transform,
         "add_concentric_mate_by_cylinders": assembly.add_concentric_mate_by_cylinders,
         "add_mate5_checked": assembly.add_mate5_checked,
         "collect_mate_feature_summary": assembly.collect_mate_feature_summary,
         "find_component_by_name": assembly.find_component_by_name,
+        "find_component_by_exact_name": assembly.find_component_by_exact_name,
+        "list_component_transforms": assembly.list_component_transforms,
+        "set_component_visibility": assembly.set_component_visibility,
+        "save_component_model_copy": assembly.save_component_model_copy,
         "get_component_feature_entity": assembly.get_component_feature_entity,
         "get_components": assembly.get_components,
         "resolve_component": assembly.resolve_component,
@@ -3571,6 +3580,101 @@ class SolidWorksSetComponentFixedInput(ActiveDocumentInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
+class SolidWorksSetComponentTransformInput(ActiveDocumentInput):
+    """按显式刚体变换（局部坐标轴方向 + 原点）放置一个顶层装配体组件。"""
+
+    component_name: str = Field(..., min_length=1, description="Exact top-level component instance name (Name2), e.g. 'Board-1'.")
+    x_axis: list[float] = Field(..., min_length=3, max_length=3, description="Component local X axis direction in assembly coordinates (unit vector).")
+    y_axis: list[float] = Field(..., min_length=3, max_length=3, description="Component local Y axis direction in assembly coordinates (unit vector).")
+    z_axis: list[float] = Field(..., min_length=3, max_length=3, description="Component local Z axis direction; must equal x_axis × y_axis (no mirroring).")
+    origin_mm: list[float] = Field(..., min_length=3, max_length=3, description="Component origin position in assembly coordinates, mm.")
+    fix_after: Optional[bool] = Field(default=None, description="None keeps the previous fixed/floating state; True fixes; False floats.")
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+    @model_validator(mode="after")
+    def rigid_axes_valid(self):
+        """在调用 COM 之前拒绝非正交、非单位或镜像的坐标轴。"""
+        build_rigid_transform_data(self.x_axis, self.y_axis, self.z_axis, [v / 1000.0 for v in self.origin_mm])
+        return self
+
+
+class SolidWorksListComponentTransformsInput(ActiveDocumentInput):
+    """只读列出装配体组件的刚体变换与包围盒。"""
+
+    top_level_only: bool = Field(default=True, description="True lists top-level components only; False includes components inside subassemblies.")
+    name_contains: Optional[str] = Field(default=None, min_length=1, description="Optional case-insensitive substring of the component instance name.")
+    limit: int = Field(default=200, ge=1, le=2000, description="Maximum rows to return; matched_count still reports all matches.")
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+
+class SolidWorksSetComponentVisibilityInput(ActiveDocumentInput):
+    """隐藏或显示一个顶层装配体组件（仅显示状态，不压缩）。"""
+
+    component_name: str = Field(..., min_length=1, description="Exact top-level component instance name (Name2), e.g. 'Body-1'.")
+    visible: bool = Field(..., description="True shows the component, False hides it in the current display state.")
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+
+class SolidWorksSaveComponentCopyInput(ActiveDocumentInput):
+    """把装配体中的一个组件（含虚拟组件）另存为独立副本文件。"""
+
+    component_name: str = Field(..., min_length=1, description="Exact component instance name (Name2); use '/' between subassembly levels.")
+    output_path: str = Field(..., min_length=1, description="New absolute .SLDPRT or .SLDASM path in an existing directory; must not exist.")
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+    @field_validator("output_path")
+    @classmethod
+    def output_must_be_new_native_file(cls, value: str) -> str:
+        path = Path(value)
+        if not path.is_absolute() or path.suffix.lower() not in {".sldprt", ".sldasm"}:
+            raise ValueError("Absolute .SLDPRT or .SLDASM output path required")
+        if path.exists() or not path.parent.is_dir():
+            raise ValueError("Output file must not exist and its directory must exist")
+        return value
+
+
+class SolidWorksCircularEdgesInput(ActiveDocumentInput):
+    """只读列出零件实体上的圆形边（圆心、轴向、直径，毫米）。"""
+
+    diameter_mm: Optional[float] = Field(default=None, gt=0, description="Optional diameter filter, mm.")
+    diameter_tolerance_mm: float = Field(default=0.1, ge=0, le=5, description="Tolerance for the diameter filter, mm.")
+    limit: int = Field(default=500, ge=1, le=5000, description="Maximum rows to return; matched_count still reports all matches.")
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+
+class SolidWorksThreadFeatureInput(ActiveDocumentInput):
+    """在圆形边上创建原生螺纹特征（Insert > Features > Thread）。"""
+
+    edge_center_mm: list[float] = Field(..., min_length=3, max_length=3, description="Centre of the circular start edge in part coordinates, mm.")
+    edge_diameter_mm: float = Field(..., gt=0, description="Diameter of the circular start edge, mm.")
+    edge_tolerance_mm: float = Field(default=0.05, gt=0, le=1, description="Matching tolerance for centre and radius, mm.")
+    thread_type: str = Field(default="Metric Die", min_length=1, description="Thread library profile: 'Metric Die' (external), 'Metric Tap' (internal), 'Inch Die', 'Inch Tap', 'SP4xx Bottle', 'SP4xx Bottle Lite'.")
+    size: str = Field(..., min_length=1, description="Library size name, e.g. 'M10x1.5'.")
+    method: Literal["cut", "extrude"] = Field(default="cut", description="Cut the thread into the body or extrude it onto the body.")
+    end_condition: Literal["blind", "revolutions"] = Field(default="blind")
+    depth_mm: Optional[float] = Field(default=None, gt=0, description="Thread length for blind end condition, mm.")
+    revolutions: Optional[float] = Field(default=None, gt=0, description="Number of turns for the revolutions end condition.")
+    reverse_direction: bool = Field(default=False, description="Flip the thread direction along the cylinder axis.")
+    right_handed: bool = Field(default=True)
+    trim_start_face: bool = Field(default=True)
+    trim_end_face: bool = Field(default=True)
+    offset_mm: float = Field(default=0.0, ge=0, description="Start offset from the edge, mm.")
+    start_angle_deg: float = Field(default=0.0, ge=0, lt=360)
+    feature_name: Optional[str] = Field(default=None, max_length=120)
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+    @model_validator(mode="after")
+    def end_condition_values(self):
+        """盲孔深度与圈数二选一，按端部条件校验。"""
+        if self.end_condition == "blind" and self.depth_mm is None:
+            raise ValueError("depth_mm is required for blind end condition")
+        if self.end_condition == "revolutions" and self.revolutions is None:
+            raise ValueError("revolutions is required for revolutions end condition")
+        if self.thread_type not in THREAD_TYPES:
+            raise ValueError(f"thread_type must be one of {THREAD_TYPES}")
+        return self
+
+
 class SolidWorksExportInput(ActiveDocumentInput):
     """Input for exporting the active document."""
 
@@ -6936,6 +7040,203 @@ def solidworks_set_component_fixed(params: SolidWorksSetComponentFixedInput) -> 
             "component": _component_summary(component),
             "document": _model_summary(asm),
         }
+
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_list_component_transforms",
+    title="List Assembly Component Transforms",
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def solidworks_list_component_transforms(params: SolidWorksListComponentTransformsInput) -> str:
+    """Read component placement: local axes, origin (mm) and bounding box (mm) in assembly coordinates; read-only."""
+
+    def op():
+        _sw, asm = _active_assembly_required(params)
+        listing = list_component_transforms(asm, params.top_level_only, params.name_contains, params.limit)
+        return {
+            "status": "ok",
+            "matched_count": listing["matched"],
+            "returned_count": len(listing["rows"]),
+            "truncated": listing["matched"] > len(listing["rows"]),
+            "components": listing["rows"],
+            "document": _model_summary(asm),
+        }
+
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_set_component_transform",
+    title="Place Assembly Component By Rigid Transform",
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def solidworks_set_component_transform(params: SolidWorksSetComponentTransformInput) -> str:
+    """Place one top-level assembly component by explicit local axes and origin, verify the readback; does not save."""
+
+    def op():
+        sw, asm = _active_assembly_required(params)
+        component = find_component_by_exact_name(asm, params.component_name)
+        array_data = build_rigid_transform_data(
+            params.x_axis, params.y_axis, params.z_axis, [mm(v) for v in params.origin_mm]
+        )
+        was_fixed = bool(get_com_member(component, "IsFixed"))
+        if was_fixed:
+            _set_component_fixed(asm, component, fixed=False)
+        applied = apply_component_rigid_transform(component, array_data, sw=sw)
+        target_fixed = was_fixed if params.fix_after is None else bool(params.fix_after)
+        fixed_ok = _set_component_fixed(asm, component, fixed=True) if target_fixed else True
+        get_com_member(asm, "EditRebuild3")
+        readback = component.Transform2
+        values = [float(v) for v in readback.ArrayData] if readback is not None else []
+        from scripts.sw_rigid_transform import transform_matches
+
+        if not transform_matches(values, array_data):
+            raise RuntimeError("Component transform changed after rebuild (mates or constraints override it)")
+        box = None
+        try:
+            raw_box = component.GetBox(False, False)
+            if raw_box is not None and len(raw_box) == 6:
+                box = [round(float(v) * 1000.0, 6) for v in raw_box]
+        except Exception:
+            box = None
+        return {
+            "status": "ok",
+            "component": _component_summary(component),
+            "method": applied["method"],
+            "array_data": values[:16],
+            "origin_mm": [round(v * 1000.0, 6) for v in values[9:12]],
+            "fixed_before": was_fixed,
+            "fixed_after": bool(get_com_member(component, "IsFixed")),
+            "fix_request_ok": bool(fixed_ok),
+            "box_mm": box,
+            "saved": False,
+            "document": _model_summary(asm),
+        }
+
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_set_component_visibility",
+    title="Hide Or Show Assembly Component",
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def solidworks_set_component_visibility(params: SolidWorksSetComponentVisibilityInput) -> str:
+    """Hide or show one top-level component in the current display state (not suppression); does not save."""
+
+    def op():
+        _sw, asm = _active_assembly_required(params)
+        component = find_component_by_exact_name(asm, params.component_name)
+        visible = set_component_visibility(component, params.visible)
+        return {
+            "status": "ok",
+            "component": _component_summary(component),
+            "visible": visible,
+            "saved": False,
+            "document": _model_summary(asm),
+        }
+
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_save_component_copy",
+    title="Save Assembly Component As Standalone Copy",
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def solidworks_save_component_copy(params: SolidWorksSaveComponentCopyInput) -> str:
+    """Write one component's model (including a virtual component of an imported assembly) to a new standalone file as a copy; the assembly keeps its original reference."""
+
+    def op():
+        _sw, asm = _active_assembly_required(params)
+        saved = save_component_model_copy(asm, params.component_name, params.output_path)
+        return {"status": "ok", **saved, "assembly_reference_changed": False, "document": _model_summary(asm)}
+
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_list_circular_edges",
+    title="List Circular Edges Of Active Part",
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def solidworks_list_circular_edges(params: SolidWorksCircularEdgesInput) -> str:
+    """List circular edges (centre mm, axis, diameter mm) of all solid bodies in the active part via ICurve.CircleParams; works on imported bodies."""
+
+    def op():
+        _sw, model = _active_part_required(params)
+        radius_m = mm(params.diameter_mm) / 2.0 if params.diameter_mm is not None else None
+        listing = list_circular_edges(model, radius_m, mm(params.diameter_tolerance_mm) / 2.0, params.limit)
+        return {
+            "status": "ok",
+            "matched_count": listing["matched"],
+            "returned_count": len(listing["rows"]),
+            "truncated": listing["matched"] > len(listing["rows"]),
+            "edges": listing["rows"],
+            "document": _model_summary(model),
+        }
+
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_add_thread_feature",
+    title="Add Native Thread Feature",
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def solidworks_add_thread_feature(params: SolidWorksThreadFeatureInput) -> str:
+    """Create a native Thread feature (swFmSweepThread) starting at a circular edge found by centre and diameter; reports volume and face-count change; does not save."""
+
+    def op():
+        _sw, model = _active_part_required(params)
+        edge = find_circular_edge(model, [mm(v) for v in params.edge_center_mm], mm(params.edge_diameter_mm) / 2.0, mm(params.edge_tolerance_mm))
+        result = add_thread_feature(
+            model, edge["edge"], thread_type=params.thread_type, size=params.size, method=params.method,
+            end_condition=params.end_condition, depth_m=mm(params.depth_mm) if params.depth_mm else None,
+            revolutions=params.revolutions, reverse_direction=params.reverse_direction, right_handed=params.right_handed,
+            trim_start_face=params.trim_start_face, trim_end_face=params.trim_end_face, offset_m=mm(params.offset_mm),
+            start_angle_deg=params.start_angle_deg, feature_name=params.feature_name,
+        )
+        result.update({
+            "status": "ok",
+            "edge": {"center_mm": [round(v * 1000.0, 4) for v in edge["center_m"]], "axis": [round(v, 6) for v in edge["axis"]], "diameter_mm": round(edge["radius_m"] * 2000.0, 4)},
+            "volume_change_mm3": round((result["volume_after_m3"] - result["volume_before_m3"]) * 1e9, 3),
+            "saved": False,
+            "document": _model_summary(model),
+        })
+        return result
 
     return _run_locked(op, params.response_format)
 
