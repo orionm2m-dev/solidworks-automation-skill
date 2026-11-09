@@ -144,6 +144,7 @@ def _load_automation_modules() -> None:
         "export_to_step": export.export_to_step,
         "activate_source_document": export._activate_source_document,
         "export_to_stl": export.export_to_stl,
+        "export_to_gltf": export.export_to_gltf,
         "batch_export_formats": export.batch_export_formats,
         "inspect_configurations": document_data.inspect_configurations,
         "activate_configuration": document_data.activate_configuration,
@@ -278,6 +279,8 @@ class ExportFormat(str, Enum):
     PARASOLID = "parasolid"
     PDF = "pdf"
     DXF = "dxf"
+    GLB = "glb"
+    GLTF = "gltf"
 
 
 HEADLESS_OPEN_FORMATS = {"cadstudio", "step", "iges", "brep", "stl", "obj", "glb", "dxf", "svg", "pdf", "png"}
@@ -3685,7 +3688,7 @@ class SolidWorksThreadFeatureInput(ActiveDocumentInput):
 class SolidWorksSetComponentSuppressionInput(ActiveDocumentInput):
     """压缩或解压一个顶层装配体组件。"""
 
-    component_name: str = Field(..., min_length=1, description="Exact top-level component instance name (Name2), e.g. 'Gasket-1'.")
+    component_name: str = Field(..., min_length=1, description="Exact component instance name (Name2), e.g. 'Gasket-1'; a nested component by its full path, e.g. 'Board-1/XBT1-1'.")
     suppressed: bool = Field(..., description="True suppresses the component (excluded from interference and mass results), False fully resolves it.")
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
@@ -7520,11 +7523,13 @@ def solidworks_set_appearance(params: SolidWorksSetAppearanceInput) -> str:
     },
 )
 def solidworks_export_active(params: SolidWorksExportInput) -> str:
-    """Export the active SolidWorks document to STEP, STL, IGES, Parasolid, PDF, or DXF."""
+    """Export the active SolidWorks document to STEP, STL, IGES, Parasolid, PDF, DXF, or glTF/GLB (keeps appearances)."""
 
     def op():
         _sw, model = _active_model_required(params)
         exporters = {
+            ExportFormat.GLB: lambda: export_to_gltf(model, params.output_path),
+            ExportFormat.GLTF: lambda: export_to_gltf(model, params.output_path),
             ExportFormat.STEP: lambda: export_to_step(model, params.output_path),
             ExportFormat.STL: lambda: export_to_stl(model, params.output_path, quality=params.stl_quality),
             ExportFormat.IGES: lambda: export_to_iges(model, params.output_path),

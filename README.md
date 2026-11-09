@@ -158,7 +158,7 @@ V2 附带 **37 个 deterministic reliability scenarios**，覆盖正常执行、
 | Modeling | 零件建模、草图/拉伸/旋转、齿轮、钣金、焊件 | `verified` + `pilot` |
 | Assembly | 装配、Mate、干涉检查、爆炸视图 | `verified` |
 | Drawing | GB/T 工程图、尺寸链、孔表、BOM | `verified` + `pilot` |
-| Export | STEP / STL / IGES / PDF / DXF / DWG | `verified` |
+| Export | STEP / STL / IGES / PDF / DXF / DWG / glTF·GLB（保留外观） | `verified` |
 | Motion | 运动算例、旋转马达、结果门禁 | `pilot` |
 | FEA | CalculiX 线性/非线性求解编排与审计 | `pilot` |
 | DFM / Routing | 制造复核、路由复核 | `pilot` |

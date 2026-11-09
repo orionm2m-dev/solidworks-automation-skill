@@ -1,6 +1,6 @@
 """
 SolidWorks 文件导出工具
-支持 STEP、STL、IGES、PDF、DXF/DWG、Parasolid 等格式
+支持 STEP、STL、IGES、PDF、DXF/DWG、Parasolid、glTF/GLB 等格式
 """
 import os
 from pathlib import Path
@@ -14,7 +14,8 @@ except ImportError:
 
 pythoncom, _win32com, VARIANT = import_com_dependencies()
 
-SUPPORTED_BATCH_FORMATS = {".step", ".stp", ".stl", ".igs", ".iges", ".x_t", ".pdf", ".dxf", ".dwg"}
+SUPPORTED_BATCH_FORMATS = {".step", ".stp", ".stl", ".igs", ".iges", ".x_t", ".pdf", ".dxf", ".dwg", ".glb", ".gltf"}
+GLTF_EXTENSIONS = {".glb", ".gltf"}
 
 
 def _ensure_parent_dir(file_path):
@@ -50,6 +51,19 @@ def export_to_iges(model, output_path):
 
 def export_to_parasolid(model, output_path):
     """导出为 Parasolid (.x_t) 格式"""
+    return _export_generic(model, output_path)
+
+
+def export_to_gltf(model, output_path):
+    """
+    导出为 glTF / GLB 格式（SOLIDWORKS "Extended Reality" 转换器 sldgltfu.dll，2019 起）。
+
+    保留装配体组件的外观颜色，适合 three.js 等网页查看器；
+    输出扩展名必须是 .glb（二进制单文件）或 .gltf（JSON + 外部缓冲）。
+    """
+    extension = os.path.splitext(str(output_path))[1].lower()
+    if extension not in GLTF_EXTENSIONS:
+        raise ValueError(f"glTF 导出扩展名必须是 .glb 或 .gltf: {output_path}")
     return _export_generic(model, output_path)
 
 
@@ -247,6 +261,8 @@ def _export_for_format(model, output_path, extension, stl_quality):
         return export_to_pdf(model, output_path)
     if extension in {".dxf", ".dwg"}:
         return export_to_dxf(model, output_path)
+    if extension in GLTF_EXTENSIONS:
+        return export_to_gltf(model, output_path)
     raise ValueError(f"没有导出器: {extension}")
 
 
@@ -351,7 +367,7 @@ def batch_export_formats(
 
 
 def _export_generic(model, output_path):
-    """通用导出函数（STEP/STL/IGES/Parasolid/DXF）"""
+    """通用导出函数（STEP/STL/IGES/Parasolid/DXF/glTF）"""
     model.ClearSelection2(True)
     output_path = os.path.abspath(os.path.expandvars(os.path.expanduser(output_path)))
     _ensure_parent_dir(output_path)

@@ -560,14 +560,23 @@ def apply_component_transform_x(component, tx, ty, tz, angle_rad=0.0):
 
 def find_component_by_exact_name(asm_model, name):
     """
-    @brief 按完整实例名（Name2）查找唯一的顶层组件。
+    @brief 按完整实例名（Name2）查找唯一的顶层组件；含 "/" 的名称按嵌套路径查找子装配体内的组件。
     @param asm_model 装配体 IModelDoc2/IAssemblyDoc。
-    @param name 组件实例名，例如 "Board-1"，区分大小写。
+    @param name 组件实例名，例如 "Board-1"，或嵌套路径 "Board-1/XBT1-1"，区分大小写。
     @return 唯一匹配的 IComponent2 对象。
     @raise RuntimeError 没有匹配或匹配多于一个。
     """
+    name = str(name)
+    if "/" in name:
+        # 嵌套路径（如 "Board-1/XBT1-1"）：遍历所有层级的组件，按 Name2 全路径精确匹配
+        # （GetComponentByName 对导入 STEP 的虚拟子装配体不可靠）
+        nested = safe_get_com_member(asm_model, "GetComponents", False) or []
+        matches = [c for c in nested if str(safe_get_com_member(c, "Name2")) == name]
+        if len(matches) != 1:
+            raise RuntimeError(f"按路径未找到唯一组件: {name!r}（找到 {len(matches)} 个）")
+        return matches[0]
     components = safe_get_com_member(asm_model, "GetComponents", True) or []
-    matches = [c for c in components if str(safe_get_com_member(c, "Name2")) == str(name)]
+    matches = [c for c in components if str(safe_get_com_member(c, "Name2")) == name]
     if len(matches) != 1:
         raise RuntimeError(f"顶层组件 {name!r} 应唯一，实际找到 {len(matches)} 个")
     return matches[0]
