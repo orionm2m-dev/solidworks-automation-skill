@@ -85,6 +85,29 @@ def test_refuses_unsaved_changes() -> None:
     assert sw.close_calls == []
 
 
+def test_discards_unsaved_changes_only_when_asked() -> None:
+    sw = FakeSolidWorks([FakeDocument(ROOT + r"\a.SLDASM", needs_save=True), FakeDocument(ROOT + r"\b.SLDPRT")])
+
+    result = sw_connect.close_all_documents_scoped(sw, [ROOT], discard_unsaved_changes=True)
+
+    assert sw.close_calls == [True]
+    assert result["closed_count"] == 2
+    assert result["discarded_paths"] == [ROOT + r"\a.SLDASM"]
+    assert sw.GetDocuments() is None
+
+
+def test_discard_flag_still_refuses_outside_and_never_saved() -> None:
+    sw = FakeSolidWorks([FakeDocument(ROOT + r"\a.SLDASM", needs_save=True), FakeDocument(r"C:\other\x.SLDPRT")])
+    with pytest.raises(ValueError, match="outside"):
+        sw_connect.close_all_documents_scoped(sw, [ROOT], discard_unsaved_changes=True)
+    assert sw.close_calls == []
+
+    sw = FakeSolidWorks([FakeDocument("", title="Assem3", needs_save=True)])
+    with pytest.raises(ValueError, match="Never-saved"):
+        sw_connect.close_all_documents_scoped(sw, [ROOT], discard_unsaved_changes=True)
+    assert sw.close_calls == []
+
+
 def test_refuses_never_saved_document() -> None:
     sw = FakeSolidWorks([FakeDocument("", title="Assem2")])
 

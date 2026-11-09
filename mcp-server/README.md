@@ -237,7 +237,7 @@ claude mcp add --scope user solidworks -- python C:\path\to\solidworks-automatio
 | `solidworks_list_circular_edges` | 只读列出零件圆形边的圆心、轴向与直径（毫米），导入实体同样可用 | 否 |
 | `solidworks_add_thread_feature` | 按圆心与直径定位起始边，创建原生螺纹特征（库规格如 M10x1.5），回读体积与面数变化，不保存 | 是 |
 | `solidworks_save_document` | 保存或另存为活动文档；`save_referenced` 同时保存本会话中被修改的引用文档（重组后的子装配体） | 是 |
-| `solidworks_close_documents` | 关闭活动文档；或 `close_all` + `allowed_document_roots`：所有打开文档（含隐藏引用）须已保存且位于给定目录内，才一次关闭全部 | 是，可能丢弃未保存修改 |
+| `solidworks_close_documents` | 关闭活动文档；或 `close_all` + `allowed_document_roots`：所有打开文档（含隐藏引用）须位于给定目录内且已保存（或显式 `discard_unsaved_changes`），才一次关闭全部 | 是，可能丢弃未保存修改 |
 | `solidworks_add_coincident_mate` | 在两个组件的指定基准面/特征之间添加重合 Mate | 是 |
 | `solidworks_add_distance_mate` | 在两个组件的指定基准面/特征之间添加距离 Mate | 是 |
 | `solidworks_add_concentric_mate` | 按圆柱面半径范围添加同心 Mate，可选择是否锁转 | 是 |

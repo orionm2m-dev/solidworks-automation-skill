@@ -3566,6 +3566,8 @@ class SolidWorksCloseDocumentsInput(ActiveDocumentInput):
     save_changes: bool = Field(default=False, description="Whether SolidWorks should save changed documents when closing all.")
     allowed_document_roots: Optional[list[str]] = Field(default=None, min_length=1, max_length=20,
         description="With close_all: every open document (including hidden referenced documents) must be saved, unchanged and located under one of these absolute directories, otherwise nothing is closed. Replaces the single-document guard for close_all.")
+    discard_unsaved_changes: bool = Field(default=False,
+        description="Only with allowed_document_roots: also close documents that carry unsaved changes, discarding them (for example version-conversion flags on hidden referenced documents). Never-saved documents are still refused.")
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
@@ -7431,7 +7433,8 @@ def solidworks_close_documents(params: SolidWorksCloseDocumentsInput = SolidWork
             if params.expected_document_path or params.expected_document_title:
                 raise ValueError("close_all with allowed_document_roots does not take a single-document guard.")
             sw, _model = connect_solidworks(wait_seconds=1)
-            result = close_all_documents_scoped(sw, params.allowed_document_roots)
+            result = close_all_documents_scoped(sw, params.allowed_document_roots,
+                                                discard_unsaved_changes=params.discard_unsaved_changes)
             clear_sketch_selection_cache()
             return {"status": "ok", "closed": "all", **result}
         sw, model = _active_model_required(params)

@@ -732,13 +732,14 @@ def _normalized_directory(path):
     return os.path.join(os.path.normcase(os.path.abspath(str(path))), "")
 
 
-def close_all_documents_scoped(sw, allowed_document_roots):
+def close_all_documents_scoped(sw, allowed_document_roots, discard_unsaved_changes=False):
     """
     在显式目录范围内关闭进程中的全部文档。
 
-    拒绝条件：范围为空或含相对路径；任一文档从未存盘；任一文档有未保存修改；
-    任一文档位于范围之外。通过后调用 CloseAllDocuments(False)（只关闭已保存文档），
-    再回读文档列表，必须为空。返回被关闭文档的路径列表与数量。
+    拒绝条件：范围为空或含相对路径；任一文档从未存盘；任一文档位于范围之外；
+    有未保存修改的文档且 discard_unsaved_changes 为 False。通过后调用
+    CloseAllDocuments(discard_unsaved_changes)，再回读文档列表，必须为空。
+    返回被关闭文档的路径列表、数量以及被放弃修改的文档路径。
     """
     roots = [str(root) for root in allowed_document_roots if str(root).strip()]
     if not roots:
@@ -751,13 +752,14 @@ def close_all_documents_scoped(sw, allowed_document_roots):
     if untitled:
         raise ValueError(f"Never-saved documents must be saved or closed individually first: {untitled}")
     dirty = [row["path"] for row in rows if row["needs_save"]]
-    if dirty:
-        raise ValueError(f"Documents with unsaved changes must be saved or closed individually first: {dirty}")
+    if dirty and not discard_unsaved_changes:
+        raise ValueError("Documents with unsaved changes must be saved or closed individually first, "
+                         f"or pass discard_unsaved_changes=True: {dirty}")
     outside = [row["path"] for row in rows
                if not any(os.path.normcase(os.path.abspath(row["path"])).startswith(prefix) for prefix in prefixes)]
     if outside:
         raise ValueError(f"Open documents outside allowed_document_roots: {outside}")
-    get_com_member(sw, "CloseAllDocuments", False)
+    get_com_member(sw, "CloseAllDocuments", bool(discard_unsaved_changes))
     remaining = list_open_document_rows(sw)
     if remaining:
         raise RuntimeError("Documents still open after CloseAllDocuments: "
@@ -766,6 +768,7 @@ def close_all_documents_scoped(sw, allowed_document_roots):
         "closed_count": len(rows),
         "closed_paths": [row["path"] for row in rows],
         "allowed_document_roots": roots,
+        "discarded_paths": dirty,
     }
 
 
