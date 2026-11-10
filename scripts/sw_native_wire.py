@@ -57,6 +57,29 @@ class ReplaceInput(Target):
     replacement_path: str = Field(min_length=1)
     configuration: str = ''
 
+class DecalInput(Target):
+    feature_name: str = Field(min_length=1, max_length=240)
+    point_mm: tuple[float,float,float]
+    image_path: str = Field(min_length=1)
+    rotation_deg: float = Field(default=0, ge=-360, le=360)
+    mirror_width: bool = False
+    mirror_height: bool = False
+    use_alpha: bool = False
+    @model_validator(mode='after')
+    def check(self):
+        if any(abs(v)>10000 for v in self.point_mm): raise ValueError('Coordinate exceeds 10 m')
+        return self
+
+class FaceColorInput(Target):
+    feature_name: str = Field(min_length=1, max_length=240)
+    point_mm: tuple[float,float,float]
+    color: tuple[float,float,float]
+    @model_validator(mode='after')
+    def check(self):
+        if any(abs(v)>10000 for v in self.point_mm): raise ValueError('Coordinate exceeds 10 m')
+        if any(not 0<=v<=1 for v in self.color): raise ValueError('RGB must be within 0..1')
+        return self
+
 class DeleteInput(Target):
     body_names: list[str] = Field(min_length=1,max_length=256)
     feature_name: str = Field(default='ReviewedBodyExclusion',pattern=r'^[A-Za-z][A-Za-z0-9_]*$')
@@ -112,10 +135,27 @@ def register_tools(mcp, connect, run_locked, response_enum):
 
     @mcp.tool(name='solidworks_replace_component_preserving_transform',annotations={'readOnlyHint':False,'destructiveHint':False})
     def replace(params:ReplaceInput)->str:
-        """按精确实例名替换一个固定组件，保留变换并校验其余组件；不保存。"""
+        """按精确实例名替换一个顶层固定组件（零件或子装配体均可），保留变换并仅校验其余顶层组件；不保存。"""
         path=Path(params.replacement_path)
         if not path.is_absolute() or not path.is_file() or path.suffix.lower() not in {'.sldprt','.sldasm'}: raise ValueError('Existing absolute native component required')
         return run(params,'replace',component_name=params.component_name,replacement_path=str(path),configuration=params.configuration)
+
+    @mcp.tool(name='solidworks_set_face_appearance',annotations={'readOnlyHint':False,'destructiveHint':False})
+    def paint_face(params:FaceColorInput)->str:
+        """给指定特征上经过给定点的单个面着色（RGB 0..1）并回读；不保存。"""
+        return run(params,'paint_face',feature_name=params.feature_name,point_mm=list(params.point_mm),color=list(params.color))
+
+    @mcp.tool(name='solidworks_add_face_decal',annotations={'readOnlyHint':False,'destructiveHint':False})
+    def decal(params:DecalInput)->str:
+        """把图片作为贴图铺满指定特征上经过给定点的面（Surface 映射）；可旋转、镜像并使用图片透明通道；不保存。"""
+        path=Path(params.image_path)
+        if not path.is_absolute() or not path.is_file() or path.suffix.lower() not in {'.png','.jpg','.jpeg','.bmp','.tif','.tiff'}: raise ValueError('Existing absolute image path required')
+        return run(params,'decal',feature_name=params.feature_name,point_mm=list(params.point_mm),image_path=str(path),rotation_deg=params.rotation_deg,mirror_width=params.mirror_width,mirror_height=params.mirror_height,use_alpha=params.use_alpha)
+
+    @mcp.tool(name='solidworks_clear_decals',annotations={'readOnlyHint':False,'destructiveHint':True})
+    def clear_decals(params:Target)->str:
+        """删除当前零件的全部贴图并回读数量；不保存。"""
+        return run(params,'clear_decals')
 
     @mcp.tool(name='solidworks_exclude_reviewed_bodies',annotations={'readOnlyHint':False,'destructiveHint':False})
     def exclude(params:DeleteInput)->str:

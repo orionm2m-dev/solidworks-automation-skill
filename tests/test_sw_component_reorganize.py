@@ -27,8 +27,9 @@ class FakeModel:
 class FakeComponent:
     """@brief 带名称、变换、包围盒与文档类型的假组件。"""
 
-    def __init__(self, name, origin_m=(0.0, 0.0, 0.0), doc_type=1):
+    def __init__(self, name, origin_m=(0.0, 0.0, 0.0), doc_type=1, path=None):
         self.Name2 = name
+        self.path = path
         self.data = IDENTITY[:9] + tuple(origin_m) + IDENTITY[12:]
         self.model = FakeModel(doc_type)
         self.selected_with_append = None
@@ -43,7 +44,7 @@ class FakeComponent:
         return (x, y, z, x + 0.01, y + 0.02, z + 0.03)
 
     def GetPathName(self):
-        return "C:/models/" + self.Name2.split("/")[-1] + ".SLDPRT"
+        return self.path or "C:/models/" + self.Name2.split("/")[-1] + ".SLDPRT"
 
     def SetSuppression2(self, state):
         return 1
@@ -78,8 +79,9 @@ class FakeExtension:
 class FakeAssembly:
     """@brief 模拟 GetComponents / ReorganizeComponents / 选择与删除；Name2 以 "/" 表示层级。"""
 
-    def __init__(self, components, reorganize_ok=True, shift_on_move=False, delete_ok=True):
+    def __init__(self, components, reorganize_ok=True, shift_on_move=False, delete_ok=True, rename_on_move=False):
         self.components = list(components)
+        self.rename_on_move = rename_on_move
         for component in self.components:
             component.owner = self
         self.reorganize_ok = reorganize_ok
@@ -109,7 +111,13 @@ class FakeAssembly:
             return False
         for component in sources:
             leaf = component.Name2.split("/")[-1]
-            moved = FakeComponent(f"{target_name}/{leaf}" if target_name else leaf, component.data[9:12], component.model._doc_type)
+            if self.rename_on_move:
+                # 如 SolidWorks：移入子装配体的实例按文件名重新编号
+                stem = component.GetPathName().rsplit("/", 1)[-1].rsplit(".", 1)[0]
+                prefix = f"{target_name}/{stem}-" if target_name else f"{stem}-"
+                leaf = f"{stem}-{1 + sum(c.Name2.startswith(prefix) for c in self.components)}"
+            moved = FakeComponent(f"{target_name}/{leaf}" if target_name else leaf, component.data[9:12],
+                                  component.model._doc_type, path=component.path)
             if self.shift_on_move:
                 moved.data = moved.data[:9] + (moved.data[9] + 0.001,) + moved.data[10:]
             self.components[self.components.index(component)] = moved
@@ -231,3 +239,41 @@ def test_delete_unknown_component_leaves_assembly_untouched() -> None:
     with pytest.raises(RuntimeError, match="应唯一"):
         sw_assembly.delete_components(assembly, ["Missing-1"])
     assert len(assembly.components) == 4 and assembly.Extension.options is None
+
+
+def test_reorganize_finds_components_renamed_by_solidworks() -> None:
+    assembly = FakeAssembly([
+        FakeComponent("Housing-1", doc_type=2),
+        FakeComponent("Body-1", (0.08208, -0.0938, -0.0005), path="C:/models/ORM-000101-M3_A.SLDPRT"),
+        FakeComponent("Detail-1", (0.08471, -0.03635, -0.0005), path="C:/models/ORM-000103-M3_A.SLDPRT"),
+    ], rename_on_move=True)
+
+    result = sw_assembly.reorganize_components(assembly, ["Body-1", "Detail-1"], "Housing-1")
+
+    assert [row["to"] for row in result["moved"]] == ["Housing-1/ORM-000101-M3_A-1", "Housing-1/ORM-000103-M3_A-1"]
+    assert all(row["renamed"] and row["position_preserved"] for row in result["moved"])
+    assert result["component_count_after"] == 1
+
+
+def test_reorganize_matches_renamed_instances_of_one_part_by_position() -> None:
+    assembly = FakeAssembly([
+        FakeComponent("Housing-1", doc_type=2),
+        FakeComponent("Tab-1", (0.01, 0.0, 0.0), path="C:/models/ORM-000108-M3_A.SLDPRT"),
+        FakeComponent("Tab-2", (0.02, 0.0, 0.0), path="C:/models/ORM-000108-M3_A.SLDPRT"),
+    ], rename_on_move=True)
+
+    result = sw_assembly.reorganize_components(assembly, ["Tab-1", "Tab-2"], "Housing-1")
+
+    assert [row["origin_mm_after"][0] for row in result["moved"]] == [10.0, 20.0]
+    assert sorted(row["to"] for row in result["moved"]) == ["Housing-1/ORM-000108-M3_A-1", "Housing-1/ORM-000108-M3_A-2"]
+
+
+def test_reorganize_reports_ambiguous_renamed_components() -> None:
+    assembly = FakeAssembly([
+        FakeComponent("Housing-1", doc_type=2),
+        FakeComponent("Body-1", (0.01, 0.0, 0.0), path="C:/models/ORM-000101-M3_A.SLDPRT"),
+        FakeComponent("Body-2", (0.01, 0.0, 0.0), path="C:/models/ORM-000101-M3_A.SLDPRT"),
+    ], rename_on_move=True)
+
+    with pytest.raises(RuntimeError, match="候选 2 个"):
+        sw_assembly.reorganize_components(assembly, ["Body-1", "Body-2"], "Housing-1")

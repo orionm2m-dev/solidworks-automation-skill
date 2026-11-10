@@ -6,6 +6,9 @@
 - `solidworks_build_round_sweeps`：在空的已保存零件中建立圆截面原生扫描。路径是 2 点直线或 3–6 点 Bezier；JSON 数值经验证后转换为方程，不接受任意表达式。可建立独立矩形拉伸。先 `dry_run=true`。要求毫米单位，检查路径实测长度、矩形包围盒和重建。不会自动保存。
 - `solidworks_import_step_part`：导入到新的多实体 SLDPRT；恢复全局导入选项，拒绝覆盖，返回每个实体供审查。原始目标文档不保存。
 - `solidworks_replace_component_preserving_transform`：只支持唯一的固定实例；保持变换和其他组件引用，不保存。
+- `solidworks_set_face_appearance`：给指定特征上经过给定点的单个面着色并回读，不保存。
+- `solidworks_add_face_decal`：把图片作为贴图铺满指定特征上经过给定点的面（Surface 映射），可旋转、镜像、使用透明通道；回读文档与面的贴图数量，不保存。
+- `solidworks_clear_decals`：删除当前零件的全部贴图并回读数量，不保存。
 - `solidworks_exclude_reviewed_bodies`：按已审查的精确实体名称建立 DeleteBody 特征，保留原始导入历史，不保存。
 
 ## 规格

@@ -16,7 +16,7 @@ import re
 import sys
 import threading
 import time
-from contextlib import nullcontext, redirect_stdout
+from contextlib import contextmanager, nullcontext, redirect_stdout
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
@@ -100,6 +100,7 @@ def _load_automation_modules() -> None:
         "new_document": connect.new_document,
         "open_document": connect.open_document,
         "save_document": connect.save_document,
+        "close_all_documents_scoped": connect.close_all_documents_scoped,
         "extrude_boss": part.extrude_boss,
         "extrude_cut": part.extrude_cut,
         "extrude_cut_midplane": part.extrude_cut_midplane,
@@ -137,6 +138,7 @@ def _load_automation_modules() -> None:
         "expand_hole_patterns": build_spec.expand_hole_patterns,
         "set_component_appearance": appearance.set_component_appearance,
         "set_document_appearance": appearance.set_document_appearance,
+        "set_feature_appearance": appearance.set_feature_appearance,
         "export_to_dxf": export.export_to_dxf,
         "export_to_iges": export.export_to_iges,
         "export_to_parasolid": export.export_to_parasolid,
@@ -302,6 +304,7 @@ class AppearanceTarget(str, Enum):
 
     DOCUMENT = "document"
     COMPONENT = "component"
+    FEATURE = "feature"
 
 
 class HoleFeatureKind(str, Enum):
@@ -3255,8 +3258,23 @@ class SolidWorksSketchOnPlaneInput(ActiveDocumentInput):
     depth_mm: float = Field(..., gt=0.0, le=5000.0, description="Extrude depth, mm.")
     midplane: bool = Field(default=False, description="Extrude symmetrically about the sketch plane.")
     cut: bool = Field(default=False, description="Create a cut instead of a boss.")
-    feature_name: Optional[str] = Field(default=None, max_length=120)
+    start_offset_mm: float = Field(
+        default=0.0, ge=-5000.0, le=5000.0,
+        description="Start the feature on a plane offset this far from the sketch plane along its normal, mm; negative is behind the plane. The extrude direction itself is unchanged, so check feature_box_mm in the result. Not available with midplane.",
+    )
+    merge: bool = Field(default=True, description="Boss only: False keeps the result as a separate solid body instead of merging it.")
+    color: Optional[str] = Field(default=None, min_length=1, description="Optional appearance for the faces of this feature: preset name or #RRGGBB.")
+    feature_name: Optional[str] = Field(default=None, max_length=120, description="Optional name for the created feature in the tree.")
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+    @model_validator(mode="after")
+    def extrude_options_are_consistent(self):
+        """偏移起始与中面互斥；独立实体只适用于凸台。"""
+        if self.start_offset_mm and self.midplane:
+            raise ValueError("start_offset_mm cannot be combined with midplane.")
+        if not self.merge and (self.cut or self.midplane):
+            raise ValueError("merge=False applies to a one-direction boss only.")
+        return self
 
 
 class SolidWorksRevolveInput(ActiveDocumentInput):
@@ -3563,6 +3581,10 @@ class SolidWorksCloseDocumentsInput(ActiveDocumentInput):
 
     close_all: bool = Field(default=False, description="Close all documents when true; otherwise close active document.")
     save_changes: bool = Field(default=False, description="Whether SolidWorks should save changed documents when closing all.")
+    allowed_document_roots: Optional[list[str]] = Field(default=None, min_length=1, max_length=20,
+        description="With close_all: every open document (including hidden referenced documents) must be saved, unchanged and located under one of these absolute directories, otherwise nothing is closed. Replaces the single-document guard for close_all.")
+    discard_unsaved_changes: bool = Field(default=False,
+        description="Only with allowed_document_roots: also close documents that carry unsaved changes, discarding them (for example version-conversion flags on hidden referenced documents). Never-saved documents are still refused.")
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
@@ -4133,6 +4155,7 @@ class SolidWorksSetAppearanceInput(ActiveDocumentInput):
     target: AppearanceTarget = Field(default=AppearanceTarget.DOCUMENT, description="Appearance target.")
     color: str = Field(..., min_length=1, description="Preset name or #RRGGBB color.")
     component_keyword: Optional[str] = Field(default=None, description="Required when target=component.")
+    feature_name: Optional[str] = Field(default=None, min_length=1, max_length=240, description="Required when target=feature: exact feature tree name.")
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
@@ -4220,6 +4243,35 @@ def _active_part_required(params=None):
     if int(get_com_member(model, "GetType")) != 1:
         raise RuntimeError("Active document must be a part (.SLDPRT).")
     return sw, model
+
+
+@contextmanager
+def _exact_sketch_entry(model):
+    """绘制期间关闭草图推断捕捉，使图元按给定坐标落位（偏心圆曾被吸附到原点水平线）。"""
+    manager = getattr(model, "SketchManager", None)
+    if manager is None:
+        yield
+        return
+    previous = bool(manager.AddToDB)
+    manager.AddToDB = True
+    try:
+        yield
+    finally:
+        manager.AddToDB = previous
+
+
+def _feature_box_mm(feature) -> Optional[list]:
+    """特征所属面的包围盒 [xmin, ymin, zmin, xmax, ymax, zmax]（毫米）；读不到时返回 None。"""
+    try:
+        boxes = [list(get_com_member(face, "GetBox")) for face in (get_com_member(feature, "GetFaces") or [])]
+    except Exception:
+        return None
+    boxes = [box for box in boxes if len(box) == 6]
+    if not boxes:
+        return None
+    low = [min(box[i] for box in boxes) for i in range(3)]
+    high = [max(box[i + 3] for box in boxes) for i in range(3)]
+    return [round(value * 1000.0, 6) for value in low + high]
 
 
 def _model_summary(model) -> Dict[str, Any]:
@@ -6512,7 +6564,7 @@ def solidworks_sketch_and_extrude(params: SolidWorksSketchOnPlaneInput) -> str:
         if params.shape == "profile":
             profile = _profile_vertices_m(params.profile_points_mm)
 
-        with sketch(model, params.plane_name) as sketch_ref:
+        with sketch(model, params.plane_name) as sketch_ref, _exact_sketch_entry(model):
             if params.shape == "circle":
                 sketch_circle(model, mm(params.center_x_mm), mm(params.center_y_mm), mm(params.radius_mm))
             elif params.shape == "ring":
@@ -6533,18 +6585,21 @@ def solidworks_sketch_and_extrude(params: SolidWorksSketchOnPlaneInput) -> str:
             elif params.shape == "profile":
                 sketch_profile(model, profile)
 
+        # 仅在非默认时传入可选参数，保持旧调用形式不变。
+        start = {"start_offset": mm(params.start_offset_mm)} if params.start_offset_mm else {}
         # Check cut first: midplane used to shadow cut and silently build a boss.
         if params.cut and params.midplane:
             feature = extrude_cut_midplane(model, sketch_ref, mm(params.depth_mm))
         elif params.cut:
-            feature = extrude_cut(model, sketch_ref, mm(params.depth_mm))
+            feature = extrude_cut(model, sketch_ref, mm(params.depth_mm), **start)
             if feature is None:
                 # Empty side of the sketch plane: retry flipped, as solidworks_sketch_selection_regression does.
-                feature = extrude_cut(model, sketch_ref, mm(params.depth_mm), flip=True)
+                feature = extrude_cut(model, sketch_ref, mm(params.depth_mm), flip=True, **start)
         elif params.midplane:
             feature = extrude_midplane(model, sketch_ref, mm(params.depth_mm))
         else:
-            feature = extrude_boss(model, sketch_ref, mm(params.depth_mm))
+            feature = extrude_boss(model, sketch_ref, mm(params.depth_mm), **start,
+                                   **({} if params.merge else {"merge": False}))
 
         if feature is None:
             return {
@@ -6559,7 +6614,9 @@ def solidworks_sketch_and_extrude(params: SolidWorksSketchOnPlaneInput) -> str:
                 ),
             }
 
-        return {
+        if params.feature_name:
+            feature.Name = params.feature_name
+        result = {
             "status": "ok",
             "shape": params.shape,
             "feature_created": True,
@@ -6569,6 +6626,16 @@ def solidworks_sketch_and_extrude(params: SolidWorksSketchOnPlaneInput) -> str:
             "operation": ("cut" if params.cut else "boss") + (" midplane" if params.midplane else ""),
             "document": _model_summary(model),
         }
+        if params.start_offset_mm:
+            result["start_offset_mm"] = params.start_offset_mm
+        if not params.merge:
+            result["merged"] = False
+        if params.color:
+            result["color"] = params.color
+            result["appearance_ok"] = bool(set_feature_appearance(feature, params.color))
+        if params.start_offset_mm or not params.merge or params.color:
+            result["feature_box_mm"] = _feature_box_mm(feature)
+        return result
 
     return _run_locked(op, params.response_format)
 
@@ -7424,10 +7491,18 @@ def solidworks_close_documents(params: SolidWorksCloseDocumentsInput = SolidWork
     """Close the active document or all documents in the current SolidWorks session."""
 
     def op():
+        if params.close_all and params.allowed_document_roots:
+            if params.expected_document_path or params.expected_document_title:
+                raise ValueError("close_all with allowed_document_roots does not take a single-document guard.")
+            sw, _model = connect_solidworks(wait_seconds=1)
+            result = close_all_documents_scoped(sw, params.allowed_document_roots,
+                                                discard_unsaved_changes=params.discard_unsaved_changes)
+            clear_sketch_selection_cache()
+            return {"status": "ok", "closed": "all", **result}
         sw, model = _active_model_required(params)
         if params.close_all:
             if params.expected_document_path or params.expected_document_title:
-                raise ValueError("A single-document guard cannot authorize close_all. Close each expected document separately.")
+                raise ValueError("A single-document guard cannot authorize close_all. Pass allowed_document_roots or close each expected document separately.")
             sw.CloseAllDocuments(bool(params.save_changes))
             # 文档已关闭，其 ISketch 引用必须立即释放；否则常驻进程会一直持有
             # 已关闭文档的 COM 对象，导致 SolidWorks 侧无法释放文档。
@@ -7570,7 +7645,7 @@ def solidworks_add_concentric_mate(params: SolidWorksConcentricMateInput) -> str
     },
 )
 def solidworks_set_appearance(params: SolidWorksSetAppearanceInput) -> str:
-    """Set appearance color on the active document or an assembly component."""
+    """Set appearance color on the active document, an assembly component, or the faces of one feature."""
 
     def op():
         _sw, model = _active_model_required(params)
@@ -7584,6 +7659,14 @@ def solidworks_set_appearance(params: SolidWorksSetAppearanceInput) -> str:
                 raise RuntimeError("Component appearance requires an active assembly.")
             component = find_component_by_name(model, params.component_keyword)
             ok = set_component_appearance(component, params.color)
+        elif params.target == AppearanceTarget.FEATURE:
+            if not params.feature_name:
+                raise ValueError("feature_name is required when target=feature.")
+            feature = model.FeatureByName(params.feature_name)
+            if feature is None:
+                raise ValueError(f"Feature not found: {params.feature_name}")
+            ok = set_feature_appearance(feature, params.color)
+            component = None
         else:
             raise ValueError(f"Unsupported target: {params.target}")
         model.ForceRebuild3(False)
@@ -7591,6 +7674,7 @@ def solidworks_set_appearance(params: SolidWorksSetAppearanceInput) -> str:
             "status": "ok" if ok else "failed",
             "target": params.target.value,
             "color": params.color,
+            "feature_name": params.feature_name if params.target == AppearanceTarget.FEATURE else None,
             "component": _component_summary(component) if component else None,
             "document": _model_summary(model),
         }
