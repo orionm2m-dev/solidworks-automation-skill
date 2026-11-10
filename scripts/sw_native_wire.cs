@@ -12,7 +12,7 @@ public static class NativeWireTools {
  public class Sweep { public string name; public double[][] control_points_mm; public double diameter_mm; public double[] color; }
  public class Box { public string name; public double[] bounds_mm,color; }
  public class Spec { public Sweep[] sweeps; public Box[] boxes; }
- public class Request { public int process_id; public string source,action,step_path,output_path,component_name,replacement_path,configuration,feature_name; public string[] body_names; public bool dry_run; public Spec spec; }
+ public class Request { public int process_id; public string source,action,step_path,output_path,component_name,replacement_path,configuration,feature_name,image_path; public string[] body_names; public bool dry_run,use_alpha,mirror_width,mirror_height; public double rotation_deg; public double[] point_mm,color; public Spec spec; }
  static JavaScriptSerializer json=new JavaScriptSerializer {MaxJsonLength=int.MaxValue};
  [DllImport("ole32.dll")] static extern int GetRunningObjectTable(int reserved,out System.Runtime.InteropServices.ComTypes.IRunningObjectTable table);
  [DllImport("ole32.dll")] static extern int CreateBindCtx(int reserved,out System.Runtime.InteropServices.ComTypes.IBindCtx context);
@@ -66,6 +66,33 @@ public static class NativeWireTools {
   var body=(IBody2)((IFace2)((object[])f.GetFaces())[0]).GetBody();if(Bounds(body).Zip(v,(a,c)=>Math.Abs(a-c)).Max()>.002)throw new Exception("Box plane/units mismatch");
   return new{name=b.name,feature_type=f.GetTypeName2(),bounds_mm=Bounds(body)};
  }
+ // 在指定特征的面中选取经过给定点的那一个；点不在任何面上则拒绝。
+ static IFace2 PickFace(IModelDoc2 d,string feature,double[] p){
+  var f=Features(d).FirstOrDefault(x=>x.Name==feature);if(f==null)throw new Exception("Feature not found: "+feature);
+  var faces=f.GetFaces() as object[];if(faces==null||faces.Length==0)throw new Exception("Feature has no faces: "+feature);
+  IFace2 best=null;double gap=double.MaxValue;
+  foreach(IFace2 face in faces){var c=face.GetClosestPointOn(p[0]/1000,p[1]/1000,p[2]/1000) as double[];if(c==null||c.Length<3)continue;double g=Math.Sqrt(Enumerable.Range(0,3).Sum(i=>(c[i]*1000-p[i])*(c[i]*1000-p[i])));if(g<gap){gap=g;best=face;}}
+  if(best==null||gap>.05)throw new Exception("No face of the feature passes through the point");
+  return best;
+ }
+ // 贴图按面拉伸铺满（Surface 映射），不保存。
+ static object AddFaceDecal(IModelDoc2 d,Request r){
+  if(d.GetType()!=1||d.GetActiveSketch2()!=null)throw new Exception("Part outside sketch mode required");
+  if(!File.Exists(r.image_path))throw new Exception("Decal image not found");
+  var face=PickFace(d,r.feature_name,r.point_mm);var ext=d.Extension;int before=ext.GetDecalsCount(),onFace=face.GetDecalsCount();
+  // 图片随模型保存，文件脱离原始图片仍可显示贴图。
+  int store=(int)swUserPreferenceToggle_e.swStoreImagesWithModel;if(!ext.GetUserPreferenceToggle(store,0)&&!ext.SetUserPreferenceToggle(store,0,true))throw new Exception("Image storage option rejected");
+  if(!ext.GetUserPreferenceToggle(store,0))throw new Exception("Image storage option readback mismatch");
+  var decal=(IDecal)ext.CreateDecal();var material=(IRenderMaterial)decal;
+  if(!material.AddEntity(face))throw new Exception("Decal face binding failed");
+  material.TextureFilename=r.image_path;material.MappingType=0;material.FixedAspectRatio=false;material.FitHeight=true;material.FitWidth=true;
+  material.RotationAngle=r.rotation_deg;material.WidthMirror=r.mirror_width;material.HeightMirror=r.mirror_height;
+  decal.MaskType=r.use_alpha?3:0;
+  int id=0;if(!ext.AddDecal((Decal)decal,out id))throw new Exception("Decal creation failed");
+  d.GraphicsRedraw2();
+  if(ext.GetDecalsCount()!=before+1||face.GetDecalsCount()!=onFace+1)throw new Exception("Decal count readback mismatch");
+  return new{decal_id=id,images_stored_in_model=true,document_decals=before+1,face_decals=onFace+1,face_area_mm2=face.GetArea()*1e6,face_box_mm=((double[])face.GetBox()).Select(v=>v*1000).ToArray(),image_path=r.image_path,rotation_deg=r.rotation_deg,mirror_width=r.mirror_width,mirror_height=r.mirror_height,use_alpha=r.use_alpha};
+ }
  public static string Run(string input){
   var r=json.Deserialize<Request>(input);var sw=Bind(r.process_id);var d=Guard(sw,r.source);var result=new Dictionary<string,object>{{"status","ok"},{"process_id",r.process_id},{"saved",false},{"manual_review_required",true}};
   if(r.action=="inspect"){
@@ -93,6 +120,16 @@ public static class NativeWireTools {
    d.ClearSelection2(true);foreach(var b in selected)if(!b.Select2(true,null))throw new Exception("Body selection failed");
    var f=(IFeature)d.FeatureManager.InsertDeleteBody2(false);if(f==null)throw new Exception("Body exclusion failed");f.Name=r.feature_name;d.ClearSelection2(true);d.ForceRebuild3(false);
    if(Bodies(d).Length!=all.Length-selected.Length)throw new Exception("Body exclusion count mismatch");result["excluded"]=selected.Select(b=>b.Name).ToArray();result["bodies"]=Bodies(d).Select(BodyRow).ToArray();
+  }else if(r.action=="paint_face"){
+   if(d.GetType()!=1||d.GetActiveSketch2()!=null)throw new Exception("Part outside sketch mode required");
+   var face=PickFace(d,r.feature_name,r.point_mm);face.MaterialPropertyValues=new[]{r.color[0],r.color[1],r.color[2],.55,.85,.25,.25,0.0,0.0};
+   var back=face.MaterialPropertyValues as double[];if(back==null||back.Length<3||back.Take(3).Zip(r.color,(a,c)=>Math.Abs(a-c)).Max()>1.0/255+1e-9)throw new Exception("Face colour readback mismatch");
+   d.GraphicsRedraw2();result["face"]=new{color=back.Take(3).ToArray(),face_area_mm2=face.GetArea()*1e6,face_box_mm=((double[])face.GetBox()).Select(v=>v*1000).ToArray()};
+  }else if(r.action=="decal"){
+   result["decal"]=AddFaceDecal(d,r);
+  }else if(r.action=="clear_decals"){
+   int had=d.Extension.GetDecalsCount();if(had>0&&!d.Extension.DeleteAllDecals())throw new Exception("Decal removal failed");
+   d.GraphicsRedraw2();if(d.Extension.GetDecalsCount()!=0)throw new Exception("Decals remain after removal");result["removed"]=had;
   }else if(r.action=="replace"){
    if(d.GetType()!=2)throw new Exception("Assembly required");var before=TopComponents(d);var old=before.Single(c=>c.Name2==r.component_name);if(!old.IsFixed())throw new Exception("Only fixed components supported");var matrix=(double[])old.Transform2.ArrayData;string oldPath=old.GetPathName();
    if(before.Count(c=>Same(c.GetPathName(),oldPath))!=1||before.Any(c=>Same(c.GetPathName(),r.replacement_path)))throw new Exception("Unique source and new replacement required");
