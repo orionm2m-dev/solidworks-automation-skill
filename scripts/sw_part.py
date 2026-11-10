@@ -829,7 +829,18 @@ def add_sketch_relation(model, relation_type):
 # 特征操作
 # ============================================================
 
-def extrude_boss(model, sketch_name, depth, direction=True, merge=True):
+def _start_condition(start_offset):
+    """
+    起始条件参数 (T0, StartOffset, FlipStartOffset)。
+
+    偏移为零时从草图平面开始；非零时使用 swStartOffset(3)，负值表示反向偏移。
+    """
+    if not start_offset:
+        return 0, 0.0, False
+    return 3, abs(float(start_offset)), start_offset < 0
+
+
+def extrude_boss(model, sketch_name, depth, direction=True, merge=True, start_offset=0.0):
     """
     凸台拉伸
 
@@ -838,9 +849,11 @@ def extrude_boss(model, sketch_name, depth, direction=True, merge=True):
         sketch_name: 草图名称（如 "Sketch1"）
         depth: 拉伸深度（米）
         direction: True=正方向
-        merge: True=合并结果
+        merge: True=合并结果；False 时生成独立实体
+        start_offset: 起始面相对草图平面的偏移（米），负值反向
     """
     _ensure_sketch_selected(model, sketch_name)
+    start_type, start_value, start_flip = _start_condition(start_offset)
     return model.FeatureManager.FeatureExtrusion3(
         True,         # Sd: 单向拉伸
         False,        # Flip
@@ -862,13 +875,13 @@ def extrude_boss(model, sketch_name, depth, direction=True, merge=True):
         merge,        # Merge
         False,        # UseFeatScope
         True,         # UseAutoSelect
-        0,            # T0: 从草图平面开始
-        0.0,          # StartOffset
-        False         # FlipStartOffset
+        start_type,   # T0: 0=草图平面, 3=偏移
+        start_value,  # StartOffset
+        start_flip    # FlipStartOffset
     )
 
 
-def extrude_cut(model, sketch_name, depth, direction=True, flip=False):
+def extrude_cut(model, sketch_name, depth, direction=True, flip=False, start_offset=0.0):
     """
     切除拉伸
 
@@ -878,8 +891,10 @@ def extrude_cut(model, sketch_name, depth, direction=True, flip=False):
         depth: 切除深度（米），0 表示完全贯穿
         direction: True=正方向
         flip: True=翻转切除方向
+        start_offset: 起始面相对草图平面的偏移（米），负值反向
     """
     _ensure_sketch_selected(model, sketch_name)
+    start_type, start_value, start_flip = _start_condition(start_offset)
     if depth == 0:
         # 完全贯穿
         end_condition = 1  # swEndCondThroughAll
@@ -895,7 +910,7 @@ def extrude_cut(model, sketch_name, depth, direction=True, flip=False):
         0.0, 0.0,
         False, False, False, False, False,
         True, True, True, True,
-        False, 0, 0, False, False
+        False, start_type, start_value, start_flip, False
     )
 
 

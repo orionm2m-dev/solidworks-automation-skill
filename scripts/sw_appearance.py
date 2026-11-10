@@ -106,6 +106,8 @@ def get_material_property_values(target):
     readers = [
         lambda: target.MaterialPropertyValues,
         lambda: target.GetMaterialPropertyValues(),
+        # IFeature 只提供带配置参数的读取接口。
+        lambda: target.GetMaterialPropertyValues2(SW_THIS_CONFIGURATION, None),
     ]
     for reader in readers:
         try:
