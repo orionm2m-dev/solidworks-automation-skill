@@ -786,6 +786,21 @@ def new_document(sw, doc_type="part", template_path=None):
     return model
 
 
+INTERCONNECT_PART_EXTS = (".ipt", ".catpart", ".prt", ".par", ".psm")
+INTERCONNECT_ASSEMBLY_EXTS = (".iam", ".catproduct", ".asm")
+SW_TOGGLE_ENABLE_3D_INTERCONNECT = 691  # swUserPreferenceToggle_e.swMultiCAD_Enable3DInterconnect
+
+
+def interconnect_document_type(file_path):
+    """@brief 返回 3D Interconnect 文档类型：6 零件、7 装配体，非此类文件返回 None。"""
+    ext = os.path.splitext(str(file_path))[1].lower()
+    if ext in INTERCONNECT_PART_EXTS:
+        return 6
+    if ext in INTERCONNECT_ASSEMBLY_EXTS:
+        return 7
+    return None
+
+
 def open_document(sw, file_path, read_only=False, silent=False, raise_on_error=False):
     """
     打开已有文档。
@@ -820,7 +835,11 @@ def open_document(sw, file_path, read_only=False, silent=False, raise_on_error=F
 
     ext = os.path.splitext(file_path)[1].lower()
     foreign_exts = {".step", ".stp", ".igs", ".iges"}
+    # 3D Interconnect 原生格式（Inventor、CATIA、Creo、Solid Edge）按 swDocIMPORTED_PART/ASSEMBLY 打开；
+    # 按普通零件类型打开 .iam/.ipt 会得到 swFileRequiresRepairError。
     type_map = {".sldprt": 1, ".sldasm": 2, ".slddrw": 3}
+    type_map.update(dict.fromkeys(INTERCONNECT_PART_EXTS, 6))
+    type_map.update(dict.fromkeys(INTERCONNECT_ASSEMBLY_EXTS, 7))
 
     errors = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
     warnings = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
@@ -884,28 +903,36 @@ def open_document(sw, file_path, read_only=False, silent=False, raise_on_error=F
     return model
 
 
-def save_document(model, file_path=None):
+SW_SAVE_AS_OPTION_SILENT = 1
+SW_SAVE_AS_OPTION_SAVE_REFERENCED = 4
+
+
+def save_document(model, file_path=None, save_referenced=False):
     """
     保存文档。
 
     参数:
         model: IModelDoc2 对象
         file_path: 另存为路径，None 则保存到当前位置
+        save_referenced: 是否同时保存本会话中被修改的引用文档（swSaveAsOptions_SaveReferenced）。
+            默认的静默保存只写活动文档：装配体重组后，子装配体文件若不随之保存，
+            移入其中的组件会在重新打开时丢失。
 
     返回:
         bool 成功/失败
     """
     errors = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
     warnings = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+    options = SW_SAVE_AS_OPTION_SILENT | (SW_SAVE_AS_OPTION_SAVE_REFERENCED if save_referenced else 0)
 
     if file_path:
         file_path = _expand_path(file_path)
         _ensure_parent_dir(file_path)
         success = model.Extension.SaveAs(
-            file_path, 0, 1, create_empty_dispatch_variant(), errors, warnings
+            file_path, 0, options, create_empty_dispatch_variant(), errors, warnings
         )
     else:
-        success = model.Save3(1, errors, warnings)
+        success = model.Save3(options, errors, warnings)
 
     if success:
         print(f"保存成功: {file_path or get_com_member(model, 'GetPathName')}")
