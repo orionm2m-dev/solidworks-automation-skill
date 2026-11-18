@@ -1,0 +1,7 @@
+# List CAM configurations after an empty active import (pilot)
+
+solidworks_cam_list_import_configurations reuses the exact consumed-import and empty-recovery authorities. It reads ICWDoc3.GetAllConfigurations (DISPID23), first requiring public IDispatch type information to identify ICWDispatchCollection before QI, Count and zero-based Item. Wrong metadata or a native failure stops the read without an alternative interface or index fallback. GetAllConfigurations returns IDispatch in the public typelib; the direct collection owner remains a bounded runtime qualification, not a conclusion from the method name. The index convention reuses the official SDK dispatch-collection sample qualified for the post-option reader.
+
+The result contains 1–16 CAM configuration names and their SWConfigurationName mappings, the active name and its verified zero feature/operation counts. Two lists must agree. The active CAD and CAM configuration, owned process/lifetime, document, source/archive/predecessor pins and zero event state remain guarded. No configuration is activated or renamed. Inactive feature/operation counts, toolpaths and imported content are not observed.
+
+This is a read-only diagnostic. A one-configuration result bounds only the observed list; multiple configurations do not prove that any holds the exported process. Original import and recovery reports remain unchanged. No import replay, Save, GTP, rebuild or UI is present. Any later activation or save is a separate explicit native action, not part of this reader.
