@@ -56,7 +56,21 @@ metadata: { "openclaw": { "homepage": "https://github.com/wzyn20051216/solidwork
 
 Для сохранённого пустого Finish и создания отдельной новой операции читать [cam-fresh-finish-definition](references/cam-fresh-finish-definition.md): определение операции, траектория и производственная проверка имеют разные границы; совместимость исторических зависимостей оформляется явно.
 
+For appending exactly two separate Finish definitions to a current saved route, read [cam-finish-split-definition](references/cam-finish-split-definition.md). Preserve the completed operation prefix and generated paths, verify the append before one Save, and keep generation and machining qualification separate.
+
 Для чтения TURN-контроллера использовать [cam-turn-controller-read](references/cam-turn-controller-read.md); для сверления — [cam-turn-drill-read](references/cam-turn-drill-read.md). Эти справки фиксируют подтверждённые вызовы и ограничения, чтобы не повторять неподдержанные запросы.
+
+For MILL CL with inverted setup metadata, read [cam-cl-axial-metadata](references/cam-cl-axial-metadata.md): distinguish raw TLAXIS from local GOTO/CIRCLE positions, retain exact native counts, and reconcile already exported bytes without repeating native actions.
+
+For an already completed circular GTP rejected only for an exact observed feed refresh, read [cam-circular-gtp-save](references/cam-circular-gtp-save.md). The bounded continuation saves once and compares CL without calculating again; it remains pilot until native qualification is recorded.
+
+For the current generated circular MILL cutting context, read [cam-circular-cutting-context-read](references/cam-circular-cutting-context-read.md). Preserve feed values together with their absolute/percent mode; an inactive percentage field does not override the native mode. This bounded read pilot does not authorize setters or machining release.
+
+For a bounded revision of one already generated circular Rough, read [cam-generated-circular-revision](references/cam-generated-circular-revision.md). Its explicit operation-level recipe preserves the shared tool and all other complete CL streams; one GTP/Save/export sequence remains pilot until actual evidence is reviewed. Never replay an uncertain action.
+
+For WIP after a completed saved circular revision, read [cam-reconfigured-circular-wip](references/cam-reconfigured-circular-wip.md). Export once without recalculation or Save; qualify the actual mesh frame and remaining material separately.
+
+For missing Finish modes and lead geometry in the current saved route, read [cam-current-finish-context-read](references/cam-current-finish-context-read.md). Bind the actual completed source and operation identity, and reuse existing scalar results before reading only what remains unknown.
 
 ## Каталог знаний о возможностях MCP и скилла
 
@@ -65,6 +79,8 @@ metadata: { "openclaw": { "homepage": "https://github.com/wzyn20051216/solidwork
 Читать только относящиеся к задаче источники. Различать унаследованные и добавленные возможности, программные тесты, нативную проверку конкретного случая и инженерную пригодность. Проверка SHA подтверждает совпадение сохранённого источника, а не повышает уровень способности или подтверждает состояние CAD. Устаревшие/отсутствующие источники не считать текущим доказательством; выяснить затронутую часть без полного повторения работы. Каталог не заменяет `resume_checkpoint` текущей CAD/CAM-задачи.
 
 Контракт запросов и трактовка результата: [references/fork-knowledge-index.md](references/fork-knowledge-index.md).
+
+Для DFMXpress и Plastics сначала читать [DFMXpress native API](references/dfmxpress-native-api-research.md) и [Plastics native API](references/plastics-native-api-research.md), затем соответствующую тему индекса проекта. Сигнатуры, статические выводы, исполнение и инженерную приёмку различать. Все новые находки и отрицательные результаты сохранять в документации MCP и индексе с доказательствами.
 
 ## 快速开始
 
@@ -359,3 +375,38 @@ print(report["evaluation"])
 - **草图坐标**：基于草图平面的局部坐标系，单位为米
 - **运动装配**：先解析组件再选 Mate 实体；`GetCorresponding()` 用于把零件内面/特征映射到装配体上下文；同心 Mate 默认不锁旋转
 - **Motion Study**：`swmotionstudy.tlb` 需加载；pywin32 下 `CreateMotionStudy` / `Activate` / `Calculate` 可能表现为属性，优先用 `sw_motion.motion_member()` 兼容
+
+For a native current saved MILL process archive, read [cam-process-export](references/cam-process-export.md). The endpoint exports once to a fresh `.prtcam`; it does not transfer stock, import or rebuild CAM. Its capability remains `pilot` until a separately recorded native qualification.
+
+For one native CAM archive import into a separate part copy, read [cam-process-import](references/cam-process-import.md). This pilot records unsaved imported data and admits vendor-default internal effects; it does not qualify complete CAM migration or machining.
+
+For a returned import whose local post-reader failed at configuration typing, read [cam-process-import-recovery](references/cam-process-import-recovery.md). Observe the consumed attempt without replay; a clean CAD flag is not CAM persistence.
+
+When an imported active CAM configuration is empty, use [cam-process-configuration-list](references/cam-process-configuration-list.md) to inspect names and CAD mappings without activation. Inactive contents and migration remain unqualified.
+
+For one upper pocket definition with four autodetected islands, read [cam-autodetected-pocket](references/cam-autodetected-pocket.md). The pilot checks only the scalar definition and exact inventory delta; island geometry and machining stay unqualified. No automatic GOP, GTP, Save or unsupported island-interface retries.
+
+
+For an already consumed pocket creation whose local guard rejected an appended Attribute suffix, use [cam-autodetected-pocket-recovery](references/cam-autodetected-pocket-recovery.md). This pilot reads the exact reviewed after-state and preserves the original uncertain receipt; it does not retry creation or qualify association/geometry.
+
+For a draft operation plan after separately successful recovery and an explicit zero-operation Save, use [cam-recovered-pocket-gop](references/cam-recovered-pocket-gop.md). The existing selective GOP endpoint gains one explicit authority union; a clean saved source, exact feature and immutable evidence are required. GOP creates definitions only. GTP, Save, physical machining and persistence remain separate qualifications.
+
+
+To preserve draft operations after that selected GOP, use [cam-recovered-pocket-gop-save](references/cam-recovered-pocket-gop-save.md). The existing single-feature lifecycle accepts pinned recovery, definition Save and completed GOP evidence plus exact ordered operation IDs. It saves once, compares complete before/after inventory and keeps reopen persistence false; it does not calculate or approve toolpaths.
+
+
+For the current saved Rough/Contour pair, use [cam-current-pocket-pair-read](references/cam-current-pocket-pair-read.md). The bounded native read is verified; it caches shared tool dimensions once and preserves raw units/enum caveats.
+
+For one reviewed flat cutter and holder assigned only to that pair's Rough operation, use [cam-current-pair-tool](references/cam-current-pair-tool.md). This pilot preserves the other operation and original tools, records selected automatic defaults and performs one verified Save. It does not generate or approve toolpaths; uncertain attempts cannot be replayed.
+
+
+For seven explicitly reviewed Rough settings followed by the first diagnostic toolpath, read [cam-current-pocket-first-generation](references/cam-current-pocket-first-generation.md). The pilot binds a saved current tool context, checks the actual operation setup transform, generates only the selected Rough, saves once and exports one native-count-matched CL stream. This computes evidence; it does not approve stock entry, guide clearance or machining.
+
+For a completed first GTP whose exact observed XYFeed change stopped the local comparison, use [cam-current-pocket-generation-recovery](references/cam-current-pocket-generation-recovery.md). This explicit pilot preserves the uncertain original, verifies the full current state, saves once and exports raw CL without repeating setters or generation. Generated context and machining acceptance remain distinct.
+
+For an already verified native Save followed by a local context-packaging failure, use [cam-current-pocket-saved-cl-recovery](references/cam-current-pocket-saved-cl-recovery.md). This explicit pilot reconstructs the saved context from immutable Save facts and exports once with two fresh full reads. It does not repeat Save or generation and does not qualify machining.
+
+
+For four explicit closed island footprints on an exclusive initialized-empty CAM copy, read [cam-explicit-island-sketch-batch](references/cam-explicit-island-sketch-batch.md). The pilot reuses signed native sketches, protects the copied empty CAM setup and supports one explicitly requested checked Save. It does not create CAM islands or approve machining.
+
+For one pocket defined by four explicit closed island sketches, read [cam-explicit-island-feature](references/cam-explicit-island-feature.md). The pilot checks exact named PROFILE readback after a bounded factory plus four additions on an initialized-empty copy. It does not save, generate operations/toolpaths or approve machining; do not relabel its receipt as the older autodetected producer.

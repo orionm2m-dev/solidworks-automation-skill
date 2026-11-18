@@ -264,3 +264,7 @@ V2 附带 **37 个 deterministic reliability scenarios**，覆盖正常执行、
 现有车削镗杆 STL 定义（pilot）：[受限共享刀具写入](references/cam-turn-holder-stl.md)固定源文件、进程和全部使用操作，分开回读文件字段与几何资格；不修改刀片、不生成轨迹、不保存。
 
 车削后处理参数读取（pilot）：[数量与索引零限定探测](references/cam-turn-post-parameter-probe.md)只读取一次数量及可选索引零，保留原始诊断；不把单条结果视为完整目录或 Preset 验证。
+
+### Current saved CAM observations
+
+- Current saved CAM boundary (pilot): `solidworks_cam_read_current_floor_wall_scalars` reads selected generated Rough/Finish lengths and feed-plane scalars; `solidworks_cam_export_current_saved_finish_wip` exports whole-machine WIP once from the exact saved boundary accepted by its strict binder. Original uncertain producer status stays unchanged. Neither tool configures, generates or saves. See [current saved scalars and WIP](references/cam-current-saved-scalars-wip.md) for mandatory inherited request fields, original-path authority, qualification limits and tests.
