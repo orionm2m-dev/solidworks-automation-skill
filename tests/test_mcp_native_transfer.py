@@ -507,3 +507,40 @@ def test_cleanup_unexpected_import_discard_is_disabled_by_default(cleanup_reques
 def test_cleanup_unexpected_import_acknowledgement_requires_json_boolean(cleanup_request,value):
     with pytest.raises(ValueError):cleanup_params(cleanup_request,acknowledge_discard_unexpected_import=value)
     cleanup_request.connect.assert_not_called();cleanup_request.cleanup.assert_not_called()
+
+
+@pytest.mark.parametrize('policy',['knit_surfaces','direct_brep'])
+def test_part_transfer_step_topology_policy_is_explicit_and_passed_through(transfer,policy):
+    p=params(transfer,step_topology_policy=policy)
+    call('part',p)
+    assert transfer.part.call_args.kwargs['step_topology_policy']==policy
+
+
+@pytest.mark.parametrize('policy',[None,True,0,'BREP',[]])
+def test_part_transfer_step_topology_schema_rejects_other_values(transfer,policy):
+    with pytest.raises(ValueError):params(transfer,step_topology_policy=policy)
+
+
+def test_part_transfer_preserves_prior_step_topology_default(transfer):
+    assert params(transfer).step_topology_policy=='knit_surfaces'
+
+
+@pytest.mark.parametrize('value',['direct_bodies','marked_selection','temporary_bodies'])
+def test_combine_input_mode_is_explicit_schema_and_passthrough(transfer,value):
+    p=params(transfer,mode='subtract_delta',acknowledge_delta_only=True,combine_input_mode=value)
+    call('part',p)
+    assert transfer.part.call_args.kwargs['combine_input_mode']==value
+
+
+@pytest.mark.parametrize('value',[None,True,0,'auto',[]])
+def test_combine_input_schema_rejects_unsupported_values(transfer,value):
+    with pytest.raises(ValueError):params(transfer,combine_input_mode=value)
+
+
+def test_marked_combine_does_not_apply_to_full_body_replace(transfer):
+    with pytest.raises(ValueError):params(transfer,combine_input_mode='marked_selection')
+    assert params(transfer).combine_input_mode=='direct_bodies'
+
+
+def test_temporary_body_mode_does_not_apply_to_replace(transfer):
+    with pytest.raises(ValueError):params(transfer,combine_input_mode='temporary_bodies')

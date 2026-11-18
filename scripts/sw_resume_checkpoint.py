@@ -6,9 +6,11 @@ import os
 from pathlib import Path
 import re
 
-MAX_CURRENT_ARTIFACTS=512
+MAX_CURRENT_ARTIFACTS=1024
 MAX_STATUS_BYTES=4*1024*1024
 MAX_EVIDENCE_BYTES=8*1024*1024
+# Bound retained raw JSON payload bytes, not cumulative streamed I/O.
+# Parsed objects are released with their raw payload after the final planned pointer.
 MAX_JSON_TOTAL_BYTES=64*1024*1024
 MAX_ARTIFACT_BYTES=4*1024**3
 MAX_TOTAL_BYTES=8*1024**3
@@ -127,7 +129,7 @@ def _signature(st):return (st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns)
 
 
 class _Reader:
-    def __init__(self):self.seen={};self.bytes_read=0;self.json_bytes=0
+    def __init__(self):self.seen={};self.bytes_read=0;self.json_bytes=0;self.json_peak_bytes=0;self.json_payloads_released=0
     def read(self,value,limit,keep=False,force=False):
         path=_path(value);key=str(path.absolute())
         try:
@@ -141,7 +143,7 @@ class _Reader:
             if self.bytes_read+before.st_size>MAX_TOTAL_BYTES:raise FileProblem("total_bound_exceeded",path,"Total streamed byte bound exceeded")
             # Forced verification streams the file again, but keeps one cached payload.
             retain=keep and (cached is None or cached.get("data") is None)
-            if retain and self.json_bytes+before.st_size>MAX_JSON_TOTAL_BYTES:raise FileProblem("json_total_bound_exceeded",path,"Aggregate JSON read bound exceeded")
+            if retain and self.json_bytes+before.st_size>MAX_JSON_TOTAL_BYTES:raise FileProblem("json_total_bound_exceeded",path,"Retained JSON payload byte bound exceeded")
             digest=hashlib.sha256();parts=[];size=0
             with path.open("rb") as stream:
                 opened=_signature(os.fstat(stream.fileno()))
@@ -158,11 +160,19 @@ class _Reader:
                 raise FileProblem("stale_during_read",path,"File changed while hashing")
             item=dict(path=str(path),sha256=digest.hexdigest(),bytes=size,signature=opened,data=b"".join(parts) if retain else (cached.get("data") if cached else None))
             if cached and cached["sha256"]!=item["sha256"]:raise FileProblem("stale_during_read",path,"File content changed during checkpoint inspection")
-            if retain:self.json_bytes+=size
+            if retain:
+                self.json_bytes+=size;self.json_peak_bytes=max(self.json_peak_bytes,self.json_bytes)
             self.seen[key]=item;return item
         except FileProblem:raise
         except FileNotFoundError as exc:raise FileProblem("missing_file",path,"Named file is missing") from exc
         except OSError as exc:raise FileProblem("file_read_error",path,str(exc)) from exc
+    def release_json(self,value):
+        """Drop completed payload only; keep hash/identity for final stability."""
+        item=self.seen.get(str(_path(value).absolute()))
+        if item is not None and item.get("data") is not None:
+            self.json_bytes-=len(item["data"]);item["data"]=None
+            self.json_payloads_released+=1
+        return item
     def stability(self):
         result=[]
         for value in self.seen.values():
@@ -204,11 +214,12 @@ def read_resume_checkpoint(status_path):
         authorization_scope="This reader does not evaluate or grant native mutation authorization",
         continuation_ready_by_saved_evidence=False,findings=[],current_artifacts=[],evidence_passed=[],pending=[],failed_attempts=[],
         evidence_scope="Bounded saved-file hashes and exact typed receipt fields; no CAD or manufacturing approval")
-    reader=_Reader();parsed={}
+    reader=_Reader();parsed={};remaining_pointers={}
     def issue(scope,code,**details):report["findings"].append(dict(scope=scope,code=code,**details))
     def reference(ref,scope):
+        pointer="json_pointer" in ref
+        cache_key=str(_path(ref["path"]).absolute())
         try:
-            pointer="json_pointer" in ref
             item=reader.read(ref["path"],MAX_EVIDENCE_BYTES if pointer else MAX_ARTIFACT_BYTES,keep=pointer)
             if item["sha256"]!=ref["sha256"]:
                 issue(scope,"sha256_mismatch",path=ref["path"],expected_sha256=ref["sha256"],actual_sha256=item["sha256"]);return False
@@ -223,6 +234,12 @@ def read_resume_checkpoint(status_path):
             return True
         except FileProblem as exc:issue(scope,exc.code,path=exc.path,detail=str(exc));return False
         except (ValueError,RecursionError) as exc:issue(scope,"invalid_evidence_json",path=ref["path"],detail=str(exc));return False
+        finally:
+            if pointer:
+                remaining_pointers[cache_key]-=1
+                if remaining_pointers[cache_key]==0:
+                    item=reader.release_json(ref["path"])
+                    if item is not None:parsed.pop((item["path"],item["sha256"]),None)
     try:
         path=_path(status_path)
         if path.suffix.casefold()!=".json":raise ValueError("STATUS input must be an absolute JSON path")
@@ -231,6 +248,12 @@ def read_resume_checkpoint(status_path):
         root=_json(initial["data"])
         if type(root) is not dict or "resume_checkpoint" not in root:raise ValueError("Existing STATUS requires resume_checkpoint section")
         c=root["resume_checkpoint"];_validate(c)
+        for group,field in (("milestones","evidence_checks"),("failed_attempts","evidence_refs")):
+            for row in c[group]:
+                for ref in row[field]:
+                    if "json_pointer" in ref:
+                        key=str(_path(ref["path"]).absolute())
+                        remaining_pointers[key]=remaining_pointers.get(key,0)+1
         report["next_action"]=dict(c["next_action"],status="not_yet_checked",continuation_ready_by_saved_evidence=False,human_preconditions_verified=False,native_mutation_authorized=False)
         artifacts={};milestones={}
         for row in c["current_artifacts"]:
@@ -266,6 +289,10 @@ def read_resume_checkpoint(status_path):
                 continuation_ready_by_saved_evidence=ready,human_preconditions_verified=False,native_mutation_authorized=False),
             summary=dict(evidence_verified_milestones=len(report["evidence_passed"]),pending_milestones=len(report["pending"]),
                 artifacts=len(artifacts),findings=len(report["findings"]),bytes_hashed=reader.bytes_read,
+                json_payload_retained_bytes=reader.json_bytes,json_payload_peak_bytes=reader.json_peak_bytes,
+                json_payloads_released=reader.json_payloads_released,
+                byte_limits=dict(retained_json_payload=MAX_JSON_TOTAL_BYTES,cumulative_streamed=MAX_TOTAL_BYTES,
+                    per_evidence_file=MAX_EVIDENCE_BYTES,per_status_file=MAX_STATUS_BYTES,per_artifact_file=MAX_ARTIFACT_BYTES),
                 counts_by_declared_state={state:sum(row["state"]==state for row in c["milestones"]) for state in sorted(STATES)}))
     except FileProblem as exc:issue("status",exc.code,path=exc.path,detail=str(exc))
     except (ValueError,TypeError,RecursionError) as exc:issue("status","invalid_checkpoint",detail=str(exc))

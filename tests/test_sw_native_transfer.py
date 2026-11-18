@@ -81,7 +81,7 @@ def graph(tmp_path, monkeypatch):
         model=next(m for m in sw.docs if m.GetTitle()==title);sw.docs.remove(model)
         if sw.ActiveDoc is model:sw.ActiveDoc=anchor
     sw.CloseDoc=close
-    def open_model(sw_arg,path,step=False,observed=None):
+    def open_model(sw_arg,path,step=False,observed=None,import_settings_observed=None):
         assert sw_arg is sw
         if step:volume=state['donor_volume'];features=None
         else:volume,features=state['disk'].get(str(path),(10.,None))
@@ -521,7 +521,7 @@ def test_readonly_document_inventory_pid_guard_precedes_document_reads(graph,pid
 def test_native_open_records_actual_assembly_before_rejecting_expected_part(tmp_path,monkeypatch):
     import win32com.client
     model=N(Visible=True,GetPathName=lambda:'',GetTitle=lambda:'actual staged donor',GetType=lambda:2)
-    sw=N(GetDocuments=lambda:[],DocumentVisible=Mock(),GetImportFileData=lambda path:object(),
+    sw=N(GetDocuments=lambda:[],DocumentVisible=Mock(),GetImportFileData=lambda path:N(MapConfigurationData=True),
         LoadFile4=lambda path,args,data,error:model)
     monkeypatch.setattr(win32com.client,'VARIANT',lambda kind,value:N(value=value))
     seen=[]
@@ -535,7 +535,7 @@ def test_native_open_records_actual_assembly_before_rejecting_expected_part(tmp_
 
 def _unexpected_assembly_checkpoint(p,monkeypatch):
     original=transfer._open;children=[];imported=[]
-    def open_assembly(sw,path,step=False,observed=None):
+    def open_assembly(sw,path,step=False,observed=None,import_settings_observed=None):
         if not step:return original(sw,path,step=step,observed=observed)
         assembly=p.Model(path);assembly.path='';assembly.GetType=lambda:2
         assembly.GetTitle=lambda:Path(path).with_suffix('.SLDASM').name
@@ -627,3 +627,572 @@ def test_missing_normalized_lookup_does_not_search_title_or_open(tmp_path):
     assert transfer._find_document(sw,path.as_posix()) is None
     sw.GetOpenDocumentByName.assert_called_once_with(str(path))
     sw.GetDocuments.assert_not_called();sw.OpenDoc6.assert_not_called()
+
+
+@pytest.mark.parametrize('failure,code', [
+    ('check3', 'NATIVE_CHECK3_FAULTS'),
+    ('zero_volume', 'NATIVE_VOLUME_NONPOSITIVE'),
+    ('negative_volume', 'NATIVE_VOLUME_NONPOSITIVE'),
+    ('nan_mass', 'NATIVE_MASS_PROPERTY_NONFINITE_OR_TYPE'),
+    ('short_mass', 'NATIVE_MASS_PROPERTY_COUNT_INVALID'),
+    ('absent_mass', 'NATIVE_MASS_PROPERTIES_UNAVAILABLE'),
+])
+def test_donor_failure_is_distinguished_and_durable_before_any_insert(graph, monkeypatch, failure, code):
+    p=graph;original=transfer._open;mass_calls=[]
+    def open_bad_donor(sw,path,step=False,observed=None,import_settings_observed=None):
+        model,metadata=original(sw,path,step=step,observed=observed)
+        if step:
+            body=model.bodies[0]
+            if failure=='check3':body.Check3.Count=2
+            def mass(density):
+                mass_calls.append(density)
+                durable=json.loads(p.receipt.read_text())
+                assert durable['phase']=='body_stats_donor_read_mass_properties'
+                assert durable['body_diagnostics']['donor']['bodies'][0]['check3']==0
+                values=[0.,0.,0.,6.]+[0.]*8
+                if failure=='zero_volume':values[3]=0.
+                elif failure=='negative_volume':values[3]=-1.
+                elif failure=='nan_mass':values[7]=float('nan')
+                elif failure=='short_mass':values=values[:-1]
+                elif failure=='absent_mass':return None
+                return values
+            body.GetMassProperties=mass
+        return model,metadata
+    monkeypatch.setattr(transfer,'_open',open_bad_donor)
+    result=p.apply();durable=json.loads(p.receipt.read_text())
+    assert result['status']=='uncertain' and not result['body_transfer_verified']
+    assert result['issue']['code']==code and durable['issue']['code']==code
+    diagnostic=durable['body_diagnostics']['donor']
+    assert diagnostic['failure_code']==code and diagnostic['solid_count']==1
+    assert diagnostic['sheet_count']==0 and diagnostic['bodies'][0]['body_index']==0
+    assert p.state['calls']==[] and p.source.read_bytes()==b'original native'
+    assert p.output.read_bytes()==p.source.read_bytes() and not p.step.exists()
+    assert len(mass_calls)==(0 if failure=='check3' else 1)
+    if failure=='check3':
+        assert diagnostic['bodies'][0]['check3']==2
+        assert diagnostic['bodies'][0]['mass_properties_native'] is None
+    elif failure=='nan_mass':
+        assert diagnostic['bodies'][0]['invalid_mass_property_indices']==[7]
+        assert diagnostic['bodies'][0]['mass_properties_native'][7]=='nan'
+    elif failure in ('zero_volume','negative_volume'):
+        assert diagnostic['bodies'][0]['volume_m3']==(0. if failure=='zero_volume' else -1.)
+
+
+def test_read_failure_retains_stage_and_prior_check_without_retry(graph, monkeypatch):
+    p=graph;original=transfer._open;reads=[]
+    class TransportFailure(RuntimeError):hresult=-2147023174
+    def open_bad_donor(sw,path,step=False,observed=None,import_settings_observed=None):
+        model,metadata=original(sw,path,step=step,observed=observed)
+        if step:
+            def mass(density):
+                reads.append(density)
+                assert json.loads(p.receipt.read_text())['phase']=='body_stats_donor_read_mass_properties'
+                raise TransportFailure('native transport lost')
+            model.bodies[0].GetMassProperties=mass
+        return model,metadata
+    monkeypatch.setattr(transfer,'_open',open_bad_donor)
+    result=p.apply();d=json.loads(p.receipt.read_text())['body_diagnostics']['donor']
+    assert reads==[1] and p.state['calls']==[]
+    assert d['status']=='read_failed' and d['stage']=='read_mass_properties'
+    assert d['bodies'][0]['check3']==0 and d['bodies'][0]['volume_m3'] is None
+    assert d['issue']['hresult']==-2147023174 and result['failed_phase']=='body_stats_donor_read_mass_properties'
+
+
+def test_second_faulty_body_keeps_first_measurements_and_does_not_read_its_mass():
+    good=N(Check3=N(Count=0),GetMassProperties=Mock(return_value=[0.,0.,0.,2.]+[0.]*8),
+        GetBodyBox=Mock(return_value=[0.,0.,0.,1.,1.,1.]))
+    bad=N(Check3=N(Count=1),GetMassProperties=Mock(side_effect=AssertionError('No mass read after Check3 fault')))
+    model=N(GetBodies2=lambda kind,visible:[good,bad] if kind==0 else [])
+    snapshots=[]
+    with pytest.raises(transfer.NativeBodyValidationError) as caught:
+        transfer._stats(model,observed=snapshots.append)
+    assert caught.value.code=='NATIVE_CHECK3_FAULTS'
+    diagnostic=caught.value.diagnostics
+    assert diagnostic['bodies'][0]['volume_m3']==2.
+    assert diagnostic['bodies'][1]['body_index']==1 and diagnostic['bodies'][1]['check3']==1
+    assert snapshots[-1]==diagnostic and snapshots[0]['bodies']==[]
+    bad.GetMassProperties.assert_not_called()
+
+
+@pytest.mark.parametrize('solids,sheets', [(0,0),(10,0),(1,1)])
+def test_invalid_body_set_records_counts_without_inspecting_bodies(solids,sheets):
+    body=N(Check3=Mock(side_effect=AssertionError('Invalid set must not inspect bodies')))
+    model=N(GetBodies2=lambda kind,visible:[body]*(solids if kind==0 else sheets))
+    with pytest.raises(transfer.NativeBodyValidationError) as caught:transfer._stats(model)
+    assert caught.value.code=='NATIVE_BODY_SET_INVALID'
+    assert caught.value.diagnostics['solid_count']==solids
+    assert caught.value.diagnostics['sheet_count']==sheets
+    assert caught.value.diagnostics['bodies']==[]
+
+
+@pytest.fixture
+def absent_module_guard(graph, monkeypatch):
+    from scripts import sw_plastics_session_isolation as isolation
+    p=graph;path=p.tmp_path/'SimpoeWorks.dll';path.write_bytes(b'fixed installed add-in')
+    modules=[];enumeration=Mock(side_effect=lambda pid:list(modules))
+    monkeypatch.setattr(isolation,'process_modules',enumeration)
+    return N(graph=p,path=path,modules=modules,enumeration=enumeration)
+
+
+def test_empty_module_guard_preserves_existing_route_without_os_enumeration(absent_module_guard):
+    q=absent_module_guard;q.enumeration.side_effect=AssertionError('Empty default must not enumerate OS modules')
+    assert q.graph.apply()['body_transfer_verified']
+    q.enumeration.assert_not_called()
+
+
+def test_required_modules_absent_are_recorded_during_prepare_and_before_import(absent_module_guard):
+    q=absent_module_guard;p=q.graph;paths=[str(q.path)]
+    prepared=p.run(required_absent_module_paths=paths)
+    assert prepared['status']=='ok' and prepared['module_absence_checks'][0]['stage']=='prepare'
+    assert prepared['module_absence_checks'][0]['all_required_absent']
+    result=p.run(action='apply',expected_state_sha256=prepared['state_sha256'],receipt_path=str(p.receipt),required_absent_module_paths=paths)
+    assert result['body_transfer_verified']
+    assert [x['stage'] for x in result['module_absence_checks']]==['apply_preflight','before_step_import']
+    assert all(x['all_required_absent'] for x in result['module_absence_checks'])
+    assert q.enumeration.call_count==3 and all(c.args==(71,) for c in q.enumeration.call_args_list)
+
+
+@pytest.mark.parametrize('other_path',[False,True])
+def test_present_or_same_name_module_blocks_prepare_before_copy(absent_module_guard,other_path):
+    q=absent_module_guard;p=q.graph
+    q.modules.append(str(p.tmp_path/'other'/'SimpoeWorks.dll') if other_path else str(q.path))
+    result=p.run(required_absent_module_paths=[str(q.path)])
+    assert result['status']=='error' and not result['mutation_attempted']
+    assert result['issue']['code']=='NATIVE_IMPORT_REQUIRED_MODULE_NOT_ABSENT'
+    assert not result['module_absence_checks'][0]['all_required_absent']
+    assert not p.output.exists() and p.state['calls']==[]
+
+
+def test_source_reloads_module_and_import_is_never_attempted(absent_module_guard,monkeypatch):
+    q=absent_module_guard;p=q.graph;original=transfer._open;opens=[]
+    def open_source(sw,path,step=False,observed=None,import_settings_observed=None):
+        opens.append((str(path),step));assert not step,'STEP import must not occur after module reappears'
+        result=original(sw,path,step=step,observed=observed);q.modules.append(str(q.path));return result
+    monkeypatch.setattr(transfer,'_open',open_source)
+    result=p.apply(required_absent_module_paths=[str(q.path)])
+    assert result['status']=='uncertain' and not result['body_transfer_verified']
+    assert result['issue']['code']=='NATIVE_IMPORT_REQUIRED_MODULE_NOT_ABSENT'
+    durable=json.loads(p.receipt.read_text());last=durable['module_absence_checks'][-1]
+    assert last['stage']=='before_step_import' and not last['all_required_absent']
+    assert last['mapped_required_modules']==[str(q.path)]
+    assert not any(x['name']=='import_staged_step' for x in durable['native_calls'])
+    assert len(opens)==1 and not opens[0][1] and p.state['calls']==[]
+    assert p.output.read_bytes()==p.source.read_bytes() and not p.step.exists()
+
+
+def test_module_enumeration_failure_before_import_is_durable_and_not_retried(absent_module_guard,monkeypatch):
+    q=absent_module_guard;p=q.graph;original=transfer._open;opens=[]
+    def source_open(sw,path,step=False,observed=None,import_settings_observed=None):
+        opens.append(step);assert not step
+        value=original(sw,path,step=step,observed=observed)
+        q.enumeration.side_effect=RuntimeError('OS module enumeration failed')
+        return value
+    monkeypatch.setattr(transfer,'_open',source_open)
+    result=p.apply(required_absent_module_paths=[str(q.path)])
+    assert result['status']=='uncertain' and result['failed_phase']=='module_absence_before_step_import_pending'
+    assert q.enumeration.call_count==3 and opens==[False]
+    assert p.state['calls']==[] and not p.step.exists()
+    assert not any(x['name']=='import_staged_step' for x in json.loads(p.receipt.read_text())['native_calls'])
+
+
+@pytest.mark.parametrize('invalid',['not-a-list',['relative.dll'],['C:/folder/file.step'],[True],['C:/a/x.dll','C:/a/x.dll'],['C:/a/x.dll']*9])
+def test_invalid_required_absent_paths_rejected_before_mutation(graph,invalid):
+    result=graph.run(required_absent_module_paths=invalid)
+    assert result['status']=='error' and not result['mutation_attempted']
+    assert not graph.output.exists() and graph.state['calls']==[]
+
+
+def test_step_import_uses_geometry_only_override_before_native_load(tmp_path, monkeypatch):
+    import win32com.client
+    data = N(MapConfigurationData=True)
+    model = N(Visible=True, GetPathName=lambda: '', GetTitle=lambda: 'donor', GetType=lambda: 1)
+    seen = []
+    def load(path, options, incoming, error):
+        assert incoming is data and data.MapConfigurationData is False
+        assert seen[-1]['stage'] == 'configuration_override_readback'
+        assert seen[-1]['map_configuration_data_before'] is True
+        return model
+    sw = N(GetDocuments=lambda: [], DocumentVisible=Mock(), GetImportFileData=lambda path: data,
+        LoadFile4=Mock(side_effect=load))
+    monkeypatch.setattr(win32com.client, 'VARIANT', lambda kind, value: N(value=value))
+    actual, metadata = transfer._open(sw, tmp_path/'donor.step', step=True,
+        import_settings_observed=lambda row: seen.append(deepcopy(row)))
+    assert actual is model and metadata['type'] == 1
+    assert len(seen) == 2 and seen[-1]['map_configuration_data_after'] is False
+    assert sw.LoadFile4.call_count == 1
+
+
+@pytest.mark.parametrize('failure', ['readback_true', 'readback_integer_zero', 'setter_exception'])
+def test_step_mapping_failure_never_imports_and_restores_visibility(tmp_path, monkeypatch, failure):
+    import win32com.client
+    class ImportData:
+        @property
+        def MapConfigurationData(self):
+            return 0 if failure == 'readback_integer_zero' else True
+        @MapConfigurationData.setter
+        def MapConfigurationData(self, value):
+            assert value is False
+            if failure == 'setter_exception': raise RuntimeError('mapping setter failed')
+    sw = N(GetDocuments=lambda: [], DocumentVisible=Mock(), GetImportFileData=lambda path: ImportData(),
+        LoadFile4=Mock())
+    monkeypatch.setattr(win32com.client, 'VARIANT', lambda kind, value: N(value=value))
+    seen=[]
+    with pytest.raises((ValueError, RuntimeError)):
+        transfer._open(sw, tmp_path/'donor.step', step=True, import_settings_observed=seen.append)
+    sw.LoadFile4.assert_not_called()
+    assert sw.DocumentVisible.call_args_list[-1].args == (True, 1)
+    assert seen[0]['stage'] == 'before_configuration_override'
+
+
+@pytest.mark.parametrize('reject_import', [False, True])
+def test_multibody_preferences_applied_before_import_and_restored(graph, monkeypatch, reject_import):
+    p=graph
+    p.prefs['Toggle', 220]=False
+    p.prefs['IntegerValue', 579]=1
+    original=transfer._open
+    seen=[]
+    def open_checked(sw, path, step=False, **kwargs):
+        if step:
+            assert p.prefs['Toggle', 220] is True
+            assert p.prefs['IntegerValue', 579] == 2
+            seen.append(str(path))
+            if reject_import: raise RuntimeError('native import rejected')
+        return original(sw, path, step=step, **kwargs)
+    monkeypatch.setattr(transfer, '_open', open_checked)
+    result=p.apply()
+    assert len(seen)==1
+    assert result['body_transfer_verified'] is (not reject_import)
+    assert p.prefs['Toggle', 220] is False
+    assert p.prefs['IntegerValue', 579] == 1
+    assert not result['preference_restore_errors']
+    if reject_import: assert p.state['calls']==[]
+
+
+@pytest.fixture
+def repair_graph(graph, monkeypatch):
+    p=graph;original=transfer._open;donors=[]
+    def rejected_donor(sw,path,step=False,**kwargs):
+        model,metadata=original(sw,path,step=step,**kwargs)
+        if step:
+            model.bodies[0].Check3=N(Count=2,ErrorCode=lambda i: [11,13][i],Entity2=lambda i: None if i==0 else object())
+            donors.append(model)
+        return model,metadata
+    monkeypatch.setattr(transfer,'_open',rejected_donor)
+    failed=p.apply()
+    assert failed['issue']['code']=='NATIVE_CHECK3_FAULTS'
+    prior=json.loads(p.receipt.read_text())
+    prior['open_donor'].update(type=1,native_open_returned=True)
+    p.receipt.write_text(json.dumps(prior))
+    donor=donors[0];calls=[]
+    def repair(*args):
+        calls.append(args)
+        assert p.sw.ActiveDoc is donor
+        durable=json.loads((p.tmp_path/'repair.json').read_text())
+        assert durable['native_calls'][-1]==dict(name='ImportDiagnosis',attempted=True,returned=False)
+        donor.bodies[0].Check3.Count=0
+        return 0
+    donor.ImportDiagnosis=repair
+    values=dict(process_id=71,transfer_receipt_path=str(p.receipt),
+        transfer_receipt_sha256=transfer._file_hash(p.receipt),
+        repaired_step_path=str(p.tmp_path/'repaired.step'),qualification_only=True)
+    def prepare(**changes):return transfer.qualify_import_diagnosis(p.sw,action='prepare',**(values|changes))
+    def apply(**changes):
+        prepared=prepare()
+        assert prepared['status']=='ok',prepared
+        return transfer.qualify_import_diagnosis(p.sw,action='apply',expected_state_sha256=prepared['state_sha256'],
+            receipt_path=str(p.tmp_path/'repair.json'),**(values|changes))
+    return N(p=p,donor=donor,calls=calls,values=values,prepare=prepare,apply=apply)
+
+
+def test_import_repair_prepare_is_read_only_and_preserves_null_fault_entity(repair_graph):
+    q=repair_graph;r=q.prepare()
+    assert r['status']=='ok' and not r['mutation_attempted'] and q.calls==[]
+    assert r['before']['faults']['fault_count']==2
+    assert r['before']['faults']['faults']==[
+        dict(index=0,error_code=11,entity_present=False),dict(index=1,error_code=13,entity_present=True)]
+    assert not Path(r['repair_marker_path']).exists()
+
+
+def test_import_repair_exports_only_valid_donor_without_source_save(repair_graph):
+    q=repair_graph;r=q.apply()
+    assert r['repair_verified'] and not r['geometry_equivalence_verified']
+    assert r['source_files_unchanged'] and q.calls==[(True,False,True,0)]
+    assert q.p.state['calls']==['export'] and q.p.output.read_bytes()==b'original native'
+    assert q.p.sw.ActiveDoc is q.p.anchor
+    row=next(x for x in r['native_calls'] if x['name']=='ImportDiagnosis')
+    assert row['return_value']==0 and row['returned'] is True
+    assert q.prepare()['status']=='error' and len(q.calls)==1
+
+
+@pytest.mark.parametrize('result',[-1,True,'0',None])
+def test_import_repair_invalid_native_return_never_exports_or_repeats(repair_graph,result):
+    q=repair_graph;q.donor.ImportDiagnosis=Mock(return_value=result)
+    r=q.apply()
+    assert not r['repair_verified'] and r['status']=='uncertain'
+    assert q.p.state['calls']==[] and not Path(q.values['repaired_step_path']).exists()
+    q.donor.ImportDiagnosis.assert_called_once_with(True,False,True,0)
+    assert q.prepare()['status']=='error'
+
+
+def test_import_repair_remaining_fault_stops_before_export(repair_graph):
+    q=repair_graph;q.donor.ImportDiagnosis=Mock(return_value=0)
+    r=q.apply()
+    assert r['issue']['code']=='NATIVE_CHECK3_FAULTS' and not r['repair_verified']
+    assert r['faults_after']['fault_count']==2 and q.p.state['calls']==[]
+
+
+def test_import_repair_rpc_failure_keeps_one_shot_intent(repair_graph):
+    q=repair_graph;q.donor.ImportDiagnosis=Mock(side_effect=RuntimeError('transport lost'))
+    r=q.apply();row=next(x for x in r['native_calls'] if x['name']=='ImportDiagnosis')
+    assert row==dict(name='ImportDiagnosis',attempted=True,returned=False)
+    assert Path(r['repair_marker_path']).exists() and q.prepare()['status']=='error'
+    q.donor.ImportDiagnosis.assert_called_once()
+
+
+@pytest.mark.parametrize('changed',['pid','copy_dirty','copy_hash','prior_hash','fault_count','extra_document'])
+def test_import_repair_identity_drift_is_read_only_rejection(repair_graph,changed):
+    q=repair_graph;p=q.p
+    if changed=='pid':p.sw.pid=72
+    elif changed=='copy_dirty':next(m for m in p.sw.docs if m.path==str(p.output)).dirty=True
+    elif changed=='copy_hash':p.output.write_bytes(b'changed')
+    elif changed=='prior_hash':p.receipt.write_text('{}')
+    elif changed=='fault_count':q.donor.bodies[0].Check3.Count=1
+    elif changed=='extra_document':p.sw.docs.append(p.Model(p.tmp_path/'other.sldprt'))
+    r=q.prepare()
+    assert r['status']=='error' and not r['mutation_attempted'] and q.calls==[]
+
+
+def test_fault_accessors_use_indexed_propertyget_not_method():
+    import pythoncom
+    ole=N(InvokeTypes=Mock(return_value=17));fault=N(_oleobj_=ole)
+    assert transfer._fault_indexed_property(fault,'ErrorCode',1)==17
+    ole.InvokeTypes.assert_called_once_with(3,0,pythoncom.DISPATCH_PROPERTYGET,
+        (pythoncom.VT_I4,0),((pythoncom.VT_I4,1),),1)
+    ole.InvokeTypes.reset_mock();transfer._fault_indexed_property(fault,'Entity2',0)
+    assert ole.InvokeTypes.call_args.args[0:3]==(4,0,pythoncom.DISPATCH_PROPERTYGET)
+
+
+@pytest.mark.parametrize('policy,expected',[('knit_surfaces',1),('direct_brep',0)])
+@pytest.mark.parametrize('reject_import',[False,True])
+def test_step_topology_policy_is_applied_hash_bound_and_restored(graph,monkeypatch,policy,expected,reject_import):
+    p=graph;original=transfer._open;seen=[]
+    def checked(sw,path,step=False,**kwargs):
+        if step:
+            assert p.prefs['IntegerValue',207]==expected
+            assert p.prefs['IntegerValue',12]==3
+            durable=json.loads(p.receipt.read_text())
+            assert durable['step_topology_preimport_readback']==dict(policy=policy,swImportUseBrep=expected,swCreateBodyFromSurfacesOption=3)
+            seen.append(path)
+            if reject_import:raise RuntimeError('controlled importer failure')
+        return original(sw,path,step=step,**kwargs)
+    monkeypatch.setattr(transfer,'_open',checked)
+    r=p.apply(step_topology_policy=policy)
+    assert len(seen)==1 and r['body_transfer_verified'] is (not reject_import)
+    assert p.prefs['IntegerValue',207]==1
+    assert next(x for x in r['before']['import_preferences_requested'] if x['kind']=='IntegerValue' and x['number']==207)['value']==expected
+
+
+def test_step_topology_policy_change_invalidates_prepare_digest(graph):
+    p=graph;prepared=p.run(step_topology_policy='knit_surfaces')
+    result=p.run(action='apply',step_topology_policy='direct_brep',
+        expected_state_sha256=prepared['state_sha256'],receipt_path=str(p.receipt))
+    assert result['status']=='error' and not result['mutation_attempted'] and not p.output.exists()
+
+
+@pytest.mark.parametrize('bad',[None,True,0,'BREP',[]])
+def test_unknown_step_topology_policy_cannot_reach_native(graph,bad):
+    p=graph;r=p.run(step_topology_policy=bad)
+    assert r['status']=='error' and not r['mutation_attempted'] and p.state['calls']==[]
+
+
+def test_source_open_topology_setting_drift_blocks_step_import(graph,monkeypatch):
+    p=graph;original=transfer._open;imports=[]
+    def drift(sw,path,step=False,**kwargs):
+        if step:imports.append(path)
+        result=original(sw,path,step=step,**kwargs)
+        if not step:p.prefs['IntegerValue',207]=1
+        return result
+    monkeypatch.setattr(transfer,'_open',drift)
+    r=p.apply(step_topology_policy='direct_brep')
+    assert r['status']=='uncertain' and imports==[] and p.state['calls']==[]
+    assert p.prefs['IntegerValue',207]==1
+
+
+@pytest.fixture
+def marked_graph(graph,monkeypatch):
+    p=graph;old_init=p.Model.__init__;old_select=p.Body.Select2;old_clear=p.Model.ClearSelection2;old_combine=p.Model.combine
+    controls=dict(bad_count=False,bad_identity=False,reject_select=False,null_combine=False,native_calls=[])
+    def init(model,*args,**kwargs):
+        old_init(model,*args,**kwargs);model.marked=[]
+        def selected(mark):return [body for body,m in model.marked if mark==-1 or m==mark]
+        model.SelectionManager=N(CreateSelectData=lambda:N(Mark=None),
+            GetSelectedObjectCount2=lambda mark: len(selected(mark))+(1 if controls['bad_count'] else 0),
+            GetSelectedObject6=lambda index,mark:object() if controls['bad_identity'] else selected(mark)[index-1])
+    def select(body,append,data):
+        if data.Mark==0:return old_select(body,append,data)
+        if controls['reject_select']:return False
+        if not append:body.model.marked=[]
+        body.model.marked.append((body,data.Mark));return True
+    def clear(model,all):
+        old_clear(model,all);model.marked=[]
+    def combine(model,kind,main,tools):
+        controls['native_calls'].append((kind,main.value,tools.value))
+        assert main.value is None and tools.value==()
+        if controls['null_combine']:return None
+        mains=[body for body,mark in model.marked if mark==1]
+        selected_tools=[body for body,mark in model.marked if mark==2]
+        return old_combine(model,kind,mains[0] if kind==15902 else main,N(value=tuple(selected_tools)))
+    monkeypatch.setattr(p.Model,'__init__',init);monkeypatch.setattr(p.Body,'Select2',select)
+    monkeypatch.setattr(p.Model,'ClearSelection2',clear);monkeypatch.setattr(p.Model,'combine',combine)
+    return N(p=p,controls=controls)
+
+
+@pytest.mark.parametrize('mode',['subtract_delta','add_delta'])
+def test_marked_combine_uses_empty_arguments_after_exact_identity_readback(marked_graph,mode):
+    q=marked_graph;r=q.p.apply(mode=mode,acknowledge_delta_only=True,combine_input_mode='marked_selection')
+    assert r['body_transfer_verified'] and r['combine_selection']['all_input_identities_verified']
+    assert r['combine_selection']['main_count']==int(mode=='subtract_delta')
+    assert q.controls['native_calls']==[(15902 if mode=='subtract_delta' else 15903,None,())]
+
+
+@pytest.mark.parametrize('failure',['bad_count','bad_identity','reject_select'])
+def test_bad_marked_selection_never_calls_boolean(marked_graph,failure):
+    q=marked_graph;q.controls[failure]=True
+    r=q.p.apply(mode='subtract_delta',acknowledge_delta_only=True,combine_input_mode='marked_selection')
+    assert r['status']=='uncertain' and not r['body_transfer_verified']
+    assert q.controls['native_calls']==[] and 'save' not in q.p.state['calls']
+
+
+def test_null_marked_boolean_is_one_call_without_direct_fallback(marked_graph):
+    q=marked_graph;q.controls['null_combine']=True
+    r=q.p.apply(mode='subtract_delta',acknowledge_delta_only=True,combine_input_mode='marked_selection')
+    assert r['status']=='uncertain' and len(q.controls['native_calls'])==1
+    assert not any(name in q.p.state['calls'] for name in ['save','export'])
+
+
+def test_marked_combine_selects_fresh_main_not_preinsertion_wrapper(marked_graph):
+    q=marked_graph;p=q.p;old_refs=[]
+    def replace_main_wrapper(model):
+        old=model.bodies[0];old.identity=id(old);old.Select2=Mock(side_effect=AssertionError('stale wrapper selected'))
+        fresh=p.Body(old.volume,model);fresh.identity=old.identity;model.bodies[0]=fresh;old_refs.append(old)
+        return N(Name='donor insertion')
+    p.state['on_insert']=replace_main_wrapper
+    p.sw.IsSame=lambda a,b:int(getattr(a,'identity',id(a))==getattr(b,'identity',id(b)))
+    r=p.apply(mode='subtract_delta',acknowledge_delta_only=True,combine_input_mode='marked_selection')
+    assert r['body_transfer_verified'] and r['combine_selection']['fresh_main_selected_verified']
+    old_refs[0].Select2.assert_not_called()
+
+
+def test_changing_combine_input_mode_invalidates_prepared_state(graph):
+    p=graph;prep=p.run(mode='subtract_delta',acknowledge_delta_only=True)
+    r=p.run(mode='subtract_delta',acknowledge_delta_only=True,combine_input_mode='marked_selection',action='apply',
+        expected_state_sha256=prep['state_sha256'],receipt_path=str(p.receipt))
+    assert r['status']=='error' and not r['mutation_attempted']
+
+
+@pytest.mark.parametrize('bad',[None,True,0,'auto',[]])
+def test_unsupported_combine_mode_is_rejected_before_native(graph,bad):
+    p=graph;r=p.run(combine_input_mode=bad)
+    assert r['status']=='error' and not r['mutation_attempted']
+
+
+@pytest.fixture
+def temporary_graph(graph,monkeypatch):
+    from scripts import sw_body_operation_diagnostic as diagnostic
+    p=graph;seen=[];behavior={'error':0,'count':1,'fault':0,'raise_at':None}
+    monkeypatch.setattr(p.Body,'IsTemporaryBody',lambda self:self.model is None,raising=False)
+    def operation(target,tool,kind):
+        assert target.model is None and tool.model is None
+        assert all(tool is not old for pair in seen for old in pair[:2])
+        seen.append((target,tool,kind))
+        if behavior['raise_at']==len(seen):raise RuntimeError('transport failed')
+        volume=target.volume+tool.volume if kind==15903 else target.volume-tool.volume
+        results=[p.Body(volume) for _ in range(behavior['count'])]
+        for body in results:body.Check3.Count=behavior['fault']
+        return results,behavior['error']
+    monkeypatch.setattr(diagnostic,'_operations',operation)
+    return N(p=p,seen=seen,behavior=behavior)
+
+@pytest.mark.parametrize('mode,kind,expected',[('subtract_delta',15902,7.),('add_delta',15903,13.)])
+def test_temporary_sequence_inserts_only_final_body_and_reopens(temporary_graph,mode,kind,expected):
+    q=temporary_graph;p=q.p;p.state['donor_volumes']=[.25,.5,.75,1.5]
+    r=p.apply(mode=mode,acknowledge_delta_only=True,combine_input_mode='temporary_bodies')
+    assert r['body_transfer_verified'] and r['reopened_verified'],r
+    assert r['source_files_unchanged'] and r['temporary_sequence_verified']
+    assert [op[2] for op in q.seen]==[kind]*4
+    assert len(r['temporary_operations'])==4 and all(row['verified'] for row in r['temporary_operations'])
+    assert p.state['calls']==['insert','delete','save','export']
+    assert r['body_reopened']['bodies'][0]['volume_m3']==expected
+    assert r['features_after'][:len(r['original_features'])]==r['original_features']
+    assert r['temporary_final_volume_verified']
+
+@pytest.mark.parametrize('change',[{'error':1040},{'count':0},{'count':2},{'fault':21},{'raise_at':1}])
+def test_temporary_rejection_never_inserts_or_retries(temporary_graph,change):
+    q=temporary_graph;q.behavior.update(change);p=q.p
+    r=p.apply(mode='subtract_delta',acknowledge_delta_only=True,combine_input_mode='temporary_bodies')
+    assert not r['body_transfer_verified'] and r['status']=='uncertain'
+    assert not p.state['calls'] and len(q.seen)==1
+    assert p.output.read_bytes()==p.source.read_bytes()
+    assert len(r['temporary_operations'])==1
+    if 'raise_at' not in change:
+        assert r['temporary_operations'][0]['returned']
+        saved=json.loads(p.receipt.read_text())
+        assert saved['temporary_operations'][0]['error_code']==q.behavior['error']
+
+
+def test_temporary_second_failure_preserves_native_source(temporary_graph):
+    q=temporary_graph;p=q.p;p.state['donor_volumes']=[1.,2.];q.behavior['raise_at']=2
+    r=p.apply(mode='subtract_delta',acknowledge_delta_only=True,combine_input_mode='temporary_bodies')
+    assert r['status']=='uncertain' and not p.state['calls'] and len(q.seen)==2
+    assert r['temporary_operations'][0]['verified'] and not r['temporary_operations'][1]['returned']
+
+
+def test_temporary_mode_changes_prepared_identity(graph):
+    p=graph;prepared=p.run(mode='subtract_delta',acknowledge_delta_only=True)
+    r=p.run(mode='subtract_delta',acknowledge_delta_only=True,combine_input_mode='temporary_bodies',action='apply',
+        expected_state_sha256=prepared['state_sha256'],receipt_path=str(p.receipt))
+    assert not r['mutation_attempted'] and not p.output.exists()
+
+
+def test_temporary_final_insertion_volume_mismatch_blocks_save(temporary_graph):
+    q=temporary_graph;p=q.p
+    p.state['on_boolean']=lambda model:setattr(model.bodies[0],'volume',model.bodies[0].volume+0.1)
+    r=p.apply(mode='subtract_delta',acknowledge_delta_only=True,combine_input_mode='temporary_bodies',delta_volume_policy='diagnostic')
+    assert r['status']=='uncertain' and not r['body_transfer_verified']
+    assert p.state['calls']==['insert','delete']
+    assert not p.step.exists()
+
+
+def test_import_repair_activates_before_visibility_readback(repair_graph,monkeypatch):
+    q=repair_graph;p=q.p;events=[];activated=set()
+    import scripts.sw_assembly as assembly
+    def activate(sw,model):
+        events.append(('activate',model));sw.ActiveDoc=model;activated.add(id(model));return True
+    def get_visible(model):return getattr(model,'_test_visible',False)
+    def set_visible(model,value):
+        events.append(('visible',model,value))
+        # Emulate hidden-loaded donor whose Visible setter works only after activation.
+        if model is q.donor and value and id(model) not in activated:return
+        model._test_visible=value
+    for model in p.sw.docs:model._test_visible=model.Visible
+    monkeypatch.setattr(p.Model,'Visible',property(get_visible,set_visible),raising=False)
+    monkeypatch.setattr(assembly,'_activate_model_document',activate)
+    r=q.apply()
+    assert r['repair_verified'] and r['anchor_visibility_restored']
+    names=[x['name'] for x in r['native_calls']]
+    assert names.index('activate_owned_donor')<names.index('show_only_owned_donor')<names.index('ImportDiagnosis')
+    assert names.index('restore_exact_anchor')<names.index('show_only_exact_anchor')
+    assert r['before']['activation_policy']=='activate_before_visible_readback'
+
+
+def test_import_repair_failed_activation_never_calls_diagnosis(repair_graph,monkeypatch):
+    q=repair_graph;p=q.p
+    import scripts.sw_assembly as assembly
+    def activate(sw,model):
+        if model is q.donor:return False
+        sw.ActiveDoc=model;return True
+    monkeypatch.setattr(assembly,'_activate_model_document',activate)
+    r=q.apply()
+    assert not q.calls and not r['repair_verified'] and r['anchor_visibility_restored']
+    assert not any(row['name']=='ImportDiagnosis' for row in r['native_calls'])
+    assert q.prepare()['status']=='error'  # Existing one-shot marker is not bypassed.

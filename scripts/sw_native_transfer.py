@@ -19,7 +19,17 @@ from scripts.sw_operation_guard import absolute_document_path, _path_identity
 _IMPORT_PREFS = (("Toggle", 691, False), ("Toggle", 161, True),
     ("Toggle", 686, True), ("IntegerValue", 12, 3), ("IntegerValue", 207, 1),
     ("IntegerValue", 577, 0), ("IntegerValue", 140, 1),
-    ("Toggle", 290, True), ("Toggle", 291, False), ("Toggle", 111, True))
+    ("Toggle", 290, True), ("Toggle", 291, False), ("Toggle", 111, True),
+    # swImportMultBodyAsPartData; swImportNeutralAssemblyStructureMapping_MultibodyPart.
+    ("Toggle", 220, True), ("IntegerValue", 579, 2))
+
+
+def _step_import_preferences(policy):
+    if type(policy) is not str or policy not in {"knit_surfaces", "direct_brep"}:
+        raise ValueError("Explicit supported STEP topology policy required")
+    # swImportUseBrep is inverse: 0 maps BREP directly; 1 requests surface knitting.
+    return tuple((kind, number, 0 if policy == "direct_brep" and kind == "IntegerValue" and number == 207 else value)
+        for kind, number, value in _IMPORT_PREFS)
 
 
 def _path(value, extensions=None, *, new=False):
@@ -162,7 +172,7 @@ def _dispatch(obj):
     return DumbDispatch(ole)
 
 
-def _open(sw, path, *, step=False, observed=None):
+def _open(sw, path, *, step=False, observed=None, import_settings_observed=None):
     import pythoncom
     from win32com.client import VARIANT
     error = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
@@ -175,6 +185,17 @@ def _open(sw, path, *, step=False, observed=None):
         if step:
             data = call(app, "GetImportFileData", str(path))
             if data is None: raise ValueError("STEP import data unavailable")
+            # Per-file override: geometry only, independent of the user's default STEP setting.
+            settings = dict(map_configuration_data_requested=False,
+                map_configuration_data_before=_member(data, "MapConfigurationData"),
+                map_configuration_data_after=None, stage="before_configuration_override")
+            if import_settings_observed is not None: import_settings_observed(deepcopy(settings))
+            data.MapConfigurationData = False
+            settings.update(map_configuration_data_after=_member(data, "MapConfigurationData"),
+                stage="configuration_override_readback")
+            if import_settings_observed is not None: import_settings_observed(deepcopy(settings))
+            if settings["map_configuration_data_after"] is not False:
+                raise ValueError("STEP configuration mapping readback failed; import not attempted")
             model = call(app, "LoadFile4", str(path), "r", data, error)
         else:
             model = call(app, "OpenDoc6", str(path), document_type, 1, "", error, warning)
@@ -198,23 +219,134 @@ def _open(sw, path, *, step=False, observed=None):
         call(app, "DocumentVisible", True, document_type)
 
 
-def _stats(model):
-    solids = list(call(model, "GetBodies2", 0, False) or [])
-    sheets = list(call(model, "GetBodies2", 1, False) or [])
-    if not 1 <= len(solids) <= 9 or sheets:
-        raise ValueError("Expected one to nine bounded solids and no sheets")
-    rows = []
-    for body in solids:
-        check = _member(body, "Check3")
-        errors = int(_member(check, "Count"))
-        mass = list(call(body, "GetMassProperties", 1))
-        if len(mass) != 12 or any(type(x) not in (int, float) or not math.isfinite(x) for x in mass):
-            raise ValueError("Invalid native body mass properties")
-        if errors != 0 or mass[3] <= 0:
-            raise ValueError("Invalid native solid")
-        rows.append(dict(check3=errors, volume_m3=mass[3], mass_properties_native=mass,
-            box_model_m=list(call(body, "GetBodyBox"))))
-    return dict(solid_count=len(solids), sheet_count=len(sheets), bodies=rows), solids
+class NativeBodyValidationError(ValueError):
+    """Bounded native-body rejection with a stable machine-readable reason."""
+    def __init__(self, code, diagnostics):
+        super().__init__(code)
+        self.code = code
+        self.bridge_stage = "native_body_stats"
+        self.diagnostics = deepcopy(diagnostics)
+
+
+def _diagnostic_number(value):
+    if type(value) in (int, float):
+        return value if math.isfinite(value) else repr(value)
+    if value is None or type(value) in (str, bool):
+        return value
+    return {"unexpected_type": type(value).__name__}
+
+
+def _stats(model, *, observed=None):
+    """Persist available measurements before rejection; never query mass of a faulty body."""
+    result = dict(solid_count=None, sheet_count=None, bodies=[], status="reading",
+        stage="not_started", failure_code=None)
+    def publish(stage):
+        result["stage"] = stage
+        if observed is not None:
+            observed(deepcopy(result))
+    def reject(code):
+        result.update(status="rejected", failure_code=code)
+        publish(result["stage"])
+        raise NativeBodyValidationError(code, result)
+    try:
+        publish("read_solids")
+        solids = list(call(model, "GetBodies2", 0, False) or [])
+        result["solid_count"] = len(solids)
+        publish("read_sheets")
+        sheets = list(call(model, "GetBodies2", 1, False) or [])
+        result["sheet_count"] = len(sheets)
+        if not 1 <= len(solids) <= 9 or sheets:
+            reject("NATIVE_BODY_SET_INVALID")
+        for index, body in enumerate(solids):
+            row = dict(body_index=index, check3=None, volume_m3=None,
+                mass_properties_native=None, box_model_m=None)
+            result["bodies"].append(row)
+            publish("read_check3")
+            check = _member(body, "Check3")
+            raw_count = _member(check, "Count")
+            row["check3"] = _diagnostic_number(raw_count)
+            if type(raw_count) is not int or raw_count < 0:
+                reject("NATIVE_CHECK3_COUNT_INVALID")
+            if raw_count != 0:
+                reject("NATIVE_CHECK3_FAULTS")
+            # Do not call GetMassProperties after Check3 has already rejected the body.
+            publish("read_mass_properties")
+            raw_mass = call(body, "GetMassProperties", 1)
+            if type(raw_mass) not in (tuple, list):
+                row["mass_return_type"] = type(raw_mass).__name__
+                reject("NATIVE_MASS_PROPERTIES_UNAVAILABLE")
+            mass = list(raw_mass)
+            row["mass_property_count"] = len(mass)
+            row["mass_properties_native"] = [_diagnostic_number(x) for x in mass[:32]]
+            if len(mass) != 12:
+                reject("NATIVE_MASS_PROPERTY_COUNT_INVALID")
+            invalid = [i for i, x in enumerate(mass)
+                if type(x) not in (int, float) or not math.isfinite(x)]
+            if invalid:
+                row["invalid_mass_property_indices"] = invalid
+                reject("NATIVE_MASS_PROPERTY_NONFINITE_OR_TYPE")
+            row["volume_m3"] = mass[3]
+            if mass[3] <= 0:
+                reject("NATIVE_VOLUME_NONPOSITIVE")
+            publish("read_body_box")
+            box = list(call(body, "GetBodyBox"))
+            row["box_model_m"] = [_diagnostic_number(x) for x in box[:32]]
+            if len(box) != 6 or any(type(x) not in (int, float) or not math.isfinite(x) for x in box):
+                reject("NATIVE_BODY_BOX_INVALID")
+            publish("body_validated")
+        result["status"] = "valid"
+        publish("complete")
+        return result, solids
+    except NativeBodyValidationError:
+        raise
+    except Exception as exc:
+        result.update(status="read_failed", issue=_error(exc))
+        publish(result["stage"])
+        raise
+
+
+def _observed_stats(model, report, label, record=None):
+    def observe(diagnostics):
+        report.setdefault("body_diagnostics", {})[label] = diagnostics
+        if record is not None:
+            record("body_stats_" + label + "_" + diagnostics["stage"])
+    return _stats(model, observed=observe)
+
+
+
+class NativeImportModuleGuardError(ValueError):
+    code = "NATIVE_IMPORT_REQUIRED_MODULE_NOT_ABSENT"
+    bridge_stage = "native_import_module_guard"
+
+
+def _absent_module_paths(values):
+    if type(values) is not list or len(values) > 8:
+        raise ValueError("At most eight explicit required-absent DLL paths are allowed")
+    keys = []
+    for value in values:
+        if type(value) is not str or not absolute_document_path(value) or Path(value).suffix.lower() != '.dll':
+            raise ValueError("Required-absent modules must use absolute DLL paths")
+        key = _path_identity(Path(value))
+        if key in keys:
+            raise ValueError("Duplicate required-absent module path")
+        keys.append(key)
+    return keys
+
+
+def _module_absence_snapshot(process_id, paths):
+    """Read OS module paths only; never load, unload, or ask an add-in getter."""
+    from scripts.sw_plastics_session_isolation import process_modules
+    expected = _absent_module_paths(paths)
+    inventory = process_modules(process_id)
+    canonical = {_path_identity(Path(value)): str(value) for value in inventory}
+    names = {Path(value).name.casefold() for value in paths}
+    exact = [canonical[key] for key in expected if key in canonical]
+    unexpected = [value for key, value in canonical.items()
+        if Path(value).name.casefold() in names and key not in expected]
+    return dict(process_id=process_id, required_absent_module_paths=list(paths),
+        mapped_required_modules=exact, mapped_same_name_other_paths=sorted(unexpected),
+        module_count=len(inventory), module_inventory_sha256=_digest(sorted(canonical)),
+        all_required_absent=not exact and not unexpected, method="OS_module_inventory_read_only")
 
 
 def _features(model):
@@ -293,13 +425,54 @@ def _owned_donor(sw, staged, imported):
         raise ValueError("Imported donor acquired an unrecognized saved path")
     return matches[0] if matches else None
 
+
+def _select_combine_bodies(sw, model, main_reference, tool_references):
+    """Select only fresh bodies from the current part, with documented Combine marks."""
+    current = list(call(model, "GetBodies2", 0, False) or [])
+    requested = ([main_reference] if main_reference is not None else []) + list(tool_references)
+    if not 2 <= len(current) <= 9 or len(current) != len(requested):
+        raise ValueError("Current Combine body membership differs from the requested set")
+    indexes = []
+    for reference in requested:
+        matches = [i for i, body in enumerate(current) if call(sw, "IsSame", body, reference) == 1]
+        if len(matches) != 1 or matches[0] in indexes:
+            raise ValueError("Each Combine input must identify a different current body")
+        indexes.append(matches[0])
+    fresh = [current[i] for i in indexes]
+    main = fresh[0] if main_reference is not None else None
+    tools = fresh[1:] if main_reference is not None else fresh
+    expected = ([(main, 1)] if main is not None else []) + [(body, 2) for body in tools]
+    selection = _member(model, "SelectionManager")
+    call(model, "ClearSelection2", True)
+    for position, (body, mark) in enumerate(expected):
+        data = call(selection, "CreateSelectData"); data.Mark = mark
+        if _member(data, "Mark") != mark or call(body, "Select2", position != 0, data) is not True:
+            raise ValueError("Could not select the exact Combine body with its required mark")
+    total = call(selection, "GetSelectedObjectCount2", -1)
+    main_count = call(selection, "GetSelectedObjectCount2", 1)
+    tool_count = call(selection, "GetSelectedObjectCount2", 2)
+    if total != len(expected) or main_count != int(main is not None) or tool_count != len(tools):
+        raise ValueError("Combine selection count/marks differ from the requested inputs")
+    groups = ([(1, [main])] if main is not None else []) + [(2, tools)]
+    for mark, rows in groups:
+        for index, body in enumerate(rows, 1):
+            selected = call(selection, "GetSelectedObject6", index, mark)
+            if call(sw, "IsSame", selected, body) != 1:
+                raise ValueError("Combine marked selection identity readback failed")
+    return dict(mode="marked_selection", current_body_count=len(current),
+        selected_count=total, main_mark=1, main_count=main_count,
+        tool_mark=2, tool_count=tool_count, current_body_indexes=indexes,
+        fresh_main_selected_verified=main is not None, all_input_identities_verified=True)
+
 def qualify_part_transfer(sw, *, process_id, expected_document_path, action, mode, source_path,
         source_sha256, donor_step_path, donor_sha256, output_path, roundtrip_step_path,
         qualification_only, acknowledge_delta_only=False, delta_volume_policy="strict", frozen_files=None,
         expected_state_sha256=None, receipt_path=None, prior_transfer_receipt_path=None,
-        prior_transfer_receipt_sha256=None):
+        prior_transfer_receipt_sha256=None, required_absent_module_paths=None,
+        step_topology_policy="knit_surfaces", combine_input_mode="direct_bodies"):
     """在原文件的独占副本上插入完整替换体或已批准增量；返回保存/重开和回导证据。"""
     values = dict(locals()); values.pop("sw"); values["frozen_files"] = [] if frozen_files is None else frozen_files
+    values["required_absent_module_paths"] = [] if required_absent_module_paths is None else required_absent_module_paths
     report = dict(status="error", phase="preflight", mutation_attempted=False, may_continue=False,
         body_transfer_verified=False, reopened_verified=False, source_files_unchanged=False,
         internal_document_id_verified=False, topology_ids_preserved=False,
@@ -311,10 +484,10 @@ def qualify_part_transfer(sw, *, process_id, expected_document_path, action, mod
     def native(phase, operation):
         if call(sw, "GetProcessID") != process_id:
             raise ValueError("Owned process identity changed")
-        if phase in {"CreateFeatureFromBody3", "InsertDeleteBody2", "Save3", "export_roundtrip_step"} or phase.startswith("InsertCombineFeature_"):
+        if phase in {"CreateFeatureFromBody3", "InsertDeleteBody2", "Save3", "export_roundtrip_step"} or phase.startswith(("InsertCombineFeature_", "Operations2_")):
             if _path_identity(call(model, "GetPathName")) != _path_identity(output):
                 raise ValueError("Owned output identity changed before native mutation")
-        if phase in {"CreateFeatureFromBody3", "InsertDeleteBody2", "export_roundtrip_step"} or phase.startswith("InsertCombineFeature_"):
+        if phase in {"CreateFeatureFromBody3", "InsertDeleteBody2", "export_roundtrip_step"} or phase.startswith(("InsertCombineFeature_", "Operations2_")):
             if _path_identity(call(_member(sw, "ActiveDoc"), "GetPathName")) != _path_identity(output):
                 raise ValueError("Exact output copy must be active before body/selection/export operation")
         report["native_calls"].append(dict(name=phase, attempted=True, returned=False))
@@ -323,7 +496,23 @@ def qualify_part_transfer(sw, *, process_id, expected_document_path, action, mod
         report["native_calls"][-1]["returned"] = True
         record(phase + "_returned")
         return value
+    def verify_absent_modules(stage):
+        paths = values["required_absent_module_paths"]
+        if not paths:
+            return
+        record("module_absence_" + stage + "_pending")
+        snapshot = _module_absence_snapshot(process_id, paths)
+        report.setdefault("module_absence_checks", []).append(dict(stage=stage, **snapshot))
+        record("module_absence_" + stage + "_observed")
+        if not snapshot["all_required_absent"]:
+            raise NativeImportModuleGuardError("Required DLL or a same-name DLL is mapped; import forbidden")
     try:
+        import_preferences = _step_import_preferences(step_topology_policy)
+        if type(combine_input_mode) is not str or combine_input_mode not in {"direct_bodies", "marked_selection", "temporary_bodies"}:
+            raise ValueError("Explicit supported Combine input mode required")
+        if mode == "replace_body" and combine_input_mode != "direct_bodies":
+            raise ValueError("Combine selection mode applies only to delta operations")
+        _absent_module_paths(values["required_absent_module_paths"])
         if delta_volume_policy not in {"strict", "diagnostic"}:
             raise ValueError("Explicit supported delta volume policy required")
         if mode not in {"replace_body", "add_delta", "subtract_delta"} or type(acknowledge_delta_only) is not bool:
@@ -371,10 +560,13 @@ def qualify_part_transfer(sw, *, process_id, expected_document_path, action, mod
         if not template or not Path(template).is_file():
             raise ValueError("A valid native default part template must already be configured")
         state["import_preferences_before"] = [dict(kind=kind, number=num,
-            value=call(sw, "GetUserPreference" + kind, num)) for kind, num, _ in _IMPORT_PREFS]
+            value=call(sw, "GetUserPreference" + kind, num)) for kind, num, _ in import_preferences]
+        state["import_preferences_requested"] = [dict(kind=kind, number=num, value=value)
+            for kind, num, value in import_preferences]
         report.update(before=state, state_sha256=_digest(state), mode=mode,
             donor_stage_path=str(staged), output_path=str(output), roundtrip_step_path=str(roundtrip))
         receipt = _receipt(report, values, state)
+        verify_absent_modules("prepare" if action == "prepare" else "apply_preflight")
         if action == "prepare": report.update(status="ok", phase="prepared", apply_eligible=True); return report
         _session(sw, process_id, expected_document_path, [source, output, donor, staged])
         _check_files(state["frozen_files"])
@@ -391,7 +583,7 @@ def qualify_part_transfer(sw, *, process_id, expected_document_path, action, mod
         if report["copied_source_sha256"] != source_sha256 or report["staged_donor_sha256"] != donor_sha256:
             raise ValueError("Source changed while making verified copies; no native operation allowed")
         report["native_source_copied_before_mutation"] = True; record("copies_verified")
-        for row, (_, _, desired) in zip(state["import_preferences_before"], _IMPORT_PREFS):
+        for row, (_, _, desired) in zip(state["import_preferences_before"], import_preferences):
             preferences.append(row)
             if row["value"] != desired:
                 native("set_import_preference", lambda row=row, desired=desired:
@@ -400,15 +592,29 @@ def qualify_part_transfer(sw, *, process_id, expected_document_path, action, mod
                     raise ValueError("Import preference readback failed")
         model, report["open_output"] = native("open_copied_part", lambda: _open(sw, output))
         if call(model, "GetSaveFlag"): raise ValueError("Fresh native source copy opened dirty")
-        before, old = _stats(model)
+        before, old = _observed_stats(model, report, 'source', record)
         if len(old) != 1: raise ValueError("Source must have exactly one solid")
         report["body_before"] = before; original_features = _features(model)
         def observed_import(metadata):
             report["open_donor"] = metadata
             record("import_staged_step_observed")
+        def observed_import_settings(settings):
+            report["step_import_settings"] = settings
+            record("import_staged_step_settings_observed")
+        report["step_topology_preimport_readback"] = dict(policy=step_topology_policy,
+            swImportUseBrep=call(sw, "GetUserPreferenceIntegerValue", 207),
+            swCreateBodyFromSurfacesOption=call(sw, "GetUserPreferenceIntegerValue", 12))
+        record("step_topology_preimport_readback")
+        expected_brep = 0 if step_topology_policy == "direct_brep" else 1
+        if (report["step_topology_preimport_readback"]["swImportUseBrep"] != expected_brep
+                or report["step_topology_preimport_readback"]["swCreateBodyFromSurfacesOption"] != 3):
+            raise ValueError("STEP topology policy changed before import; do not import")
+        # Opening the source can load add-ins again: inspect immediately before STEP import.
+        verify_absent_modules("before_step_import")
         donor_model, report["open_donor"] = native("import_staged_step", lambda:
-            _open(sw, staged, step=True, observed=observed_import))
-        donor_stats, donors = _stats(donor_model)
+            _open(sw, staged, step=True, observed=observed_import,
+                import_settings_observed=observed_import_settings))
+        donor_stats, donors = _observed_stats(donor_model, report, 'donor', record)
         if not 1 <= len(donors) <= 8 or (mode == "replace_body" and len(donors) != 1):
             raise ValueError("Local donor needs one to eight solids; full replacement needs exactly one")
         report["donor_body"] = donor_stats
@@ -416,29 +622,66 @@ def qualify_part_transfer(sw, *, process_id, expected_document_path, action, mod
         anchor = _anchor_document(sw, expected_document_path, state["anchor_sha256"], native)
         anchor.Visible = False; model.Visible = True
         if not _activate_model_document(sw, model): raise ValueError("Cannot activate exact output copy")
-        for donor_index, donor_body in enumerate(donors):
+        temporary_mode = combine_input_mode == "temporary_bodies"
+        if temporary_mode:
+            from scripts.sw_body_operation_diagnostic import _temporary_copy, _TemporaryPart, _operations, ERRORS
+            operation_type = 15903 if mode == "add_delta" else 15902
+            report["temporary_operations"] = []
+            originals = old + donors
+            target = native("copy_temporary_source", lambda: _temporary_copy(sw, old[0], originals))
+            for donor_index, donor_body in enumerate(donors):
+                report["donor_body_index"] = donor_index
+                tool = native("copy_temporary_tool", lambda: _temporary_copy(sw, donor_body, originals))
+                step = dict(donor_body_index=donor_index, operation_type=operation_type,
+                    attempted=False, returned=False, verified=False)
+                report["temporary_operations"].append(step)
+                def run_temporary(target=target, tool=tool, step=step):
+                    step["attempted"] = True; record("temporary_operation_pending")
+                    results, error = _operations(target, tool, operation_type)
+                    step.update(returned=True, error_code=error,
+                        error_name=ERRORS.get(error, "UnmappedError"), result_count=len(results))
+                    # Persist the actual kernel return before validation or another native call.
+                    record("temporary_operation_returned")
+                    if error != 0 or len(results) != 1:
+                        raise ValueError("Temporary boolean rejected; no insertion, fallback or replay")
+                    if call(results[0], "IsTemporaryBody") is not True:
+                        raise ValueError("Boolean result is not a temporary body")
+                    stats, result_bodies = _observed_stats(_TemporaryPart(results), report,
+                        "temporary_result_" + str(donor_index), record)
+                    step.update(verified=True, result_stats=stats)
+                    record("temporary_operation_verified")
+                    return result_bodies[0]
+                target = native("Operations2_" + mode.upper(), run_temporary)
+            # Preserve the retained native source until every temporary operation succeeds.
+            insertion_bodies = [target]
+            report["temporary_sequence_verified"] = True
+            record("temporary_sequence_verified")
+        else:
+            insertion_bodies = donors
+        for donor_index, donor_body in enumerate(insertion_bodies):
             report["donor_body_index"] = donor_index
-            copied_body = native("copy_donor_body", lambda: call(donor_body, "Copy"))
+            copied_body = donor_body if temporary_mode else native("copy_donor_body", lambda: call(donor_body, "Copy"))
             feature = native("CreateFeatureFromBody3", lambda: call(model, "CreateFeatureFromBody3", copied_body, False, 1))
             if feature is None: raise ValueError("Native body insertion returned null; do not replay")
-        inserted, bodies = _stats(model)
-        if len(bodies) != 1 + len(donors): raise ValueError("Expected exactly retained source and inserted donors")
+        inserted, bodies = _observed_stats(model, report, 'inserted', record)
+        if len(bodies) != 1 + len(insertion_bodies): raise ValueError("Expected exactly retained source and inserted bodies")
         report["inserted_bodies"] = inserted
         equality = [call(sw, "IsSame", body, old[0]) for body in bodies]
-        if sorted(equality) != [0] * len(donors) + [1]:
+        if sorted(equality) != [0] * len(insertion_bodies) + [1]:
             raise ValueError("Cannot identify exactly the retained source and inserted donor bodies")
         inserted_bodies = [body for body, match in zip(bodies, equality) if match == 0]
         call(model, "ClearSelection2", True)
         if _path_identity(call(model, "GetPathName")) != _path_identity(output):
             raise ValueError("Exact output document identity changed")
         manager = _member(model, "FeatureManager")
-        if mode == "replace_body":
+        if mode == "replace_body" or temporary_mode:
+            original_to_delete = next(body for body, same in zip(bodies, equality) if same == 1) if temporary_mode else old[0]
             selection = _member(model, "SelectionManager")
             data = call(selection, "CreateSelectData"); data.Mark = 0
-            if call(old[0], "Select2", False, data) is not True:
+            if call(original_to_delete, "Select2", False, data) is not True:
                 raise ValueError("Could not select the original body alone")
             if (call(selection, "GetSelectedObjectCount2", -1) != 1
-                    or call(sw, "IsSame", call(selection, "GetSelectedObject6", 1, -1), old[0]) != 1):
+                    or call(sw, "IsSame", call(selection, "GetSelectedObject6", 1, -1), original_to_delete) != 1):
                 raise ValueError("DeleteBody selection is not exactly one body")
             result = native("InsertDeleteBody2", lambda: call(manager, "InsertDeleteBody2", False))
         else:
@@ -447,19 +690,32 @@ def qualify_part_transfer(sw, *, process_id, expected_document_path, action, mod
             from scripts.sw_connect import create_empty_dispatch_variant
             # swBodyOperationType_e: CUT=15902, ADD=15903；CUT 的 main body 只能是旧实体。
             selected_tools = bodies if mode == "add_delta" else inserted_bodies
-            tools = VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_DISPATCH, tuple(selected_tools))
-            main = create_empty_dispatch_variant() if mode == "add_delta" else old[0]
+            if combine_input_mode == "marked_selection":
+                record("prepare_combine_marked_selection")
+                report["combine_selection"] = _select_combine_bodies(sw, model,
+                    None if mode == "add_delta" else old[0], selected_tools)
+                record("combine_marked_selection_verified")
+                tools = VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_DISPATCH, tuple())
+                main = create_empty_dispatch_variant()
+            else:
+                tools = VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_DISPATCH, tuple(selected_tools))
+                main = create_empty_dispatch_variant() if mode == "add_delta" else old[0]
             operation_type = 15903 if mode == "add_delta" else 15902
             result = native("InsertCombineFeature_" + mode.upper(), lambda: call(manager,
                 "InsertCombineFeature", operation_type, main, tools))
         if result is None: raise ValueError("Native body operation returned null; inspect retained copy, no replay")
         call(model, "ClearSelection2", True)
         report["rebuild_return"] = native("ForceRebuild3", lambda: call(model, "ForceRebuild3", False))
-        after, remaining = _stats(model)
+        after, remaining = _observed_stats(model, report, 'after_boolean', record)
         if len(remaining) != 1: raise ValueError("Transfer did not leave exactly one valid solid")
         if mode == "replace_body" and not math.isclose(after["bodies"][0]["volume_m3"],
                 donor_stats["bodies"][0]["volume_m3"], rel_tol=1e-9, abs_tol=0):
             raise ValueError("Replacement volume differs from donor")
+        if temporary_mode:
+            temporary_volume = report["temporary_operations"][-1]["result_stats"]["bodies"][0]["volume_m3"]
+            if not math.isclose(after["bodies"][0]["volume_m3"], temporary_volume, rel_tol=1e-9, abs_tol=0):
+                raise ValueError("Inserted final body volume differs from verified temporary result")
+            report["temporary_final_volume_verified"] = True
         if mode in {"add_delta", "subtract_delta"}:
             sign = 1 if mode == "add_delta" else -1
             expected_volume = before["bodies"][0]["volume_m3"] + sign * sum(body["volume_m3"] for body in donor_stats["bodies"])
@@ -484,7 +740,7 @@ def qualify_part_transfer(sw, *, process_id, expected_document_path, action, mod
         report["output_sha256"] = _file_hash(output); record("native_output_saved")
         native("close_saved_copy", lambda: _close_owned(sw, model, [output]))
         model, report["reopen"] = native("reopen_saved_copy", lambda: _open(sw, output))
-        reopened, remaining = _stats(model)
+        reopened, remaining = _observed_stats(model, report, 'reopened', record)
         if len(remaining) != 1 or call(model, "GetSaveFlag") or _features(model) != features_after:
             raise ValueError("Saved output did not reopen cleanly with identical feature history")
         if not math.isclose(reopened["bodies"][0]["volume_m3"], after["bodies"][0]["volume_m3"], rel_tol=1e-10, abs_tol=0):
@@ -611,7 +867,7 @@ def finalize_part_transfer(sw, *, process_id, expected_document_path, transfer_r
         model = _find_document(sw, output)
         if model is None or call(model, "GetSaveFlag"):
             raise ValueError("Confirmed output must already be open and clean")
-        current, bodies = _stats(model)
+        current, bodies = _observed_stats(model, report, 'finalize_current')
         if (len(bodies) != 1 or _features(model) != prior["features_after"]
                 or not math.isclose(current["bodies"][0]["volume_m3"],
                     prior["body_after"]["bodies"][0]["volume_m3"], rel_tol=1e-10, abs_tol=0)):
@@ -881,4 +1137,215 @@ def qualify_reference_copy(sw, *, process_id, expected_document_path, action, so
         if receipt:
             try: _write_receipt(receipt, report)
             except Exception as exc: report.update(status="uncertain", receipt_write_error=_error(exc), reference_replacements_verified=False)
+    return report
+
+
+def _fault_indexed_property(fault, name, index):
+    """IFaultEntity indexed PROPERTYGET; never flag these accessors as methods."""
+    import pythoncom
+    member_id, return_type = {"ErrorCode": (3, pythoncom.VT_I4),
+        "Entity2": (4, pythoncom.VT_DISPATCH)}[name]
+    ole = getattr(fault, "__dict__", {}).get("_oleobj_")
+    if ole is None:
+        return getattr(fault, name)(index)
+    return ole.InvokeTypes(member_id, 0, pythoncom.DISPATCH_PROPERTYGET,
+        (return_type, 0), ((pythoncom.VT_I4, 1),), index)
+
+
+def _import_fault_snapshot(model):
+    solids = list(call(model, "GetBodies2", 0, False) or [])
+    sheets = list(call(model, "GetBodies2", 1, False) or [])
+    if len(solids) != 1 or sheets:
+        raise ValueError("Repair requires exactly one imported solid and no sheets")
+    fault = _member(solids[0], "Check3")
+    count = _member(fault, "Count")
+    if type(count) is not int or not 0 <= count <= 32:
+        raise ValueError("Native fault count exceeds the bounded diagnostic range")
+    faults = []
+    for index in range(count):
+        code = _fault_indexed_property(fault, "ErrorCode", index)
+        if type(code) is not int:
+            raise ValueError("Native fault error code must be an integer")
+        entity = _fault_indexed_property(fault, "Entity2", index)
+        faults.append(dict(index=index, error_code=code, entity_present=entity is not None))
+    return dict(solid_count=1, sheet_count=0, fault_count=count, faults=faults,
+        entity_metadata_scope="Presence only; no entity selection or mutation")
+
+
+def qualify_import_diagnosis(sw, *, process_id, action, transfer_receipt_path,
+        transfer_receipt_sha256, repaired_step_path, qualification_only,
+        expected_state_sha256=None, receipt_path=None):
+    """One bounded repair of an already-owned rejected STEP donor; never edits the source copy."""
+    report = dict(status="error", phase="preflight", mutation_attempted=False,
+        repair_verified=False, source_files_unchanged=False, geometry_equivalence_verified=False,
+        production_release=False, native_calls=[])
+    receipt = None
+    def record(phase):
+        report["phase"] = phase
+        if receipt is not None: _write_receipt(receipt, report)
+    def native(name, operation):
+        guard()
+        row = dict(name=name, attempted=True, returned=False)
+        report["native_calls"].append(row); record(name)
+        value = operation()
+        row["returned"] = True
+        if value is None or type(value) in (bool, int, float, str): row["return_value"] = value
+        record(name + "_returned")
+        return value
+    try:
+        if qualification_only is not True or action not in {"prepare", "apply"}:
+            raise ValueError("Explicit qualification prepare/apply required")
+        prior_path = _path(transfer_receipt_path, {".json"})
+        if prior_path.stat().st_size > 10 * 1024 * 1024 or _file_hash(prior_path) != _hash(transfer_receipt_sha256):
+            raise ValueError("Failed transfer receipt is oversized or changed")
+        prior = json.loads(prior_path.read_text(encoding="utf8"))
+        before = prior["before"]; config = before["config"]
+        if (prior.get("failed_phase") != "body_stats_donor_read_check3"
+                or prior.get("issue", {}).get("code") != "NATIVE_CHECK3_FAULTS"
+                or config.get("mode") != "replace_body" or prior.get("preference_restore_errors") != []
+                or prior.get("native_source_copied_before_mutation") is not True):
+            raise ValueError("Only a full-body donor rejected at Check3 is eligible")
+        operations = prior.get("native_calls", [])
+        imports = [row for row in operations if row.get("name") == "import_staged_step"]
+        if (len(imports) != 1 or imports[0].get("returned") is not True
+                or any(row.get("name", "").startswith(("copy_donor", "CreateFeature", "Insert", "Save3", "ForceRebuild"))
+                    and row.get("attempted") for row in operations)):
+            raise ValueError("Receipt must contain one import and no body-copy/edit/save attempts")
+        staged = _path(prior["donor_stage_path"], {".step", ".stp"})
+        output = _path(prior["output_path"], {".sldprt"})
+        repaired = _path(repaired_step_path, {".step", ".stp"}, new=True)
+        anchor_path = _path(config["expected_document_path"], {".sldprt", ".sldasm"})
+        marker = staged.with_suffix(staged.suffix + ".import_diagnosis_once.json")
+        if marker.exists(): raise ValueError("This staged donor already has a repair attempt; do not replay")
+        if _path_identity(repaired) in before["frozen_files"] or _path_identity(repaired) == _path_identity(staged):
+            raise ValueError("Repair export must not alias a source or staged donor")
+        imported = prior["open_donor"]
+        if imported.get("type") != 1 or imported.get("native_open_returned") is not True:
+            raise ValueError("Expected owned imported part receipt")
+        donor = _owned_donor(sw, staged, imported)
+        if donor is None or call(donor, "GetType") != 1:
+            raise ValueError("Exact already-imported donor must remain open")
+        anchor = _find_document(sw, anchor_path)
+        source_copy = _find_document(sw, output)
+        if anchor is None or source_copy is None:
+            raise ValueError("Saved anchor and unchanged source copy must remain open")
+        def guard():
+            if (type(process_id) is not int or process_id <= 0 or config["process_id"] != process_id
+                    or call(sw, "GetProcessID") != process_id or _member(sw, "UserControl") is not True):
+                raise ValueError("Exact receipt-owned PID and UserControl required")
+            if (_file_hash(prior_path) != transfer_receipt_sha256
+                    or _file_hash(output) != config["source_sha256"]
+                    or prior.get("copied_source_sha256") != config["source_sha256"]
+                    or _file_hash(staged) != config["donor_sha256"]
+                    or _file_hash(anchor_path) != before["anchor_sha256"]):
+                raise ValueError("Receipt/source copy/staged donor/anchor changed")
+            _check_files(before["frozen_files"])
+            if call(source_copy, "GetSaveFlag") or call(anchor, "GetSaveFlag"):
+                raise ValueError("Source copy and anchor must stay clean")
+            found = _owned_donor(sw, staged, imported)
+            if found is None or call(sw, "IsSame", found, donor) != 1:
+                raise ValueError("Owned donor identity changed")
+            allowed = {(str(call(model, "GetPathName") or ""), str(call(model, "GetTitle")))
+                for model in (anchor, source_copy, donor)}
+            if any((row["path"], row["title"]) not in allowed for row in _documents(sw)):
+                raise ValueError("Unexpected document entered the isolated repair session")
+        guard()
+        modules = config.get("required_absent_module_paths", [])
+        if modules:
+            snapshot = _module_absence_snapshot(process_id, modules)
+            report["module_absence"] = snapshot
+            if not snapshot["all_required_absent"]: raise NativeImportModuleGuardError()
+        faults = _import_fault_snapshot(donor)
+        if faults["fault_count"] <= 0:
+            raise ValueError("Donor is not faulty; do not repair a valid body")
+        recorded = prior["body_diagnostics"]["donor"]
+        if recorded.get("solid_count") != 1 or recorded["bodies"][0].get("check3") != faults["fault_count"]:
+            raise ValueError("Donor fault count differs from the failed import")
+        state = dict(process_id=process_id, transfer_receipt_path=str(prior_path),
+            transfer_receipt_sha256=transfer_receipt_sha256, imported=imported,
+            repaired_step_path=str(repaired), faults=faults, documents=_documents(sw),
+            repair_options=dict(close_all_gaps=True, remove_faces=False, fix_faces=True, options=0),
+            activation_policy="activate_before_visible_readback")
+        report.update(before=state, state_sha256=_digest(state), staged_donor_path=str(staged),
+            source_copy_path=str(output), source_copy_sha256=config["source_sha256"],
+            repaired_step_path=str(repaired), repair_marker_path=str(marker))
+        if action == "prepare":
+            if expected_state_sha256 is not None or receipt_path is not None:
+                raise ValueError("Prepare cannot accept mutation inputs")
+            report.update(status="ok", phase="prepared", apply_eligible=True)
+            return report
+        if _hash(expected_state_sha256) != _digest(state):
+            raise ValueError("Prepared imported-donor repair state changed")
+        receipt = _path(receipt_path, {".json"}, new=True)
+        _write_receipt(receipt, report, create=True)
+        guard()
+        if modules:
+            record("module_absence_before_repair_pending")
+            report["module_absence_before_repair"] = _module_absence_snapshot(process_id, modules)
+            record("module_absence_before_repair_observed")
+            if not report["module_absence_before_repair"]["all_required_absent"]:
+                raise NativeImportModuleGuardError()
+        _write_receipt(marker, dict(transfer_receipt_sha256=transfer_receipt_sha256,
+            receipt_path=str(receipt), process_id=process_id, donor_sha256=config["donor_sha256"]), create=True)
+        report["mutation_attempted"] = True
+        from scripts.sw_assembly import _activate_model_document
+        def show_only(target):
+            for model in (anchor, source_copy, donor): model.Visible = model is target
+            visible = [row for row in _documents(sw) if row["visible"]]
+            if len(visible) != 1 or visible[0]["title"] != str(call(target, "GetTitle")):
+                raise ValueError("Expected exactly one visible owned document")
+            return True
+        def hide_others(target):
+            for model in (anchor, source_copy, donor):
+                if model is not target: model.Visible = False
+            return True
+        native("hide_other_owned_before_donor_activation", lambda: hide_others(donor))
+        if (not native("activate_owned_donor", lambda: _activate_model_document(sw, donor))
+                or call(sw, "IsSame", _member(sw, "ActiveDoc"), donor) != 1):
+            raise ValueError("Could not activate the exact donor for import diagnosis")
+        native("show_only_owned_donor", lambda: show_only(donor))
+        result = native("ImportDiagnosis", lambda: call(donor, "ImportDiagnosis", True, False, True, 0))
+        report["import_diagnosis_return"] = result
+        record("ImportDiagnosis_result_recorded")
+        if type(result) is not int or result < 0:
+            raise ValueError("ImportDiagnosis did not return a nonnegative native result")
+        report["faults_after"] = _import_fault_snapshot(donor)
+        record("faults_after_observed")
+        stats, _ = _observed_stats(donor, report, "repaired_donor", record)
+        report["body_after"] = stats
+        if call(sw, "IsSame", _member(sw, "ActiveDoc"), donor) != 1:
+            raise ValueError("Active donor changed before repaired STEP export")
+        report["export"] = native("export_repaired_step", lambda: _save(donor, repaired))
+        if not repaired.is_file() or repaired.stat().st_size == 0:
+            raise ValueError("Repaired STEP export missing")
+        report["repaired_step_sha256"] = _file_hash(repaired)
+        native("hide_other_owned_before_anchor_activation", lambda: hide_others(anchor))
+        if (not native("restore_exact_anchor", lambda: _activate_model_document(sw, anchor))
+                or call(sw, "IsSame", _member(sw, "ActiveDoc"), anchor) != 1):
+            raise ValueError("Could not restore exact anchor")
+        native("show_only_exact_anchor", lambda: show_only(anchor))
+        report["anchor_visibility_restored"] = True
+        guard()
+        report.update(status="review_required", phase="finished", repair_verified=True,
+            source_files_unchanged=True, reason="REPAIRED_DONOR_REQUIRES_INDEPENDENT_GEOMETRY_EQUIVALENCE")
+    except Exception as exc:
+        report.update(status="uncertain" if report["mutation_attempted"] else "error",
+            failed_phase=report["phase"], phase="finished", issue=_error(exc))
+    finally:
+        if receipt is not None and report["mutation_attempted"] and not report.get("anchor_visibility_restored"):
+            try:
+                guard()
+                native("hide_other_owned_after_stop", lambda: hide_others(anchor))
+                if (not native("restore_anchor_after_stop", lambda: _activate_model_document(sw, anchor))
+                        or call(sw, "IsSame", _member(sw, "ActiveDoc"), anchor) != 1):
+                    raise ValueError("Anchor restoration after stopped repair was not confirmed")
+                native("restore_anchor_visibility_after_stop", lambda: show_only(anchor))
+                report["anchor_visibility_restored"] = True
+            except Exception as exc:
+                report["anchor_restore_error"] = _error(exc)
+            report["phase"] = "finished"
+        if receipt is not None:
+            try: _write_receipt(receipt, report)
+            except Exception as exc:
+                report.update(status="uncertain", repair_verified=False, receipt_write_error=_error(exc))
     return report
