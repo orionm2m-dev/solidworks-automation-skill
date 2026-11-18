@@ -1,0 +1,194 @@
+{
+  "feature_tree": [
+    {
+      "name": "Favorites",
+      "type": "FavoriteFolder"
+    },
+    {
+      "name": "History",
+      "type": "HistoryFolder"
+    },
+    {
+      "name": "Selection Sets",
+      "type": "SelectionSetFolder"
+    },
+    {
+      "name": "Связь проектов",
+      "type": "DocsFolder"
+    },
+    {
+      "name": "Примечания",
+      "type": "DetailCabinet"
+    },
+    {
+      "name": "Markups",
+      "type": "InkMarkupFolder"
+    },
+    {
+      "name": "Источники света и камеры",
+      "type": "EnvFolder"
+    },
+    {
+      "name": "Твердые тела",
+      "type": "SolidBodyFolder"
+    },
+    {
+      "name": "Тела поверхности",
+      "type": "SurfaceBodyFolder"
+    },
+    {
+      "name": "Датчики",
+      "type": "SensorFolder"
+    },
+    {
+      "name": "Заметки",
+      "type": "CommentsFolder"
+    },
+    {
+      "name": "Уравнения",
+      "type": "EqnFolder"
+    },
+    {
+      "name": "Материал <не указан>",
+      "type": "MaterialFolder"
+    },
+    {
+      "name": "Спереди",
+      "type": "RefPlane"
+    },
+    {
+      "name": "Сверху",
+      "type": "RefPlane"
+    },
+    {
+      "name": "Справа",
+      "type": "RefPlane"
+    },
+    {
+      "name": "Исходная точка",
+      "type": "OriginProfileFeature"
+    },
+    {
+      "name": "Tables",
+      "type": "ConfigTableFolder"
+    },
+    {
+      "name": "NativeCore_R19_ReceiverCover_R3",
+      "type": "BaseBody"
+    },
+    {
+      "name": "R21_Approved_Sloped_Gapfill_Donor",
+      "type": "BaseBody"
+    },
+    {
+      "name": "R21_Add_Only_Sloped_Gapfill",
+      "type": "CombineBodies"
+    },
+    {
+      "name": "Импортированный1",
+      "type": "BaseBody"
+    },
+    {
+      "name": "Соединить1",
+      "type": "CombineBodies"
+    },
+    {
+      "name": "Импортированный2",
+      "type": "BaseBody"
+    },
+    {
+      "name": "Соединить2",
+      "type": "CombineBodies"
+    },
+    {
+      "name": "Импортированный3",
+      "type": "BaseBody"
+    },
+    {
+      "name": "Соединить3",
+      "type": "CombineBodies"
+    },
+    {
+      "name": "Импортированный4",
+      "type": "BaseBody"
+    },
+    {
+      "name": "Соединить4",
+      "type": "CombineBodies"
+    },
+    {
+      "name": "Скругление1",
+      "type": "Fillet"
+    },
+    {
+      "name": "Скругление2",
+      "type": "Fillet"
+    },
+    {
+      "name": "Импортированный5",
+      "type": "BaseBody"
+    },
+    {
+      "name": "Тело-Удалить/Сохранить 1",
+      "type": "DeleteBody"
+    },
+    {
+      "name": "Импортированный6",
+      "type": "BaseBody"
+    },
+    {
+      "name": "Тело-Удалить/Сохранить 2",
+      "type": "DeleteBody"
+    },
+    {
+      "name": "CAM_GUIDE_FULL_PLANE_25",
+      "type": "RefPlane"
+    },
+    {
+      "name": "CAM_GUIDE_FULL_25",
+      "type": "ProfileFeature"
+    },
+    {
+      "name": "CAM_GUIDE_FULL_155",
+      "type": "ProfileFeature"
+    },
+    {
+      "name": "CAM_GUIDE_FULL_205",
+      "type": "ProfileFeature"
+    },
+    {
+      "name": "CAM_GUIDE_FULL_335",
+      "type": "ProfileFeature"
+    },
+    {
+      "name": "CAM_UPPER_PROFILE_R25",
+      "type": "ProfileFeature"
+    }
+  ],
+  "solids": [
+    {
+      "box_m": [
+        -0.033128302778776805,
+        -0.03351207591313285,
+        -0.0126,
+        0.029944139289629,
+        0.033512075776598975,
+        0.026
+      ],
+      "mass_raw": [
+        0.0003057726236910055,
+        1.7504329695771533E-06,
+        0.004995546810677932,
+        3.416738369122275E-05,
+        0.017259222080439722,
+        3.416738369122275E-05,
+        8.318443108394157E-09,
+        9.003458372818031E-09,
+        1.2846090328658892E-08,
+        2.2868372389710392E-11,
+        -6.207527671553361E-11,
+        -1.890227510648466E-15
+      ]
+    }
+  ]
+}
