@@ -1,0 +1,13 @@
+# Single public TURN NC4 Home read — capability qualification
+
+`solidworks_cam_read_turn_nc_home` qualifies one public interface on the NC object returned by one existing TURN FACE operation. It reuses the installed entry-context reader for exact PID/lifetime, clean saved source/hash, complete operation identity/count/feature-link comparisons, runtime pins and native event cleanup. Previous scalar settings are not read again.
+
+The only new native route is selected `ICWTurnOperation.IGetTurnNCParam` → one exact QueryInterface for public `ICWNCParam4` IID `{3DC6FB05-9C9F-42A4-8532-F1B7892CF3AA}` → one `GetHomePosition` call if the query succeeds. Both getter ABIs are checked against the vendor type library. GetHomePosition DISPID37 returns three out DOUBLE values X/Y/Z and no retval. The public method's availability on this retained TURN object is a qualification question, not assumed from the separate interface or coclass declarations.
+
+Only a native COM E_NOINTERFACE from that exact QI is retained as pending unsupported evidence. After full unchanged after-capture and clean disconnect, it becomes terminal `observed_unsupported` with zero Home getter calls. E_NOINTERFACE from the owner getter or Home getter is an error; other QI failures are errors. Null or wrong-type interface outputs, malformed/nonfinite XYZ, events, source drift and failed cleanup also fail closed. There are no alternate interfaces, dispatch-name calls, index probes or automatic retries.
+
+A successful query and finite XYZ yield `review_required` / `observed_readable`, verifying only this object/interface/value in its pinned context. Units, coordinate frame, effective CL HOME mapping, editable Home contract and production suitability remain false. No Home setter is established by this test. No adjacent setter is substituted, and no generation, Save, export or UI action occurs.
+
+The request includes one exact target, current counts/source/process identity, a fresh receipt, the existing qualification/event policy and `acknowledge_public_interface_qualification:true`. It must remain unexecuted until the native owner chooses this bounded diagnostic. Its purpose is evidence for correcting the unsafe trajectory; it is not itself a trajectory correction or a requirement to continue API research.
+
+Portable tests use `SWMCP_RUNTIME_ROOT` or the package root and explicit `SWMCP_CAM_TYPELIB` for optional ABI checks. Software tests do not prove native interface support. Root owns native qualification; this pack changes no runtime until reviewed installation.

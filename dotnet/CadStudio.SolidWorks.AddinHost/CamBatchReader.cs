@@ -20,14 +20,14 @@ internal static class CamBatchReader {
     internal const string EngineVersion = "turn-reader-1";
     internal const string CamClass = "{CCAC6208-0E19-6455-2022-2026CEB541FA}";
     private static readonly string[] Fields = { "schema_version", "expected_process_id", "expected_document_path", "cam_addin_clsid", "max_operations", "max_tools" };
-    internal sealed class Request { internal int ProcessId, MaxOperations, MaxTools; internal string DocumentPath; internal int[] NcOperationIds = new int[0]; }
+    internal sealed class Request { internal int ProcessId, MaxOperations, MaxTools; internal string DocumentPath; internal int[] NcOperationIds = new int[0]; internal CamTurnRecordRead.Selection RecordRead; }
     internal static void Require(bool condition, string code) { if (!condition) throw new InvalidOperationException(code); }
     internal static int Integer(object v, int min, int max) { Require(v is int && (int)v >= min && (int)v <= max, "INTEGER_RANGE"); return (int)v; }
     internal static Request Parse(string text) {
         Require(text != null && text.Length > 0 && text.Length <= 16384, "REQUEST_SIZE");
         var serializer = new JavaScriptSerializer { MaxJsonLength = 16384, RecursionLimit = 4 };
         var value = serializer.DeserializeObject(text) as Dictionary<string, object>;
-        Require(value != null && (value.Count == Fields.Length || (value.Count == Fields.Length + 1 && value.ContainsKey("nc_operation_ids"))) && Fields.All(value.ContainsKey), "REQUEST_FIELDS");
+        Require(value != null && Fields.All(value.ContainsKey) && value.Keys.All(k => Fields.Contains(k) || k == "nc_operation_ids" || k == "record_read"), "REQUEST_FIELDS");
         Require(value["schema_version"] is int && (int)value["schema_version"] == 1, "SCHEMA_VERSION");
         var r = new Request { ProcessId = Integer(value["expected_process_id"], 1, int.MaxValue), MaxOperations = Integer(value["max_operations"], 1, 64), MaxTools = Integer(value["max_tools"], 1, 64), DocumentPath = value["expected_document_path"] as string };
         Require(!String.IsNullOrWhiteSpace(r.DocumentPath) && r.DocumentPath.Length <= 32767 && Path.IsPathRooted(r.DocumentPath), "DOCUMENT_PATH");
@@ -38,6 +38,7 @@ internal static class CamBatchReader {
             r.NcOperationIds = ids.Select(x => Integer(x, 1, int.MaxValue)).ToArray();
             Require(r.NcOperationIds.Distinct().Count() == r.NcOperationIds.Length, "NC_IDS_DUPLICATE");
         }
+        if (value.ContainsKey("record_read")) { r.RecordRead = CamTurnRecordRead.Parse(value["record_read"]); Require(r.NcOperationIds.Length == 0, "RECORD_READ_NO_NC"); }
         return r;
     }
     internal static void ValidateConfigurationBinding(string camName, string objectName, string associatedSwName, string expectedSwName) {
@@ -122,7 +123,9 @@ internal static class CamBatchReader {
         try {
             var r = Parse(requestJson); Require(app != null && ownerThreadId != 0, "HOST_NOT_CONNECTED");
             Require(Thread.CurrentThread.ManagedThreadId == ownerThreadId && Thread.CurrentThread.GetApartmentState() == ApartmentState.STA, "HOST_THREAD_MISMATCH");
+            if (r.RecordRead != null) result["owner_thread"] = new Dictionary<string, object> { {"expected_managed_thread_id",ownerThreadId}, {"actual_managed_thread_id",Thread.CurrentThread.ManagedThreadId}, {"apartment",Thread.CurrentThread.GetApartmentState().ToString()}, {"in_process",true} };
             result["stage"] = "document_before"; var before = Document(app, r); result["document_before"] = before;
+            if (r.RecordRead != null) Require(!(bool)before["needs_save"], "RECORD_READ_CLEAN_DOCUMENT_REQUIRED");
             result["stage"] = "cam_context";
             // Fixed vendor bridge call. The following CAM calls use pinned TLB interfaces.
             dynamic bridge = app.GetAddInObject(CamClass); Require(bridge != null, "CAM_ADDIN_NOT_LOADED");
@@ -135,15 +138,33 @@ internal static class CamBatchReader {
             ValidateConfigurationBinding(camConfiguration, Text(configuration.ConfigurationName), associatedSwConfiguration, (string)before["configuration"]);
             var machine = (ICWMachine)((ICWPartDoc)active).IGetMachine(); Require(machine != null && machine.MachType == 3, "TURN_MACHINE_REQUIRED");
             result["stage"] = "inventory"; var handles = new Dictionary<uint, ICWTurnOperation>(); result["inventory"] = Inventory(machine, doc, r, handles);
-            result["stage"] = "tools"; result["tools"] = Tools(machine, doc, r);
-            result["stage"] = "nc_parameters"; var ncRows = NcParameters(r, handles); result["nc_parameters"] = ncRows;
-            result["nc_parameters_complete"] = ncRows.All(x => (string)x["status"] == "observed");
+            Dictionary<string, object> records = null;
+            if (r.RecordRead != null) {
+                result["stage"] = "record_read";
+                CamTurnRecordRead.VerifySelection((Dictionary<string, object>)result["inventory"], r.RecordRead);
+                records = CamTurnRecordRead.ReadOperation((ICWOperation)handles[(uint)r.RecordRead.OperationId], r.RecordRead);
+                result["record_read"] = records;
+                result["tools"] = new object[0]; result["nc_parameters"] = new object[0]; result["nc_parameters_complete"] = true;
+                result["stage"] = "inventory_after";
+                result["inventory_after"] = Inventory(machine, doc, r, new Dictionary<uint, ICWTurnOperation>());
+                Require(serializer.Serialize(result["inventory"]) == serializer.Serialize(result["inventory_after"]), "INVENTORY_CHANGED_DURING_RECORD_READ");
+                result["record_inventory_unchanged"] = true;
+            } else {
+                result["stage"] = "tools"; result["tools"] = Tools(machine, doc, r);
+                result["stage"] = "nc_parameters"; var ncRows = NcParameters(r, handles); result["nc_parameters"] = ncRows;
+                result["nc_parameters_complete"] = ncRows.All(x => (string)x["status"] == "observed");
+            }
             result["stage"] = "document_after"; var after = Document(app, r); result["document_after"] = after;
             Require(serializer.Serialize(before) == serializer.Serialize(after), "DOCUMENT_CHANGED_DURING_READ");
             var configurationAfter = (ICWConfiguration)doc.GetActiveConfiguration(); Require(configurationAfter != null, "CAM_CONFIGURATION_ABSENT_AFTER");
             ValidateConfigurationBinding(Text(doc.GetActiveConfigurationName()), Text(configurationAfter.ConfigurationName), Text(configurationAfter.SWConfigurationName), (string)after["configuration"]);
             Require(Text(configurationAfter.ConfigurationName) == camConfiguration && Text(configurationAfter.SWConfigurationName) == associatedSwConfiguration, "CAM_CONFIGURATION_CHANGED_DURING_READ");
-            result["status"] = "observed"; result["readback_verified"] = true; result["stage"] = "finished";
+            if (records != null && (string)records["status"] == "error") {
+                result["stage"] = "record_read_failed";
+                foreach (string k in new [] {"hresult","error_type","message"}) result[k] = records[k];
+            } else {
+                result["status"] = "observed"; result["readback_verified"] = true; result["stage"] = "finished";
+            }
         } catch (Exception error) { result["hresult"] = error.HResult; result["message"] = error.Message; result["error_type"] = error.GetType().Name; }
         clock.Stop(); result["elapsed_ms"] = clock.Elapsed.TotalMilliseconds; return serializer.Serialize(result);
     }

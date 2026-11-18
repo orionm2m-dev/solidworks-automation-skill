@@ -1,0 +1,13 @@
+# TURN operation post-option list — bounded read pilot
+
+`solidworks_cam_read_turn_post_options` observes one existing FACE7/8 operation. It reuses the TURN entry reader's single context, exact PID/lifetime/path/source guards, clean-document requirement, full before/after operation inventory and native feature bindings, event subscription and cleanup. It does not repeat scalar post-count, canned-cycle, FACE or NC parameter reads. No setter, generation, Save, export or UI action is included.
+
+The public `ICWOperation.GetPostOptionParamList` method returns IDispatch. That declaration alone does not prove the returned collection type. The reader first obtains public type information, requires the exact `ICWDispatchCollection` GUID, then performs one exact public QueryInterface. Failure stops the read; no alternate interface is tried.
+
+Count must be a strict0..32. The official SOLIDWORKS CAM SDK `ChangeFeatStrategy/UtilityClass.bas` sample explicitly iterates dispatch collections from0 through Count−1; this supports the required `sdk_dispatch_collection_zero_based` policy. Item is used only after the metadata/QI gate. No other index base, `_NewEnum` or enumerator fallback is used. Count is read again at the end.
+
+Each item is queried only for the exact public `ICWPostOperationParam` interface. Read fields are PostParamName and PostParamValue (bounded BSTR), ParamsCount (strict0..32), and PostParamValueList (VARIANT). Converted VARIANT values are preserved with their converted type; supported primitive/sequence values have explicit depth, count, node and text bounds. Native VARIANT metadata and choice-list semantics are not claimed. Unsupported types fail closed. Null lists are retained as null observations, not proof that no general home option exists.
+
+Requests supply the same exact document/process/count context as the entry reader, one explicit target, a fresh receipt and `qualification_only:true`, `message_policy:"vendor_default"`, plus the collection policy. Reports retain original pins, complete inventories and partial observations. Successful `review_required` means the bounded read and cleanup passed; catalog completeness, home semantics, units/frame and production qualification remain false.
+
+Installed prerequisites: `sw_cam_turn_entry_context` and its strict target schema. Runtime helper identity is checked by the existing MCP server. Portable tests use `SWMCP_RUNTIME_ROOT` or the package root; optional public ABI checks take explicit `SWMCP_CAM_TYPELIB`. Tests and ABI inspection do not establish native support. Until the root-owned native receipt is reviewed, collection type and actual option behavior remain pilot qualification work.
