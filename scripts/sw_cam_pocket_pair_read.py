@@ -193,8 +193,13 @@ def objects(value,maximum):
     return value
 
 
-def read_face_associations(part,names,*,read,typed,diagnostic):
-    require(type(names) is list and len(names)==6 and len(set(names))==6,'Six exact saved Attribute names required')
+def read_face_associations(part,names,*,read,typed,diagnostic,expected_count=6):
+    # The existing pair reader retains its six-name default. Four-name callers
+    # must bind every name to their own saved CAM header/indexed evidence.
+    require(type(expected_count) is int and expected_count in (4,6),'Exactly four or six named faces required')
+    require(type(names) is list and len(names)==expected_count and
+        all(type(name) is str and 0<len(name)<=128 and name.strip()==name and '\x00' not in name for name in names) and
+        len({name.casefold() for name in names})==expected_count,'Exact distinct bounded Attribute names required')
     result=[];diagnostic['rows']=result;edge_total=0
     for name in names:
         row=dict(name=name,status='reading',model_space_geometry_complete=False);result.append(row)
@@ -220,7 +225,7 @@ def read_face_associations(part,names,*,read,typed,diagnostic):
         for loop_raw in objects(read(face,'GetLoops'),16):
             loop=typed(loop_raw,'ILoop2');entry=dict(is_outer=nc.scalar('bool',read(loop,'IsOuter')),edges=[]);row['loops'].append(entry)
             for edge_raw in objects(read(loop,'GetEdges'),128):
-                edge_total+=1;require(edge_total<=128,'Six-face total edge budget exceeded')
+                edge_total+=1;require(edge_total<=128,'Selected-face total edge budget exceeded')
                 edge=typed(edge_raw,'IEdge');param=typed(read(edge,'GetCurveParams3'),'ICurveParamData')
                 curve=typed(read(edge,'GetCurve'),'ICurve')
                 e=dict(start_model_native=vector(read(param,'StartPoint'),3),end_model_native=vector(read(param,'EndPoint'),3),
@@ -236,6 +241,10 @@ def read_face_associations(part,names,*,read,typed,diagnostic):
         row.update(status='observed',model_space_geometry_complete=complete,model_coordinate_units='metre',
             cam_chain_transform_inferred=False,retained_side_qualified=False)
     diagnostic['complete']=True
+    if expected_count==4:
+        return dict(rows=result,all_four_faces_observed=all(r['status']=='observed' for r in result),
+            all_four_analytic_geometry_complete=all(r['model_space_geometry_complete'] for r in result),
+            total_edges=edge_total,geometric_role_mapping_verified=False,production_qualified=False)
     return dict(rows=result,all_six_faces_observed=all(r['status']=='observed' for r in result),
         all_six_analytic_geometry_complete=all(r['model_space_geometry_complete'] for r in result),
         total_edges=edge_total,geometric_role_mapping_verified=False,production_qualified=False)

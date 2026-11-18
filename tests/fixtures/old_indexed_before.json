@@ -1,0 +1,623 @@
+{
+  "headers": {
+    "native_id": 66,
+    "read_complete": true,
+    "representation": "ICWProfileFeature metadata",
+    "profile_headers_read_complete": true,
+    "profile_geometry_complete": false,
+    "contour_status": "not_requested",
+    "indexed_methods_called": false,
+    "native_behavior_qualified": false,
+    "units_verified": false,
+    "owner_setup_native_id": 64,
+    "suppressed": false,
+    "volume_type": 2,
+    "shape": 2,
+    "island_count": 4,
+    "sketch_count": 5,
+    "sketch_names_return_python_type": "tuple",
+    "sketch_names": {
+      "native_vartype": null,
+      "native_vartype_status": "not_exposed_by_marshaller",
+      "observed_name_count": 5,
+      "matches_sketch_count": true,
+      "count_relation_verified": false,
+      "observed_representation": "python_tuple",
+      "value": [
+        "CAM_UPPER_PROFILE_R25",
+        "CW грань-0",
+        "CW грань-1",
+        "CW грань-2",
+        "CW грань-3"
+      ]
+    },
+    "end_conditions": {
+      "GetEndCondition1": {
+        "depth_native": 13.2,
+        "type_raw": 2,
+        "name": "",
+        "name_observed_representation": "python_str",
+        "is_reversed": false,
+        "units_verified": false
+      },
+      "GetEndCondition2": {
+        "depth_native": 0.0,
+        "type_raw": 2,
+        "name": "",
+        "name_observed_representation": "python_str",
+        "is_reversed": true,
+        "units_verified": false
+      }
+    }
+  },
+  "indexed_chains": [
+    {
+      "native_index": 0,
+      "expected_sketch_name": "CAM_UPPER_PROFILE_R25",
+      "geometric_role": "unknown",
+      "name_matches": true,
+      "segment_chain_read_attempted": true,
+      "read_complete": true,
+      "contour": {
+        "status": "observed",
+        "declared_chain_count": 1,
+        "chains": [
+          {
+            "index": 0,
+            "curves": [
+              {
+                "index": 0,
+                "read_complete": true,
+                "curve_type": 2,
+                "centre_native": [
+                  0.0,
+                  0.0,
+                  -13.2
+                ],
+                "radius_native": 23.35,
+                "normal_native": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "direction_raw": 1
+              }
+            ],
+            "read_complete": true,
+            "declared_curve_count": 1
+          }
+        ]
+      },
+      "name_return_python_type": "tuple",
+      "name_observation": {
+        "native_vartype": null,
+        "native_vartype_status": "not_exposed_by_marshaller",
+        "observed_name_count": 1,
+        "matches_sketch_count": true,
+        "count_relation_verified": false,
+        "observed_representation": "python_tuple",
+        "value": [
+          "CAM_UPPER_PROFILE_R25"
+        ]
+      },
+      "chain_return_python_type": "POINTER(ICWSegChain)"
+    },
+    {
+      "native_index": 1,
+      "expected_sketch_name": "CW грань-0",
+      "geometric_role": "unknown",
+      "name_matches": true,
+      "segment_chain_read_attempted": true,
+      "read_complete": true,
+      "contour": {
+        "status": "observed",
+        "declared_chain_count": 1,
+        "chains": [
+          {
+            "index": 0,
+            "curves": [
+              {
+                "index": 0,
+                "read_complete": true,
+                "curve_type": 0,
+                "start_native": [
+                  0.0,
+                  0.0,
+                  -12.899999999999999
+                ],
+                "end_native": [
+                  1.829710370349999,
+                  -0.8532079579009998,
+                  -12.899999999999999
+                ]
+              },
+              {
+                "index": 1,
+                "read_complete": true,
+                "curve_type": 1,
+                "start_native": [
+                  1.829710370349999,
+                  -0.8532079579009998,
+                  -12.899999999999999
+                ],
+                "end_native": [
+                  0.1392373233899992,
+                  -4.4784391060479996,
+                  -12.899999999999999
+                ],
+                "mid_native": [
+                  0.8514536007807848,
+                  -2.603795172533411,
+                  -12.899999999999999
+                ],
+                "centre_native": [
+                  13.267870283179999,
+                  -8.393665358382,
+                  -12.899999999999999
+                ],
+                "radius_native": 13.699999999997805,
+                "normal_native": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "sense_raw": 2
+              },
+              {
+                "index": 2,
+                "read_complete": true,
+                "curve_type": 0,
+                "start_native": [
+                  0.1392373233899992,
+                  -4.4784391060479996,
+                  -12.899999999999999
+                ],
+                "end_native": [
+                  -1.6904730469700004,
+                  -3.6252311481459993,
+                  -12.899999999999999
+                ]
+              },
+              {
+                "index": 3,
+                "read_complete": true,
+                "curve_type": 1,
+                "start_native": [
+                  -1.6904730469700004,
+                  -3.6252311481459993,
+                  -12.899999999999999
+                ],
+                "end_native": [
+                  0.0,
+                  0.0,
+                  -12.899999999999999
+                ],
+                "mid_native": [
+                  -0.9611619732945286,
+                  -1.7585586490517389,
+                  -12.899999999999999
+                ],
+                "centre_native": [
+                  13.267870283179999,
+                  -8.393665358382,
+                  -12.899999999999999
+                ],
+                "radius_native": 15.699999999999745,
+                "normal_native": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "sense_raw": 1
+              }
+            ],
+            "read_complete": true,
+            "declared_curve_count": 4
+          }
+        ]
+      },
+      "name_return_python_type": "tuple",
+      "name_observation": {
+        "native_vartype": null,
+        "native_vartype_status": "not_exposed_by_marshaller",
+        "observed_name_count": 1,
+        "matches_sketch_count": true,
+        "count_relation_verified": false,
+        "observed_representation": "python_tuple",
+        "value": [
+          "CW грань-0"
+        ]
+      },
+      "chain_return_python_type": "POINTER(ICWSegChain)"
+    },
+    {
+      "native_index": 2,
+      "expected_sketch_name": "CW грань-1",
+      "geometric_role": "unknown",
+      "name_matches": true,
+      "segment_chain_read_attempted": true,
+      "read_complete": true,
+      "contour": {
+        "status": "observed",
+        "declared_chain_count": 1,
+        "chains": [
+          {
+            "index": 0,
+            "curves": [
+              {
+                "index": 0,
+                "read_complete": true,
+                "curve_type": 0,
+                "start_native": [
+                  0.0,
+                  0.0,
+                  -12.899999999999999
+                ],
+                "end_native": [
+                  -1.8297103703539992,
+                  -0.8532079579019999,
+                  -12.899999999999999
+                ]
+              },
+              {
+                "index": 1,
+                "read_complete": true,
+                "curve_type": 1,
+                "start_native": [
+                  -1.8297103703539992,
+                  -0.8532079579019999,
+                  -12.899999999999999
+                ],
+                "end_native": [
+                  -3.520183417317,
+                  2.7720231902449997,
+                  -12.899999999999999
+                ],
+                "mid_native": [
+                  -2.5419266477477445,
+                  1.021435975611885,
+                  -12.899999999999999
+                ],
+                "centre_native": [
+                  -14.95834333015,
+                  -4.768434210236,
+                  -12.899999999999999
+                ],
+                "radius_native": 13.700000000000264,
+                "normal_native": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "sense_raw": 2
+              },
+              {
+                "index": 2,
+                "read_complete": true,
+                "curve_type": 0,
+                "start_native": [
+                  -3.520183417317,
+                  2.7720231902449997,
+                  -12.899999999999999
+                ],
+                "end_native": [
+                  -1.690473046962,
+                  3.6252311481459993,
+                  -12.899999999999999
+                ]
+              },
+              {
+                "index": 3,
+                "read_complete": true,
+                "curve_type": 1,
+                "start_native": [
+                  -1.690473046962,
+                  3.6252311481459993,
+                  -12.899999999999999
+                ],
+                "end_native": [
+                  0.0,
+                  0.0,
+                  -12.899999999999999
+                ],
+                "mid_native": [
+                  -0.729311073674372,
+                  1.8666724990928927,
+                  -12.899999999999999
+                ],
+                "centre_native": [
+                  -14.95834333015,
+                  -4.768434210236,
+                  -12.899999999999999
+                ],
+                "radius_native": 15.700000000000164,
+                "normal_native": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "sense_raw": 1
+              }
+            ],
+            "read_complete": true,
+            "declared_curve_count": 4
+          }
+        ]
+      },
+      "name_return_python_type": "tuple",
+      "name_observation": {
+        "native_vartype": null,
+        "native_vartype_status": "not_exposed_by_marshaller",
+        "observed_name_count": 1,
+        "matches_sketch_count": true,
+        "count_relation_verified": false,
+        "observed_representation": "python_tuple",
+        "value": [
+          "CW грань-1"
+        ]
+      },
+      "chain_return_python_type": "POINTER(ICWSegChain)"
+    },
+    {
+      "native_index": 3,
+      "expected_sketch_name": "CW грань-2",
+      "geometric_role": "unknown",
+      "name_matches": true,
+      "segment_chain_read_attempted": true,
+      "read_complete": true,
+      "contour": {
+        "status": "observed",
+        "declared_chain_count": 1,
+        "chains": [
+          {
+            "index": 0,
+            "curves": [
+              {
+                "index": 0,
+                "read_complete": true,
+                "curve_type": 0,
+                "start_native": [
+                  0.0,
+                  0.0,
+                  -12.899999999999999
+                ],
+                "end_native": [
+                  -1.8297103703550002,
+                  0.8532079579019999,
+                  -12.899999999999999
+                ]
+              },
+              {
+                "index": 1,
+                "read_complete": true,
+                "curve_type": 1,
+                "start_native": [
+                  -1.8297103703550002,
+                  0.8532079579019999,
+                  -12.899999999999999
+                ],
+                "end_native": [
+                  -0.13923732339199935,
+                  4.4784391060479996,
+                  -12.899999999999999
+                ],
+                "mid_native": [
+                  -0.8514536007860097,
+                  2.6037951725347432,
+                  -12.899999999999999
+                ],
+                "centre_native": [
+                  -13.267870283188,
+                  8.393665358382,
+                  -12.899999999999999
+                ],
+                "radius_native": 13.69999999999976,
+                "normal_native": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "sense_raw": 2
+              },
+              {
+                "index": 2,
+                "read_complete": true,
+                "curve_type": 0,
+                "start_native": [
+                  -0.13923732339199935,
+                  4.4784391060479996,
+                  -12.899999999999999
+                ],
+                "end_native": [
+                  1.690473046962,
+                  3.6252311481459993,
+                  -12.899999999999999
+                ]
+              },
+              {
+                "index": 3,
+                "read_complete": true,
+                "curve_type": 1,
+                "start_native": [
+                  1.690473046962,
+                  3.6252311481459993,
+                  -12.899999999999999
+                ],
+                "end_native": [
+                  0.0,
+                  0.0,
+                  -12.899999999999999
+                ],
+                "mid_native": [
+                  0.961161973287248,
+                  1.7585586490532845,
+                  -12.899999999999999
+                ],
+                "centre_native": [
+                  -13.267870283188,
+                  8.393665358382,
+                  -12.899999999999999
+                ],
+                "radius_native": 15.699999999999745,
+                "normal_native": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "sense_raw": 1
+              }
+            ],
+            "read_complete": true,
+            "declared_curve_count": 4
+          }
+        ]
+      },
+      "name_return_python_type": "tuple",
+      "name_observation": {
+        "native_vartype": null,
+        "native_vartype_status": "not_exposed_by_marshaller",
+        "observed_name_count": 1,
+        "matches_sketch_count": true,
+        "count_relation_verified": false,
+        "observed_representation": "python_tuple",
+        "value": [
+          "CW грань-2"
+        ]
+      },
+      "chain_return_python_type": "POINTER(ICWSegChain)"
+    },
+    {
+      "native_index": 4,
+      "expected_sketch_name": "CW грань-3",
+      "geometric_role": "unknown",
+      "name_matches": true,
+      "segment_chain_read_attempted": true,
+      "read_complete": true,
+      "contour": {
+        "status": "observed",
+        "declared_chain_count": 1,
+        "chains": [
+          {
+            "index": 0,
+            "curves": [
+              {
+                "index": 0,
+                "read_complete": true,
+                "curve_type": 0,
+                "start_native": [
+                  0.0,
+                  0.0,
+                  -12.899999999999999
+                ],
+                "end_native": [
+                  1.8297103703599997,
+                  0.8532079579019999,
+                  -12.899999999999999
+                ]
+              },
+              {
+                "index": 1,
+                "read_complete": true,
+                "curve_type": 1,
+                "start_native": [
+                  1.8297103703599997,
+                  0.8532079579019999,
+                  -12.899999999999999
+                ],
+                "end_native": [
+                  3.5201834173199993,
+                  -2.7720231902449997,
+                  -12.899999999999999
+                ],
+                "mid_native": [
+                  2.541926647753769,
+                  -1.021435975611197,
+                  -12.899999999999999
+                ],
+                "centre_native": [
+                  14.95834333015,
+                  4.768434210236,
+                  -12.899999999999999
+                ],
+                "radius_native": 13.699999999994514,
+                "normal_native": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "sense_raw": 2
+              },
+              {
+                "index": 2,
+                "read_complete": true,
+                "curve_type": 0,
+                "start_native": [
+                  3.5201834173199993,
+                  -2.7720231902449997,
+                  -12.899999999999999
+                ],
+                "end_native": [
+                  1.6904730469700004,
+                  -3.6252311481459993,
+                  -12.899999999999999
+                ]
+              },
+              {
+                "index": 3,
+                "read_complete": true,
+                "curve_type": 1,
+                "start_native": [
+                  1.6904730469700004,
+                  -3.6252311481459993,
+                  -12.899999999999999
+                ],
+                "end_native": [
+                  0.0,
+                  0.0,
+                  -12.899999999999999
+                ],
+                "mid_native": [
+                  0.7293110736812172,
+                  -1.8666724990915813,
+                  -12.899999999999999
+                ],
+                "centre_native": [
+                  14.95834333015,
+                  4.768434210236,
+                  -12.899999999999999
+                ],
+                "radius_native": 15.699999999993407,
+                "normal_native": [
+                  0.0,
+                  0.0,
+                  1.0
+                ],
+                "sense_raw": 1
+              }
+            ],
+            "read_complete": true,
+            "declared_curve_count": 4
+          }
+        ]
+      },
+      "name_return_python_type": "tuple",
+      "name_observation": {
+        "native_vartype": null,
+        "native_vartype_status": "not_exposed_by_marshaller",
+        "observed_name_count": 1,
+        "matches_sketch_count": true,
+        "count_relation_verified": false,
+        "observed_representation": "python_tuple",
+        "value": [
+          "CW грань-3"
+        ]
+      },
+      "chain_return_python_type": "POINTER(ICWSegChain)"
+    }
+  ],
+  "read_complete": true,
+  "geometric_role_mapping_verified": false,
+  "universal_index_base_verified": false,
+  "physical_geometry_verified": false,
+  "units_verified": false
+}

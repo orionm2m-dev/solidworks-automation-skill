@@ -1,0 +1,222 @@
+{
+  "pid": 1234,
+  "path": "C:/cad/qualification.SLDPRT",
+  "saved_file_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "needs_save": false,
+  "features": [
+    {
+      "name": "Favorites",
+      "type": "FavoriteFolder"
+    },
+    {
+      "name": "History",
+      "type": "HistoryFolder"
+    },
+    {
+      "name": "Selection Sets",
+      "type": "SelectionSetFolder"
+    },
+    {
+      "name": "Связь проектов",
+      "type": "DocsFolder"
+    },
+    {
+      "name": "Примечания",
+      "type": "DetailCabinet"
+    },
+    {
+      "name": "Markups",
+      "type": "InkMarkupFolder"
+    },
+    {
+      "name": "Источники света и камеры",
+      "type": "EnvFolder"
+    },
+    {
+      "name": "Твердые тела",
+      "type": "SolidBodyFolder"
+    },
+    {
+      "name": "Тела поверхности",
+      "type": "SurfaceBodyFolder"
+    },
+    {
+      "name": "Датчики",
+      "type": "SensorFolder"
+    },
+    {
+      "name": "Заметки",
+      "type": "CommentsFolder"
+    },
+    {
+      "name": "Уравнения",
+      "type": "EqnFolder"
+    },
+    {
+      "name": "Материал <не указан>",
+      "type": "MaterialFolder"
+    },
+    {
+      "name": "Спереди",
+      "type": "RefPlane"
+    },
+    {
+      "name": "Сверху",
+      "type": "RefPlane"
+    },
+    {
+      "name": "Справа",
+      "type": "RefPlane"
+    },
+    {
+      "name": "Исходная точка",
+      "type": "OriginProfileFeature"
+    },
+    {
+      "name": "Tables",
+      "type": "ConfigTableFolder"
+    },
+    {
+      "name": "NativeCore_R19_ReceiverCover_R3",
+      "type": "BaseBody"
+    },
+    {
+      "name": "R21_Approved_Sloped_Gapfill_Donor",
+      "type": "BaseBody"
+    },
+    {
+      "name": "R21_Add_Only_Sloped_Gapfill",
+      "type": "CombineBodies"
+    },
+    {
+      "name": "Импортированный1",
+      "type": "BaseBody"
+    },
+    {
+      "name": "Соединить1",
+      "type": "CombineBodies"
+    },
+    {
+      "name": "Импортированный2",
+      "type": "BaseBody"
+    },
+    {
+      "name": "Соединить2",
+      "type": "CombineBodies"
+    },
+    {
+      "name": "Импортированный3",
+      "type": "BaseBody"
+    },
+    {
+      "name": "Соединить3",
+      "type": "CombineBodies"
+    },
+    {
+      "name": "Импортированный4",
+      "type": "BaseBody"
+    },
+    {
+      "name": "Соединить4",
+      "type": "CombineBodies"
+    },
+    {
+      "name": "Скругление1",
+      "type": "Fillet"
+    },
+    {
+      "name": "Скругление2",
+      "type": "Fillet"
+    },
+    {
+      "name": "Импортированный5",
+      "type": "BaseBody"
+    },
+    {
+      "name": "Тело-Удалить/Сохранить 1",
+      "type": "DeleteBody"
+    },
+    {
+      "name": "Импортированный6",
+      "type": "BaseBody"
+    },
+    {
+      "name": "Тело-Удалить/Сохранить 2",
+      "type": "DeleteBody"
+    }
+  ],
+  "planes": [
+    {
+      "name": "Спереди",
+      "origin_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "plane_to_model": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "solids": [
+    {
+      "box_m": [
+        -0.033128302778776805,
+        -0.03351207591313285,
+        -0.0126,
+        0.029944139289629,
+        0.033512075776598975,
+        0.026
+      ],
+      "mass_raw": [
+        0.00030577262369100514,
+        1.7504329695770565e-06,
+        0.004995546810677932,
+        3.416738369122275e-05,
+        0.017259222080439722,
+        3.416738369122275e-05,
+        8.318443108394157e-09,
+        9.00345837281803e-09,
+        1.284609032865889e-08,
+        2.2868372389710398e-11,
+        -6.207527671553376e-11,
+        -1.8902275106540955e-15
+      ]
+    }
+  ],
+  "spec": {
+    "plane_axis": "Z",
+    "plane_offset_mm": 25.8,
+    "sketch_name": "CAM_UPPER_PROFILE_R25",
+    "plane_name": "CAM_UPPER_PLANE_R25",
+    "profile": {
+      "kind": "circle",
+      "center_model_mm": [
+        0.0,
+        0.0,
+        25.8
+      ],
+      "radius_mm": 23.35
+    }
+  }
+}

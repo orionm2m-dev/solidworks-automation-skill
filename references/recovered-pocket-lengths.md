@@ -1,0 +1,11 @@
+# Recovered pocket native length observation
+
+This read-only extension calls the installed recovered-pair qualification reader unchanged and adds `native_length_observation`, scope `RECOVERED_GENERATED_ROUGH_LENGTH_OBSERVATION_V1`. The parent scope, request, source lineage, full before/after captures and terminal flags retain their original meaning. The request has exactly the parent KEYS. The sole generated Rough is selected from the genuine recovered context; no operation identifier is inferred from a CL label.
+
+The extension audits ICWOperation DOUBLE getter ABI at DISPIDs 7, 9 and 11 using the existing `sw_cam_finish_lengths.audit`. It reuses that module's retained `ReadBatch`, generic `protected.binding` and `read_lengths`, with the 128-pin boundary limit. It binds the saved operation/feature/tool/record count before and after two groups of three getters. Exactly six scalar returns are required. Each return must be a strict finite nonnegative Python float; both dictionaries must agree exactly. Raw returned type and supported value are persisted before validation. No retry occurs after a failure.
+
+The reused parent performs its full saved inventory and parameter read before the length block, its full inventory read after it, event cleanup and immutable evidence checks. New dependency pins are added without replacing historical pins. The length observation is accepted only when both its six-read/binding checks and every parent terminal flag pass. A late parent or runtime failure clears its acceptance flags. Consumers must check the nested `readback_verified`, not just the parent's result.
+
+`total_minus_feed_minus_rapid_native` is a signed finite diagnostic. No undocumented additivity tolerance, unit conversion, exporter precision, native length error bound, extra-turn interpretation or cutting suitability is inferred. A successful packet observes native statistics; it does not by itself establish a length-based circle proof. The parent transient document-excursion and non-atomic-read limitations remain.
+
+There are no setters, Save, generation, export, document activation, selection or marker creation in this extension. API availability and fake/pure tests are separate from actual native qualification.
