@@ -14,12 +14,24 @@ def _restore_request(loaded,source):
     return request
 
 
+def _apply_current_owner(context,args,pocket):
+    owner=pocket.get('current_owner')
+    if owner is None:return
+    require(type(owner) is dict and set(owner)=={'process_id','expected_process_create_time'},'Exact verified current owner required')
+    require(type(owner['process_id']) is int and owner['process_id']==args['process_id']
+        and type(owner['expected_process_create_time']) is type(args['expected_process_create_time'])
+        and owner['expected_process_create_time']==args['expected_process_create_time'],'Current owner differs from explicit request')
+    require(pocket['state']['sketch_state']['pid']==owner['process_id'] and pocket.get('session_rebind_pin')==pocket['pins'].get('session_rebind') and type(pocket.get('session_rebind_pin')) is dict,'Verified raw current capture and association pin required')
+    for live in (context.v,context.request):live.update(deepcopy(owner))
+
+
 class CircularBatchContext(NativeCircularContext):
     """保护原始 reference；新 target 仅来自真实已保存创建证据。"""
     def __init__(self,sw,clsid,tlb,v,data,report,persist,runtime_check):
         loaded=data['circular'];pins=list(data['pins'].values())+list(data['protected_pins'].values())
         if 'prepare_pin' in data:pins.append(data['prepare_pin'])
         super().__init__(sw,clsid,tlb,_restore_request(loaded,v['expected_source_sha256']),loaded['original'],report,persist,runtime_check,restore=loaded['restore'],continuation_pins=pins)
+        _apply_current_owner(self,v,loaded)
 
 
 class CircularGenerationProof:
@@ -48,6 +60,7 @@ class CircularGenerationContext(NativeCircularContext):
     def __init__(self,sw,clsid,tlb,args,loaded,report,persist,runtime_check):
         pocket=loaded['circular'];pins=[loaded['pin'],*loaded['pins'].values()]
         super().__init__(sw,clsid,tlb,_restore_request(pocket,args['expected_source_sha256']),pocket['original'],report,persist,runtime_check,restore=pocket['restore'],continuation_pins=pins)
+        _apply_current_owner(self,args,pocket)
         self.generation_loaded=loaded;self.args=args;self.attempted=[];self.last_document=None;self.entered=False;self.closed=False
         self.consumer_ids=deepcopy(loaded['state']['parameter_batch']['candidate_consumer_ids']);self.report.setdefault('native_read_count',0);self._capture_journal_managed=True
     def capture(self,label,partial):

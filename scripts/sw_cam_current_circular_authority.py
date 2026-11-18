@@ -18,7 +18,22 @@ circular_state_equal=pocket.circular_state_equal
 align_circular_mass=pocket.align_circular_mass
 
 
-def binding(v):return {k:deepcopy(v[k]) for k in KEYS}
+REBIND_KEYS=('session_rebind_receipt_path','session_rebind_receipt_sha256')
+
+
+def rebind_options(v):
+    values={k:v.get(k) for k in REBIND_KEYS}
+    if all(x is None for x in values.values()):return {}
+    require(all(type(x) is str and x for x in values.values()),'Complete explicit session rebind pin required')
+    p=Path(values[REBIND_KEYS[0]])
+    require(p.is_absolute() and p.suffix.lower()=='.json' and re.fullmatch('[0-9a-f]{64}',values[REBIND_KEYS[1]]),'Exact absolute session rebind pin required')
+    return values
+
+
+def binding(v):
+    out={k:deepcopy(v[k]) for k in KEYS}
+    out.update(rebind_options(v))
+    return out
 
 
 def normalized(state):
@@ -93,8 +108,15 @@ def _actions(d,kinds):
     return rows
 
 
-def load_pocket(path,sha,*,process_id,source_path,source_sha256):
+def load_pocket(path,sha,*,process_id,source_path,source_sha256,session_rebind_receipt_path=None,session_rebind_receipt_sha256=None):
     """从原始 completed 配置到 sketch/feature/rough/Save 的逐步证据，不伪造旧类型。"""
+    options=rebind_options(dict(session_rebind_receipt_path=session_rebind_receipt_path,session_rebind_receipt_sha256=session_rebind_receipt_sha256))
+    if options:
+        from scripts.sw_cam_circular_session_rebind import load_verified_rebind
+        loaded=load_verified_rebind(options[REBIND_KEYS[0]],options[REBIND_KEYS[1]],process_id=process_id,source_path=source_path,source_sha256=source_sha256)
+        _,pin=read_pin(path,sha)
+        require(loaded['pin']==pin,'Rebind addresses another historical pocket')
+        return loaded
     from scripts import sw_cam_current_saved_generation as generation
     d,pin=read_pin(path,sha)
     if d.get('action')=='resume_after_feature':
@@ -176,9 +198,10 @@ def _load_resumed_pocket(d,pin,*,process_id,source_path,source_sha256):
 
 
 def load_inputs(v,clsid=None):
-    loaded=load_pocket(v['pocket_receipt_path'],v['pocket_receipt_sha256'],process_id=v['process_id'],source_path=v['expected_document_path'],source_sha256=v['expected_source_sha256'])
+    loaded=load_pocket(v['pocket_receipt_path'],v['pocket_receipt_sha256'],process_id=v['process_id'],source_path=v['expected_document_path'],source_sha256=v['expected_source_sha256'],**rebind_options(v))
     if clsid is not None:require(clsid==loaded['addin_clsid'],'Explicit circular CAM add-in differs')
-    require(type(v['expected_process_create_time']) is type(loaded['binding']['expected_process_create_time']) and v['expected_process_create_time']==loaded['binding']['expected_process_create_time'],'Circular continuation lifetime differs')
+    owner=loaded.get('current_owner',loaded['binding'])
+    require(v['process_id']==owner['process_id'] and type(v['expected_process_create_time']) is type(owner['expected_process_create_time']) and v['expected_process_create_time']==owner['expected_process_create_time'],'Circular continuation lifetime differs')
     restore=loaded['restore'];ids=[r['native_id'] for r in restore['new_operations']]
     require(v['expected_feature_native_id']==restore['new_feature_native_id'] and v['parameter_operation_native_ids']==ids,'Only the actual new pocket rough may be configured')
     baseline=loaded['state'];candidate=baseline['parameter_batch']['candidate_tool']['generic']['native_id']

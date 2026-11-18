@@ -1,0 +1,11 @@
+# Saved Rough-floor / Finish-wall configuration pilot
+
+Use the existing `solidworks_cam_configure_guide_definitions` endpoint with `configuration_mode=saved_mill_pair`, `action=configure`. Only an exact completed mixed definition receipt and its completed scalar reader qualify. Source, PID/lifetime, consumed producer marker, immutable ancestry and current shared tool are checked before application access.
+
+This packet unlinks each selected operation from tool feeds, assigns the explicitly identified existing tool, validates the assignment observation, and writes the explicit fixed field list. Only spindle, XY feed and absolute lead scalar may refresh on assignment; all three receive explicit final writes. No other assignment delta is accepted. Full tool/feature/route witnesses are verified after configuration. No BottomFin setter or lead object access is admitted. Rough floor allowance must read back consistently in both GetZAllowance and DepthAllow; this is a required pilot observation, not a claim that the setter was already proven on this operation.
+
+One Save follows successful full comparison. Two complete saved snapshots, selected Rough/Finish/NC observations and the excluded draft witness must match. GTP, insertion, feature edits, shared-tool edits, CL export and automatic retry are forbidden. The receipt retains actual attempted/returned setter and Save facts on later failure. A source+recipe one-shot marker prevents replay.
+
+New modules `sw_cam_saved_floor_wall_configure.py`, `sw_cam_floor_wall_configuration_recipe.py` and `sw_cam_finish_configuration_recipe.py` must be installed together. Preserve all original reader helpers byte-for-byte: the saved reader pins them. Apply only the two reviewed existing endpoint AST nodes from the wrapper fragment to the current server; never replace an older complete server file.
+
+Status: offline-tested native pilot. This packet does not qualify toolpath geometry, physical tool identity, spindle/feed choices, stock removal, machine setup, reopen persistence or production release. Unchanged Z feed/lead geometry remain explicit limitations for future trajectory review. The historical CL is pinned and retained, not re-exported here.

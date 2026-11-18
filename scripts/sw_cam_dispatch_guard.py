@@ -22,17 +22,20 @@ class ScopedCamDispatchGuard:
     """
     def __init__(self, sw, typelib_path, *, process_id, expected_document,
                  source_sha256, evidence_pins, verify_evidence, verify_owned_process,
-                 check_events):
+                 check_events, evidence_pin_limit=64):
         if type(process_id) is not int or not 0 < process_id < 2**32:
             raise ValueError("Exact strict process ID required")
         if (type(expected_document) is not dict or expected_document.get("type") != 1
             or type(expected_document.get("type")) is not int
             or type(expected_document.get("needs_save")) is not bool):
             raise ValueError("Exact part identity and dirty flag required")
-        if type(evidence_pins) is not list or not 1 <= len(evidence_pins) <= 64:
+        if type(evidence_pin_limit) is not int or evidence_pin_limit not in (64, 128):
+            raise ValueError("Only explicit legacy64 or current128 evidence budgets are supported")
+        if type(evidence_pins) is not list or not 1 <= len(evidence_pins) <= evidence_pin_limit:
             raise ValueError("Explicit bounded complete evidence pin list required")
         if not all(callable(v) for v in (verify_evidence, verify_owned_process, check_events)):
             raise ValueError("Evidence, ownership and event callbacks required")
+        self.evidence_pin_limit = evidence_pin_limit
         self.sw = sw
         self.typelib_path = typelib_path
         self.process_id = process_id
