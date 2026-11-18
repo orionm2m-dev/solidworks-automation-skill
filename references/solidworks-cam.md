@@ -1859,3 +1859,7 @@ For a single count and conditional index-zero qualification read, see [TURN mach
 For bounded rough/finish insert and holder contour reads, see [Existing TURN bore tool contours](cam-turn-tool-contours.md).
 
 For native setup links, direction and frame metadata, see [Existing TURN setup context](cam-turn-setup-context.md).
+
+### Current saved-boundary observations (pilot)
+
+The exact partial saved-boundary binder supports a bounded generated Rough/Finish scalar read and one whole-machine WIP export without model mutation. It preserves the earlier producer status and does not accept arbitrary uncertain receipts. Both tools require the full inherited request, including an observed `addin_clsid`; WIP scope and geometry acceptance remain separate. See [current saved scalars and WIP](cam-current-saved-scalars-wip.md).

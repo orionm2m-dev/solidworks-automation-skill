@@ -199,3 +199,127 @@ def test_recreated_matching_dialog_is_not_treated_as_disappearance(prompt):
     assert result["matching_prompt_count_after"] == 1
     assert result["reason"] == "MATCHING_PROMPT_REMAINS_AFTER_ACTION"
     prompt.gui.PostMessage.assert_called_once_with(10, 0x111, 7, 13)
+
+
+def save(prompt, **changes):
+    values = dict(action="save", acknowledge_save=True, acknowledge_discard=False)
+    values.update(changes)
+    return prompt.run(**values)
+
+
+@pytest.mark.parametrize("label", ["&Да", "Да", "&Yes", "Yes"])
+def test_save_invokes_only_idyes_once_without_claiming_persistence(prompt, label):
+    prompt.windows[12]["text"] = label
+    result = save(prompt)
+    prompt.gui.PostMessage.assert_called_once_with(10, 0x111, 6, 12)
+    assert result["status"] == "dismissed"
+    assert result["save_requested"] is True
+    assert result["requires_document_save_verification"] is True
+    assert result["document_save_state"] == "not_verified"
+    assert result["may_continue"] is False
+    assert result["native_cam_api_used"] is False
+    assert result["com_probe_performed"] is False
+    assert prompt.windows[20]["exists"] is True
+
+
+@pytest.mark.parametrize("value", [False, None, 0, 1, 1.0, "true"])
+def test_save_needs_literal_separate_acknowledgement_before_window_enumeration(prompt, value):
+    with pytest.raises(ValueError):
+        save(prompt, acknowledge_save=value)
+    prompt.gui.PostMessage.assert_not_called()
+    assert prompt.state["enumerations"] == 0
+
+
+@pytest.mark.parametrize("action", ["save", "discard"])
+def test_opposite_acknowledgement_rejected_without_action(prompt, action):
+    with pytest.raises(ValueError):
+        prompt.run(action=action, acknowledge_save=True, acknowledge_discard=True)
+    prompt.gui.PostMessage.assert_not_called()
+    assert prompt.state["enumerations"] == 0
+
+
+@pytest.mark.parametrize("handle,field,value", [
+    (10, "pid", 200), (10, "cls", "Other"), (10, "text", "Other"),
+    (10, "visible", False), (10, "enabled", False),
+    (11, "text", "Сохранить изменения в OTHER.SLDPRT ?"), (11, "pid", 200),
+    (12, "text", "&Нет"), (12, "text", "Cancel"), (12, "cls", "Static"),
+    (12, "pid", 200), (12, "enabled", False), (12, "visible", False),
+    (12, "ident", 7), (12, "ident", 1), (12, "ident", 0), (12, "parent", 20),
+])
+def test_save_never_falls_back_to_no_or_unknown_button(prompt, handle, field, value):
+    prompt.windows[handle][field] = value
+    result = save(prompt)
+    assert result["status"] == "blocked" and result["button_invocation_count"] == 0
+    prompt.gui.PostMessage.assert_not_called()
+
+
+def test_save_ambiguous_prompts_are_blocked(prompt):
+    for handle in (20, 21, 22, 23):
+        prompt.windows[handle]["pid"] = 100
+    assert save(prompt)["status"] == "blocked"
+    prompt.gui.PostMessage.assert_not_called()
+
+
+def test_save_duplicate_yes_buttons_are_blocked(prompt):
+    prompt.windows[14] = {**prompt.windows[12], "ident": 8}
+    assert save(prompt)["status"] == "blocked"
+    prompt.gui.PostMessage.assert_not_called()
+
+
+@pytest.mark.parametrize("handle,field,value", [
+    (10, "pid", 200), (10, "cls", "Other"), (10, "text", "Other"),
+    (11, "text", "Other document"), (12, "text", "&Нет"),
+    (12, "enabled", False), (12, "ident", 7), (12, "parent", 20),
+])
+def test_save_revalidates_current_modal_and_yes_before_single_action(prompt, handle, field, value):
+    def change(count):
+        if count == 2:
+            prompt.windows[handle][field] = value
+    prompt.state["before_enumerate"] = change
+    result = save(prompt)
+    assert result["status"] == "blocked"
+    assert result["reason"] == "CAM_SAVE_PROMPT_CHANGED_BEFORE_ACTION"
+    prompt.gui.PostMessage.assert_not_called()
+
+
+def test_save_revalidates_idyes_handle(prompt):
+    prompt.gui.GetDlgItem = lambda *_: 13
+    assert save(prompt)["status"] == "blocked"
+    prompt.gui.PostMessage.assert_not_called()
+
+
+def test_save_timeout_is_uncertain_no_retry(prompt):
+    prompt.state["dismiss"] = False
+    result = save(prompt)
+    assert result["status"] == "uncertain" and result["may_continue"] is False
+    assert result["document_save_state"] == "not_verified"
+    prompt.gui.PostMessage.assert_called_once_with(10, 0x111, 6, 12)
+
+
+def test_save_post_exception_is_uncertain_no_retry(prompt):
+    prompt.gui.PostMessage.side_effect = OSError("notification failed")
+    result = save(prompt)
+    assert result["status"] == "uncertain" and result["save_requested"] is False
+    assert result["button_invocation_count"] == 1
+    prompt.gui.PostMessage.assert_called_once_with(10, 0x111, 6, 12)
+
+
+def test_save_recreated_prompt_is_not_persistence(prompt):
+    def replacement():
+        prompt.windows[10]["exists"] = False
+        for handle in (20, 21, 22, 23):
+            prompt.windows[handle]["pid"] = 100
+    prompt.state["on_post"] = replacement
+    result = save(prompt)
+    assert result["status"] == "uncertain"
+    assert result["matching_prompt_count_after"] == 1
+    assert result["document_save_state"] == "not_verified"
+    prompt.gui.PostMessage.assert_called_once_with(10, 0x111, 6, 12)
+
+
+def test_inspect_reports_save_capability_without_action(prompt):
+    result = prompt.run(action="inspect", acknowledge_discard=False)
+    assert result["can_save"] is True
+    prompt.windows[12]["ident"] = 1
+    assert prompt.run(action="inspect", acknowledge_discard=False)["can_save"] is False
+    prompt.gui.PostMessage.assert_not_called()

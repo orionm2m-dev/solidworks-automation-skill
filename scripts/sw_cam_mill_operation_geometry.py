@@ -24,6 +24,7 @@ RAW_BASE='_ICWMillOperation3__com_GetTpBaseFeature'
 RAW_PARAMS='_ICWTpBaseFeature__com_GetTpFeatParameters'
 BOOL_SENTINEL=12345
 MAX_READS=2048
+MAX_SETUP_TRANSFORM_READS=4096
 INTERFACES=('ICWApp4','ICWDoc3','ICWPartDoc','ICWMachine','ICWBaseSetup','ICWBaseOpSetup',
     'ICWDispatchCollection','ICWFeature','ICWOperation','ICWMillOperation','ICWMillOperation3',
     'ICWToolpath','ICWTool','ICWTpBaseFeature')
@@ -64,7 +65,7 @@ def validate(v,clsid=None):
     require(type(v['expected_document_path']) is str and absolute_document_path(v['expected_document_path']) and Path(v['expected_document_path']).suffix.casefold()=='.sldprt','Absolute saved part required')
     for key in ('expected_source_sha256','configuration_receipt_sha256'):require(type(v[key]) is str and re.fullmatch('[0-9a-f]{64}',v[key]),'Exact SHA required')
     require(v['qualification_only'] is True and v['message_policy']=='vendor_default','Qualification read only required')
-    mode=v.get('observation_mode','tp_geometry');require(mode in ('tp_geometry','virtual_features'),'Fixed observation mode required')
+    mode=v.get('observation_mode','tp_geometry');require(mode in ('tp_geometry','virtual_features','setup_transform'),'Fixed observation mode required')
     targets=v['targets'];require(type(targets) is list and 1<=len(targets)<=4,'One to four explicit operation/feature targets required')
     keys={'operation_native_id','feature_native_id','feature_setup_native_id','operation_setup_native_id','mill_operation_type'}
     for target in targets:
@@ -186,6 +187,9 @@ def capture(app,loaded,v,*,read,typed,raw_call,boundary,state):
         if v.get('observation_mode','tp_geometry')=='virtual_features':
             from scripts.sw_cam_virtual_feature_observation import read_virtual_features
             read_virtual_features(operation,typed=typed,raw_call=raw_call,row=row,boundary=boundary)
+        elif v.get('observation_mode')=='setup_transform':
+            from scripts.sw_cam_setup_transform_observation import read_setup_transform
+            read_setup_transform(operation,typed=typed,raw_call=raw_call,row=row,boundary=boundary)
         else:read_geometry(operation,feature,typed=typed,raw_call=raw_call,row=row,boundary=boundary)
     boundary();state['capture_complete']=True
 
@@ -200,13 +204,18 @@ def inspect_operation_geometry(sw,clsid,typelib_path,*,process_id,expected_proce
         observation_verified=False,readback_verified=False,guards_verified=False,may_continue=False,parameters_complete=False,
         units_verified=False,coordinate_frame_verified=False,full_contours_read=False,pointer_interfaces_traversed=False,
         empty_toolpath_cause_proven=False,production_qualified=False,native_read_count=0,raw_getter_attempts=0,
-        post_cleanup_cam_read_performed=False,targets=deepcopy(targets),observation_mode=observation_mode,virtual_collection_complete=False)
+        native_read_limit=MAX_SETUP_TRANSFORM_READS if observation_mode=='setup_transform' else MAX_READS,
+        post_cleanup_cam_read_performed=False,targets=deepcopy(targets),observation_mode=observation_mode,virtual_collection_complete=False,setup_transform_complete=False)
     try:
         loaded=validate(v,clsid);report['authority_pin']=deepcopy(loaded['pin']);report['getter_abi']=preflight(typelib_path);runtime_check()
-        raw_names=(RAW_BASE,RAW_PARAMS)
+        raw_names=(RAW_BASE,RAW_PARAMS);allowed_interfaces=INTERFACES
         if observation_mode=='virtual_features':
             from scripts import sw_cam_virtual_feature_observation as virtual
             report['virtual_getter_abi']=virtual.preflight(typelib_path);raw_names=virtual.RAW_READS
+        if observation_mode=='setup_transform':
+            from scripts import sw_cam_setup_transform_observation as setup
+            report['setup_getter_abi']=setup.preflight(typelib_path);raw_names=setup.RAW_READS
+            allowed_interfaces=INTERFACES+setup.INTERFACES
         def identity():
             runtime_check()
             process=_process_identity(process_id)
@@ -229,14 +238,14 @@ def inspect_operation_geometry(sw,clsid,typelib_path,*,process_id,expected_proce
             def boundary():
                 check();require(identity()==initial,'Current document changed');check()
             def admission(name):
-                check();report['phase']=name;require(report['native_read_count']<MAX_READS,'Bounded read budget exceeded');report['native_read_count']+=1
+                check();report['phase']=name;require(report['native_read_count']<report['native_read_limit'],'Bounded read budget exceeded');report['native_read_count']+=1
             def read(obj,name,*args):
                 admission(name);value=_member(obj,name,*args);check();return value
             def typed(obj,name):
-                if observation_mode=='virtual_features' and name=='ITypeInfo':
+                if observation_mode in ('virtual_features','setup_transform') and name=='ITypeInfo':
                     from comtypes.typeinfo import ITypeInfo
                     admission('QI ITypeInfo');value=obj.QueryInterface(ITypeInfo);check();return value
-                require(name in INTERFACES,'Interface outside fixed read scope');admission('QI '+name);value=_typed(obj,name,typelib_path);check();return value
+                require(name in allowed_interfaces,'Interface outside fixed read scope');admission('QI '+name);value=_typed(obj,name,typelib_path);check();return value
             def raw_call(obj,name,args,entry,observe):
                 require(name in raw_names,'Only fixed raw getters allowed');admission(name)
                 entry.update(attempted=True,returned=False,owned_output_storage=True,automatic_retry=False)
@@ -257,13 +266,14 @@ def inspect_operation_geometry(sw,clsid,typelib_path,*,process_id,expected_proce
                 and not any(summary.get(k) for k in EVENT_ERRORS),'Event cleanup not confirmed')
             require(identity()==initial,'Identity changed after cleanup')
             report['virtual_collection_complete']=observation_mode=='virtual_features' and all(x.get('virtual_collection_complete') is True for x in report['after']['selected'])
+            report['setup_transform_complete']=observation_mode=='setup_transform' and all(x.get('setup_transform_complete') is True for x in report['after']['selected'])
             report.update(status='review_required',phase='finished',read_pending=False,
                 observed_target_outcomes=[x['outcome'] for x in report['after']['selected']],
-                observation_result='stable_virtual_collection_metadata' if report['virtual_collection_complete'] else 'complete_declared_parameters' if all(x['parameters_complete'] for x in report['after']['selected']) else 'stable_null_or_unsupported_or_COM_diagnostics',
+                observation_result='stable_setup_transform_components' if report['setup_transform_complete'] else 'stable_virtual_collection_metadata' if report['virtual_collection_complete'] else 'complete_declared_parameters' if all(x['parameters_complete'] for x in report['after']['selected']) else 'stable_null_or_unsupported_or_COM_diagnostics',
                 observation_verified=True,readback_verified=True,guards_verified=True,
                 parameters_complete=all(x['parameters_complete'] for x in report['after']['selected']),reason='STABLE_DECLARED_OUTPUT_DIAGNOSTICS_NO_CAUSE_OR_MACHINING_CLAIM')
     except Exception as exc:
-        report.update(status='error',failed_phase=report['phase'],phase='finished',read_pending=False,issue=_error(exc),observation_verified=False,readback_verified=False,guards_verified=False,parameters_complete=False,virtual_collection_complete=False)
+        report.update(status='error',failed_phase=report['phase'],phase='finished',read_pending=False,issue=_error(exc),observation_verified=False,readback_verified=False,guards_verified=False,parameters_complete=False,virtual_collection_complete=False,setup_transform_complete=False)
     finally:
         if session is not None:report['messages']=session.summary()
     return report

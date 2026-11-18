@@ -1,5 +1,7 @@
 """Pinned, explicitly indexed read-only PROFILE chain diagnostic."""
 from copy import deepcopy
+from contextlib import ExitStack
+import inspect
 from pathlib import Path
 from scripts import sw_cam_mill_profile_headers as headers
 from scripts.sw_cam import _member, _error
@@ -19,7 +21,7 @@ GUARD_POLICY = 'read_only_events_files_per_getter_identity_per_chain_and_phase'
 
 
 def validate_profile_indexed_request(*, profile_headers_receipt_path,
-        profile_headers_receipt_sha256, index_mapping, **base):
+        profile_headers_receipt_sha256, index_mapping, face_association_names=None, **base):
     headers.validate_profile_headers_request(**base)
     if (type(profile_headers_receipt_path) is not str
         or not absolute_document_path(profile_headers_receipt_path)
@@ -44,7 +46,69 @@ def validate_profile_indexed_request(*, profile_headers_receipt_path,
         raise ValueError('Explicit native indices must be unique')
     if len({row['expected_sketch_name'] for row in index_mapping}) != len(index_mapping):
         raise ValueError('Each requested sketch name must have one explicit candidate index')
+    validate_four_face_names(face_association_names, index_mapping, base['expected_island_count'])
 
+
+
+def validate_four_face_names(names, index_mapping, island_count):
+    if names is None:return
+    if (type(names) is not list or len(names)!=4 or
+        any(type(n) is not str or not 0<len(n)<=128 or n.strip()!=n or '\x00' in n for n in names) or
+        len({n.casefold() for n in names})!=4):
+        raise ValueError('Four exact distinct bounded face-association names required')
+    if type(island_count) is not int or island_count!=4 or len(index_mapping)!=5:
+        raise ValueError('Four islands and five explicit indexed names required for face associations')
+    mapped=[row['expected_sketch_name'] for row in index_mapping]
+    if any(name not in mapped for name in names):
+        raise ValueError('Each selected face name must have an explicit indexed chain')
+
+
+def prepare_face_interfaces():
+    """Installed generated SW classes and source pins only; no CAD activation."""
+    from scripts import sw_cam_pocket_pair_read as faces
+    classes={name:faces.sw_class(name) for name in faces.SW_IIDS}
+    paths=sorted({str(Path(inspect.getfile(cls)).resolve()) for cls in classes.values()})
+    pins=[dict(path=path,sha256=_file_hash(path)) for path in paths]
+    return dict(classes=classes,pins=pins)
+
+
+def verify_face_interface_pins(bundle):
+    if bundle is not None:
+        for pin in bundle['pins']:
+            if _file_hash(pin['path'])!=pin['sha256']:raise ValueError('Generated SW face-interface source changed')
+
+
+def read_indexed_face_associations(sw,doc,*,names,result,selected,anchor,read,typed,sw_typed,boundary,diagnostic,progress):
+    """Observed CAM names to model-space CAD faces, without geometric role inference."""
+    from scripts import sw_cam_pocket_pair_read as faces
+    mapping=[dict(native_index=r['native_index'],expected_sketch_name=r['expected_sketch_name']) for r in result['indexed_chains']]
+    validate_four_face_names(names,mapping,selected['island_count'])
+    if (result.get('read_complete') is not True or len(anchor['names'])!=5 or
+        set(anchor['names'])!={r['expected_sketch_name'] for r in mapping} or
+        any(r.get('name_matches') is not True or r.get('read_complete') is not True for r in result['indexed_chains'])):
+        raise ValueError('Five complete current indexed chains matching pinned names required')
+    boundary('face_associations_before')
+    current=headers.read_profile_feature_headers(doc,selected=selected,read=read,typed=typed,
+        diagnostic=diagnostic.setdefault('headers_before',{}),progress=progress)
+    if current!=anchor['headers']:raise ValueError('CAM headers changed before face associations')
+    model=read(sw,'ActiveDoc');part=sw_typed(_nonnull(model,'active SW part'),'IPartDoc')
+    def face_read(obj,name,*args):
+        if name not in faces.SW_GETTERS:raise ValueError('Getter outside read-only face-association scope')
+        diagnostic['face_stage']=name
+        if name=='FeatureByName':boundary('face_before:'+args[0])
+        if name in ('FeatureByName','GetEntity','GetLoops','GetEdges'):progress()
+        return read(obj,name,*args)
+    result['face_associations']=faces.read_face_associations(part,names,expected_count=4,
+        read=face_read,typed=sw_typed,diagnostic=diagnostic.setdefault('faces',{}))
+    progress()
+    observed=result['face_associations']
+    if observed['all_four_faces_observed'] is not True or observed['all_four_analytic_geometry_complete'] is not True:
+        raise ValueError('All four named planar analytic face associations must be observed')
+    final=headers.read_profile_feature_headers(doc,selected=selected,read=read,typed=typed,
+        diagnostic=diagnostic.setdefault('headers_after',{}),progress=progress)
+    if final!=anchor['headers']:raise ValueError('CAM headers changed after face associations')
+    boundary('face_associations_after')
+    return observed
 
 def load_profile_headers_anchor(path, sha, *, process_id, expected_document_path,
         expected_source_sha256, selected, index_mapping):
@@ -176,12 +240,16 @@ def read_profile_indexed_chains(doc, *, selected, index_mapping, anchor, read, t
 
 
 def capture_profile_indexed_chains(sw, app, typelib_path, *, process_id, expected_document_path,
-        expected_source_sha256, baseline, selected, index_mapping, anchor, check, diagnostic, progress):
+        expected_source_sha256, baseline, selected, index_mapping, anchor, check, diagnostic, progress,
+        face_association_names=None, face_interfaces=None):
     diagnostic.update(native_read_count=0, identity_boundary_count=0, guard_policy=GUARD_POLICY)
-    with _CaptureReadFiles(expected_document_path, anchor['pin']['path']) as files:
+    verify_face_interface_pins(face_interfaces)
+    with _CaptureReadFiles(expected_document_path, anchor['pin']['path']) as files, ExitStack() as extra_files:
+        generated_files=[extra_files.enter_context(_CaptureReadFiles(p['path'])) for p in (face_interfaces['pins'] if face_interfaces is not None else [])]
         def light():
             check()
             files.check()
+            for file_guard in generated_files:file_guard.check()
             check()
         def boundary(label):
             light()
@@ -207,10 +275,25 @@ def capture_profile_indexed_chains(sw, app, typelib_path, *, process_id, expecte
             result = _typed(raw, name, typelib_path)
             light()
             return result
+        def sw_typed(raw,name):
+            light()
+            if face_interfaces is None or name not in face_interfaces['classes']:
+                raise ValueError('SW interface outside bounded face-association scope')
+            if diagnostic['native_read_count']>=MAX_READS:raise ValueError('Indexed PROFILE read budget exceeded')
+            diagnostic.update(stage='SW QI '+name,native_read_count=diagnostic['native_read_count']+1)
+            cls=face_interfaces['classes'][name]
+            result=cls(raw._oleobj_)
+            light()
+            return _nonnull(result,'SW '+name)
         boundary('capture_before')
         doc = typed(_nonnull(read(app, 'IGetActiveDoc'), 'active CAM document'), 'ICWDoc3')
         result = read_profile_indexed_chains(doc, selected=selected, index_mapping=index_mapping, anchor=anchor,
             read=read, typed=typed, boundary=boundary, diagnostic=diagnostic, progress=progress)
+        if face_association_names is not None:
+            read_indexed_face_associations(sw,doc,names=face_association_names,result=result,selected=selected,
+                anchor=anchor,read=read,typed=typed,sw_typed=sw_typed,boundary=boundary,
+                diagnostic=diagnostic.setdefault('face_association_diagnostic',{}),progress=progress)
+        verify_face_interface_pins(face_interfaces)
         boundary('capture_after')
         if _file_hash(expected_document_path) != expected_source_sha256:
             raise ValueError('Saved source changed')
@@ -222,7 +305,7 @@ def inspect_mill_profile_indexed(sw, clsid, typelib_path, *, process_id, expecte
         expected_source_sha256, expected_feature_native_id, expected_owner_setup_native_id,
         expected_volume_type, expected_shape, expected_island_count, qualification_only,
         acknowledge_disposable_copy, receipt_path, profile_headers_receipt_path,
-        profile_headers_receipt_sha256, index_mapping, message_policy='vendor_default'):
+        profile_headers_receipt_sha256, index_mapping, message_policy='vendor_default', face_association_names=None):
     from scripts.sw_cam_events import CamMessageSession
     report = dict(status='error', phase='preflight', process_id=process_id, read_only=True,
         guard_policy=GUARD_POLICY, identity_checks_batched_at_chain_boundaries=True,
@@ -235,10 +318,12 @@ def inspect_mill_profile_indexed(sw, clsid, typelib_path, *, process_id, expecte
     receipt = None
     created = False
     session = None
+    face_interfaces = None
     def persist():
         if created:
             _write_receipt(receipt, report)
     def identity():
+        verify_face_interface_pins(face_interfaces)
         pid = _member(sw, 'GetProcessID')
         if type(pid) is not int or pid != process_id:
             raise ValueError('Exact process differs')
@@ -264,12 +349,18 @@ def inspect_mill_profile_indexed(sw, clsid, typelib_path, *, process_id, expecte
             qualification_only=qualification_only, acknowledge_disposable_copy=acknowledge_disposable_copy,
             receipt_path=receipt_path, message_policy=message_policy, index_mapping=index_mapping,
             profile_headers_receipt_path=profile_headers_receipt_path,
-            profile_headers_receipt_sha256=profile_headers_receipt_sha256)
+            profile_headers_receipt_sha256=profile_headers_receipt_sha256,face_association_names=face_association_names)
         selected = dict(feature_native_id=expected_feature_native_id, owner_setup_native_id=expected_owner_setup_native_id,
             volume_type=expected_volume_type, shape=expected_shape, island_count=expected_island_count, include_contours=False)
         anchor = load_profile_headers_anchor(profile_headers_receipt_path, profile_headers_receipt_sha256,
             process_id=process_id, expected_document_path=expected_document_path,
             expected_source_sha256=expected_source_sha256, selected=selected, index_mapping=index_mapping)
+        if face_association_names is not None:
+            if len(anchor['names'])!=5 or set(anchor['names'])!={r['expected_sketch_name'] for r in index_mapping}:
+                raise ValueError('Five exact pinned header names required for optional face association')
+            face_interfaces=prepare_face_interfaces()
+            report.update(face_association_names=deepcopy(face_association_names),face_associations_read_complete=False,
+                sw_face_interface_pins=deepcopy(face_interfaces['pins']))
         receipt = Path(receipt_path)
         _write_receipt(receipt, report, create=True)
         created = True
@@ -293,7 +384,8 @@ def inspect_mill_profile_indexed(sw, clsid, typelib_path, *, process_id, expecte
                     process_id=process_id, expected_document_path=expected_document_path,
                     expected_source_sha256=expected_source_sha256, baseline=baseline,
                     selected=selected, index_mapping=index_mapping, anchor=anchor,
-                    check=check, diagnostic=diagnostic, progress=persist)
+                    check=check, diagnostic=diagnostic, progress=persist,
+                    face_association_names=face_association_names,face_interfaces=face_interfaces)
                 persist()
                 check()
             if report['before'] != report['after']:
@@ -301,11 +393,13 @@ def inspect_mill_profile_indexed(sw, clsid, typelib_path, *, process_id, expecte
         check(active=False)
         if identity() != baseline:
             raise ValueError('Document changed during cleanup')
+        if face_association_names is not None:report['face_associations_read_complete']=True
         report.update(status='review_required', phase='finished', selected_chains_read_complete=True,
             readback_verified=True, selected_index_name_mapping_verified=True,
             state_sha256=_digest(report['before']),
             reason='REQUESTED_INDEX_NAMES_AND_RAW_CHAIN_READBACK_ONLY_NO_ROLE_OR_MANUFACTURING_QUALIFICATION')
     except Exception as exc:
+        if face_association_names is not None:report['face_associations_read_complete']=False
         report.update(status='error', failed_phase=report['phase'], phase='finished', issue=_error(exc),
             selected_chains_read_complete=False, readback_verified=False, selected_index_name_mapping_verified=False)
     finally:
@@ -314,6 +408,7 @@ def inspect_mill_profile_indexed(sw, clsid, typelib_path, *, process_id, expecte
         try:
             persist()
         except Exception as exc:
+            if face_association_names is not None:report['face_associations_read_complete']=False
             report.update(status='error', receipt_write_error=_error(exc), selected_chains_read_complete=False,
                           readback_verified=False, selected_index_name_mapping_verified=False)
     return report

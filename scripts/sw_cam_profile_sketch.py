@@ -122,6 +122,60 @@ def _same_bodies(before,after):
         if any(not math.isclose(x,y,rel_tol=1e-10,abs_tol=0.) for x,y in zip(a['mass_raw'],b['mass_raw'])):return False
     return True
 
+def _validate_expected_state(state):
+    """Validate the bounded JSON snapshot before any tolerant comparison."""
+    keys={'pid','path','saved_file_sha256','needs_save','features','planes','solids','spec'}
+    if type(state) is not dict or set(state)!=keys:raise ValueError('exact prepared snapshot fields required')
+    budget=[0]
+    def json_only(value,depth=0):
+        budget[0]+=1
+        if budget[0]>65536 or depth>12:raise ValueError('prepared snapshot bounds exceeded')
+        if type(value) is dict:
+            if any(type(k) is not str for k in value):raise ValueError('JSON string keys required')
+            for item in value.values():json_only(item,depth+1)
+        elif type(value) is list:
+            for item in value:json_only(item,depth+1)
+        elif type(value) in (int,float):_finite(value)
+        elif type(value) is str:
+            if len(value)>4096:raise ValueError('prepared snapshot string bound exceeded')
+        elif type(value) not in (bool,type(None)):raise ValueError('strict JSON values required')
+    json_only(state)
+    if type(state['pid']) is not int or not 0<state['pid']<2**32:raise ValueError('prepared PID required')
+    if type(state['path']) is not str or not absolute_document_path(state['path']) or Path(state['path']).suffix.lower()!='.sldprt':raise ValueError('prepared absolute part path required')
+    if type(state['saved_file_sha256']) is not str or not re.fullmatch('[0-9a-f]{64}',state['saved_file_sha256']):raise ValueError('prepared source SHA required')
+    if type(state['needs_save']) is not bool:raise ValueError('prepared save flag must be boolean')
+    def numbers(values,count):
+        if type(values) is not list or len(values)!=count:raise ValueError('prepared numeric array shape differs')
+        for value in values:_finite(value)
+    def rows(name,minimum,maximum):
+        value=state[name]
+        if type(value) is not list or not minimum<=len(value)<=maximum:raise ValueError('prepared row bounds differ')
+        return value
+    def text(value):
+        if type(value) is not str or not value:raise ValueError('prepared name/type required')
+    for row in rows('features',1,512):
+        if type(row) is not dict or set(row)!={'name','type'}:raise ValueError('prepared feature fields differ')
+        text(row['name']);text(row['type'])
+    for row in rows('planes',1,512):
+        if type(row) is not dict or set(row)!={'name','origin_m','normal','plane_to_model'}:raise ValueError('prepared plane fields differ')
+        text(row['name']);numbers(row['origin_m'],3);numbers(row['normal'],3);numbers(row['plane_to_model'],16)
+    for row in rows('solids',1,64):
+        if type(row) is not dict or set(row)!={'box_m','mass_raw'}:raise ValueError('prepared body fields differ')
+        numbers(row['box_m'],6)
+        if type(row['mass_raw']) is not list or not 4<=len(row['mass_raw'])<=32:raise ValueError('prepared mass array bound differs')
+        numbers(row['mass_raw'],len(row['mass_raw']))
+    _input(state['spec'])
+    if len(json.dumps(state,allow_nan=False).encode())>1024*1024:raise ValueError('prepared snapshot byte bound exceeded')
+    return state
+
+def _verify_expected_state(expected,actual,expected_sha256):
+    _validate_expected_state(expected);_validate_expected_state(actual)
+    if _state_digest(expected)!=expected_sha256:raise ValueError('prepared snapshot does not match expected state hash')
+    left=deepcopy(expected);right=deepcopy(actual)
+    for state in (left,right):
+        for body in state['solids']:body['mass_raw']=[]
+    if _digest(left)!=_digest(right) or not _same_bodies(expected['solids'],actual['solids']):raise ValueError('prepared state changed')
+
 def _select_plane(state):
     axis='XYZ'.index(state['spec']['plane_axis']);offset=state['spec']['plane_offset_mm']/1000
     same=[p for p in state['planes'] if abs(p['origin_m'][axis]-offset)<=TOL_M]
@@ -261,9 +315,10 @@ def _create(sw,model,state,refs,check,report):
 
 def create_cam_profile_sketch(sw,*,expected_process_id,expected_document_path,action,spec,
         expected_state_sha256=None,receipt_path=None,qualification_only=True,
-        expected_source_sha256=None,creation_receipt_path=None,creation_receipt_sha256=None):
+        expected_source_sha256=None,creation_receipt_path=None,creation_receipt_sha256=None,expected_state=None):
     """Create a new profile or verify an existing pinned circle without editing."""
     if action=='verify_existing':
+        if expected_state is not None:raise ValueError('prepared snapshot requires apply action')
         from scripts.sw_cam_profile_verify import verify_existing_cam_profile_sketch
         return verify_existing_cam_profile_sketch(sw,
             expected_process_id=expected_process_id,expected_document_path=expected_document_path,
@@ -274,6 +329,11 @@ def create_cam_profile_sketch(sw,*,expected_process_id,expected_document_path,ac
     report={'status':'error','phase':'preflight','mutation_attempted':False,'saved':False,'CAD_solid_edit_attempted':False,'CAM_calls':0,'native_readback_verified':False}
     receipt_created=False
     try:
+        if expected_state is not None:
+            if action!='apply':raise ValueError('prepared snapshot requires apply action')
+            _validate_expected_state(expected_state)
+            report['expected_state']=deepcopy(expected_state)
+            report['expected_state_sha256']=expected_state_sha256
         if any(v is not None for v in (expected_source_sha256,creation_receipt_path,creation_receipt_sha256)):
             raise ValueError('Existing-profile evidence requires verify_existing action')
         if type(expected_process_id) is not int or expected_process_id<=0:raise ValueError('exact positive PID required')
@@ -293,7 +353,11 @@ def create_cam_profile_sketch(sw,*,expected_process_id,expected_document_path,ac
             _select_plane(before)
             if action in ('inspect','prepare'):
                 report.update(status='ok',phase='prepared' if action=='prepare' else 'inspected',prepared=action=='prepare');return report
-            if report['state_sha256']!=expected_state_sha256:raise ValueError('prepared state changed')
+            if expected_state is None:
+                if report['state_sha256']!=expected_state_sha256:raise ValueError('prepared state changed')
+            else:
+                _verify_expected_state(expected_state,before,expected_state_sha256)
+                report['prepared_state_comparison']='exact_nonmass_fields_and_existing_same_bodies'
             _write_receipt(receipt_path,report,create=True);receipt_created=True
             def check():
                 _identity(sw,expected_process_id,expected_document_path)

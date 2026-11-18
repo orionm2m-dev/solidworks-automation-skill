@@ -6,15 +6,18 @@ import time
 
 _TITLE = "Предупреждение SOLIDWORKS CAM"
 _NO_LABELS = {"&Нет", "Нет", "&No", "No"}
+_YES_LABELS = {"&Да", "Да", "&Yes", "Yes"}
+_IDYES = 6
 
 
 def handle_cam_save_prompt(process_id, *, expected_document_basename, action="inspect",
-                           acknowledge_discard=False, gui=None, processes=None, sleep=None):
-    """只检查或明确拒绝一个已知 CAM 保存提示，不调用 COM、激活窗口或重试点击。
+                           acknowledge_discard=False, acknowledge_save=False, gui=None, processes=None, sleep=None):
+    """Inspect or explicitly answer one exact CAM save prompt without COM.
 
-    process_id 必须已由调用方绑定；文档参数只能为精确 SLDPRT 文件名。
-    discard 必须显式确认；发送一次实际“否”按钮通知后只读取窗口是否消失。
-    此 helper 不获取可能正被模态提示阻塞的 CAD 操作锁。
+    This is a bounded Windows UI recovery helper, not the native CAM API.
+    Save requires acknowledge_save and the actual Yes button with IDYES=6.
+    Discard requires its separate acknowledgement. No alternate button is used.
+    Prompt disappearance does not establish document persistence.
     """
     if type(process_id) is not int or not 0 < process_id <= 2**32 - 1:
         raise ValueError("An explicit positive process_id is required")
@@ -23,10 +26,16 @@ def handle_cam_save_prompt(process_id, *, expected_document_basename, action="in
             or re.search(r'[\\/:*?"<>|\x00-\x1f]', name)
             or not name.casefold().endswith(".sldprt")):
         raise ValueError("expected_document_basename must be an exact SLDPRT basename")
-    if action not in {"inspect", "discard"} or type(acknowledge_discard) is not bool:
+    if (action not in {"inspect", "discard", "save"}
+            or type(acknowledge_discard) is not bool or type(acknowledge_save) is not bool):
         raise ValueError("Explicit supported action and JSON boolean acknowledgement are required")
     if action == "discard" and acknowledge_discard is not True:
         raise ValueError("Discarding CAM changes requires acknowledge_discard=true")
+    if action == "save" and acknowledge_save is not True:
+        raise ValueError("Saving CAM changes requires acknowledge_save=true")
+    if ((action == "save" and acknowledge_discard)
+            or (action == "discard" and acknowledge_save)):
+        raise ValueError("Save and discard acknowledgements cannot authorize the opposite action")
     if gui is None:
         import win32gui as gui
     if processes is None:
@@ -39,6 +48,8 @@ def handle_cam_save_prompt(process_id, *, expected_document_basename, action="in
               "native_cam_api_used": False, "com_probe_performed": False,
               "button_invocation_count": 0, "dismissal_confirmed": False,
               "document_save_state": "not_verified"}
+    if action == "save":
+        report.update(save_requested=False, requires_document_save_verification=True, may_continue=False)
 
     def snapshot(handle):
         children = []
@@ -60,7 +71,8 @@ def handle_cam_save_prompt(process_id, *, expected_document_basename, action="in
                 "visible": bool(gui.IsWindowVisible(handle)), "enabled": bool(gui.IsWindowEnabled(handle)),
                 "controls": children}
 
-    def button_for(prompt):
+    def button_for(prompt, requested_action=None):
+        requested_action = requested_action or ("save" if action == "save" else "discard")
         if (prompt["process_id"] != process_id or prompt["class"] != "#32770"
                 or prompt["title"] != _TITLE or not prompt["visible"] or not prompt["enabled"]):
             return None
@@ -68,12 +80,14 @@ def handle_cam_save_prompt(process_id, *, expected_document_basename, action="in
         if texts != [expected_text] or any(c["process_id"] != process_id for c in prompt["controls"]):
             return None
         buttons = [c for c in prompt["controls"] if c["class"].casefold() == "button"
-                   and c["text"] in _NO_LABELS]
+                   and c["text"] in (_YES_LABELS if requested_action == "save" else _NO_LABELS)]
         if len(buttons) != 1:
             return None
         button = buttons[0]
         if (not button["visible"] or not button["enabled"] or button["parent"] != prompt["handle"]
                 or not 0 < button["id"] <= 65535):
+            return None
+        if requested_action == "save" and button["id"] != _IDYES:
             return None
         return button
 
@@ -109,7 +123,7 @@ def handle_cam_save_prompt(process_id, *, expected_document_basename, action="in
             return report
         prompt, button = candidates[0]
         if action == "inspect":
-            report.update(status="inspected", can_discard=True)
+            report.update(status="inspected", can_discard=True, can_save=button_for(prompt, "save") is not None)
             return report
         current_prompts = collect()
         current = [(p, button_for(p)) for p in current_prompts if button_for(p) is not None]
@@ -123,6 +137,8 @@ def handle_cam_save_prompt(process_id, *, expected_document_basename, action="in
         report["invocation"] = {"dialog": prompt["handle"], "button": button["handle"],
                                 "command": button["id"], "message": "WM_COMMAND/BN_CLICKED"}
         gui.PostMessage(prompt["handle"], 0x111, button["id"], button["handle"])
+        if action == "save":
+            report["save_requested"] = True
         for attempt in range(21):
             if not gui.IsWindow(prompt["handle"]):
                 return confirm_disappearance()

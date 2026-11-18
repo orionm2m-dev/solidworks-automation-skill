@@ -133,9 +133,12 @@ def qualify_mill_feature_operation_plan(sw, clsid, typelib_path, *, process_id,
         expected_document_path, expected_source_sha256, expected_feature_native_id,
         action, qualification_only, acknowledge_disposable_copy, message_policy='vendor_default',
         expected_state_sha256=None, receipt_path=None,
-        feature_kind='open_pocket', circle_creation_receipt_path=None, circle_creation_receipt_sha256=None):
+        feature_kind='open_pocket', circle_creation_receipt_path=None, circle_creation_receipt_sha256=None,
+        definition_recovery_receipt_path=None, definition_recovery_receipt_sha256=None,
+        definition_save_receipt_path=None, definition_save_receipt_sha256=None):
     from scripts.sw_cam_events import CamMessageSession
     selected_context=None
+    definition_context=None
     report = dict(status='error', phase='preflight', action=action, process_id=process_id,
         may_continue=False, mutation_attempted=False, native_dispatch_pending=False,
         native_call_attempted=False, native_call_returned=False, native_hresult=None,
@@ -150,7 +153,10 @@ def qualify_mill_feature_operation_plan(sw, clsid, typelib_path, *, process_id,
     def persist():
         if created: _write_receipt(receipt, report)
     def identity():
-        if selected_context is not None:
+        if definition_context is not None:
+            from scripts.sw_cam_pocket_definition_context import identity as definition_identity
+            strict_selected_document=definition_identity(sw,definition_context)['document']
+        elif selected_context is not None:
             strict_selected_document=selected_context_identity(sw,selected_context)['document']
         pid = _member(sw, 'GetProcessID')
         if type(pid) is not int or pid != process_id:
@@ -161,7 +167,7 @@ def qualify_mill_feature_operation_plan(sw, clsid, typelib_path, *, process_id,
         check_document_target(doc.get('path'), doc.get('title'), expected_path=expected_document_path, required=True)
         if _file_hash(expected_document_path) != expected_source_sha256:
             raise ValueError('Saved source file hash changed')
-        if selected_context is not None and doc!=strict_selected_document:
+        if (selected_context is not None or definition_context is not None) and doc!=strict_selected_document:
             raise ValueError('Selected context document changed during identity check')
         return doc
     def check(*, active=True):
@@ -176,20 +182,35 @@ def qualify_mill_feature_operation_plan(sw, clsid, typelib_path, *, process_id,
         report['phase_timings'].append(timing); persist()
         start = time.monotonic(); check(); begin = identity(); check()
         diagnostic = dict(phase=phase); report['snapshot_diagnostics'].append(diagnostic)
-        state, native = capture_selected_mill_context(sw, clsid, typelib_path, expected_document_path,
-            expected_feature_native_id=expected_feature_native_id, check=check, diagnostic=diagnostic,
-            context=selected_context,legacy_capture=capture_mill_feature_state)
+        if definition_context is not None:
+            from scripts.sw_cam_pocket_definition_context import capture as capture_definition
+            state,native=capture_definition(sw,clsid,typelib_path,definition_context,check,diagnostic)
+        else:
+            state, native = capture_selected_mill_context(sw, clsid, typelib_path, expected_document_path,
+                expected_feature_native_id=expected_feature_native_id, check=check, diagnostic=diagnostic,
+                context=selected_context,legacy_capture=capture_mill_feature_state)
         check()
         if state['document'] != begin or identity() != begin or state['saved_file_sha256'] != expected_source_sha256:
             raise ValueError('Document/source changed during phase')
         check(); timing.update(completed=True, elapsed_seconds=time.monotonic()-start)
         persist(); return state, native
     try:
-        selected_context=load_selected_mill_context(process_id=process_id,
-            expected_document_path=expected_document_path,expected_feature_native_id=expected_feature_native_id,
-            expected_source_sha256=expected_source_sha256,feature_kind=feature_kind,
-            circle_creation_receipt_path=circle_creation_receipt_path,
-            circle_creation_receipt_sha256=circle_creation_receipt_sha256)
+        if feature_kind=='autodetected_pocket' or any(x is not None for x in (definition_recovery_receipt_path,definition_recovery_receipt_sha256,definition_save_receipt_path,definition_save_receipt_sha256)):
+            from scripts import sw_cam_pocket_definition_context as definition
+            definition.validate_request(feature_kind=feature_kind,definition_recovery_receipt_path=definition_recovery_receipt_path,
+                definition_recovery_receipt_sha256=definition_recovery_receipt_sha256,definition_save_receipt_path=definition_save_receipt_path,definition_save_receipt_sha256=definition_save_receipt_sha256,circle_creation_receipt_path=circle_creation_receipt_path,
+                circle_creation_receipt_sha256=circle_creation_receipt_sha256)
+            definition_context=definition.load(process_id=process_id,expected_document_path=expected_document_path,
+                expected_feature_native_id=expected_feature_native_id,expected_source_sha256=expected_source_sha256,
+                definition_recovery_receipt_path=definition_recovery_receipt_path,definition_recovery_receipt_sha256=definition_recovery_receipt_sha256,definition_save_receipt_path=definition_save_receipt_path,definition_save_receipt_sha256=definition_save_receipt_sha256)
+            report.update(feature_authority='autodetected_pocket_definition',definition_recovery_receipt_path=definition_recovery_receipt_path,
+                definition_recovery_receipt_sha256=definition_recovery_receipt_sha256,definition_save_receipt_path=definition_save_receipt_path,definition_save_receipt_sha256=definition_save_receipt_sha256,geometry_unqualified=True,island_geometry_verified=False)
+        else:
+            selected_context=load_selected_mill_context(process_id=process_id,
+                expected_document_path=expected_document_path,expected_feature_native_id=expected_feature_native_id,
+                expected_source_sha256=expected_source_sha256,feature_kind=feature_kind,
+                circle_creation_receipt_path=circle_creation_receipt_path,
+                circle_creation_receipt_sha256=circle_creation_receipt_sha256)
         _integer(process_id, positive=True); _integer(expected_feature_native_id, positive=True)
         if (type(expected_document_path) is not str or not absolute_document_path(expected_document_path) or
                 Path(expected_document_path).suffix.casefold() != '.sldprt'):
@@ -220,7 +241,7 @@ def qualify_mill_feature_operation_plan(sw, clsid, typelib_path, *, process_id,
             state_key = dict(snapshot=before, process_id=process_id, expected_feature_native_id=expected_feature_native_id,
                 scope='MILL_SINGLE_FEATURE_GOP_RETAIN1')
             report.update(before=before,state_sha256=_digest(state_key),
-                apply_eligible=before['document']['needs_save'] is False and not before['operations'] and not any(before['operation_counts']))
+                apply_eligible=(definition.eligible(definition_context,before) if definition_context is not None else before['document']['needs_save'] is False and not before['operations'] and not any(before['operation_counts'])))
             persist()
             if action != 'inspect' and not report['apply_eligible']:
                 raise ValueError('Prepare/apply requires clean saved MILL feature with zero operations; never replay')
@@ -230,6 +251,8 @@ def qualify_mill_feature_operation_plan(sw, clsid, typelib_path, *, process_id,
                 current, native = capture('before_mutation_capture')
                 if current != before:
                     raise ValueError('State changed immediately before GOP')
+                if definition_context is not None:
+                    report['definition_gop_marker_path']=definition.claim(definition_context,receipt,report['state_sha256'])
                 report.update(phase='GenerateOpPlan', native_dispatch_pending=True)
                 persist(); check()
                 if identity() != before['document']:
@@ -245,7 +268,8 @@ def qualify_mill_feature_operation_plan(sw, clsid, typelib_path, *, process_id,
                     raise ValueError('Unexpected HRESULT/no-OUT GOP binding result')
                 after, _ = capture('after_mutation_capture')
                 report['after'] = after; persist()
-                report['new_operations'] = _verify_gop_delta(before,after,expected_feature_native_id)
+                verifier=definition.verify_delta if definition_context is not None else _verify_gop_delta
+                report['new_operations'] = verifier(before,after,expected_feature_native_id)
                 final = after
             else:
                 final = before

@@ -64,15 +64,15 @@ def test_registered_schema_labels_ui_and_destructive_operation():
 def test_default_inspection_routes_exact_arguments_without_com_or_lock(context):
     assert invoke() == {"status": "inspected", "mechanism": "windows_ui_helper"}
     context.helper.assert_called_once_with(731, expected_document_basename="qualification.sldprt",
-                                           action="inspect", acknowledge_discard=False)
+                                           action="inspect", acknowledge_discard=False, acknowledge_save=False)
     context.runtime.assert_called_once_with()
 
 
 def test_discard_routes_only_with_literal_acknowledgement(context):
     context.helper.return_value = {"status": "discarded"}
-    assert invoke(action="discard", acknowledge_discard=True)["status"] == "discarded"
+    assert invoke(action="discard", acknowledge_discard=True, acknowledge_save=False)["status"] == "discarded"
     context.helper.assert_called_once_with(731, expected_document_basename="qualification.sldprt",
-                                           action="discard", acknowledge_discard=True)
+                                           action="discard", acknowledge_discard=True, acknowledge_save=False)
 
 
 def test_discard_without_acknowledgement_stops_before_helper(context):
@@ -106,8 +106,8 @@ def test_basename_rejects_paths_coercion_and_ambiguous_text(context, value):
     context.helper.assert_not_called()
 
 
-@pytest.mark.parametrize("value", ["save", "cancel", "DISCARD", 1, None])
-def test_action_is_limited_to_inspection_and_discard(context, value):
+@pytest.mark.parametrize("value", ["cancel", "SAVE", "DISCARD", 1, None])
+def test_action_is_limited_to_explicit_supported_values(context, value):
     with pytest.raises(ValueError):
         prompt_input(action=value)
     context.helper.assert_not_called()
@@ -172,3 +172,63 @@ def test_markdown_format_applies_to_result_and_validation_error(context):
     assert error.startswith("# error")
     assert "acknowledge_discard" in error
     assert context.helper.call_count == 1
+
+
+def test_staged_modules_are_loaded():
+    import scripts.sw_cam_save_prompt as helper
+    assert Path(server.__file__).resolve().parent == ROOT / "mcp-server"
+    assert Path(helper.__file__).resolve().parent == ROOT / "scripts"
+
+
+def test_save_schema_is_explicit_and_defaults_false():
+    schema = server.SolidWorksCamSavePromptInput.model_json_schema()
+    assert schema["properties"]["acknowledge_save"]["default"] is False
+    assert schema["properties"]["action"]["enum"] == ["inspect", "discard", "save"]
+
+
+def test_save_routes_exact_arguments_without_com_or_lock(context):
+    context.helper.return_value = {"status": "dismissed", "document_save_state": "not_verified"}
+    result = invoke(action="save", acknowledge_save=True)
+    assert result["document_save_state"] == "not_verified"
+    context.helper.assert_called_once_with(731, expected_document_basename="qualification.sldprt",
+                                          action="save", acknowledge_save=True, acknowledge_discard=False)
+
+
+@pytest.mark.parametrize("discard", [False, True])
+def test_save_without_own_acknowledgement_stops_before_helper(context, discard):
+    result = invoke(action="save", acknowledge_discard=discard)
+    assert result["status"] == "error"
+    assert "acknowledge_save" in result["message"]
+    context.helper.assert_not_called()
+    context.runtime.assert_not_called()
+
+
+@pytest.mark.parametrize("value", [1, 0, "true", "false", 1.0, None])
+def test_save_acknowledgement_is_strict_boolean(context, value):
+    with pytest.raises(ValueError):
+        prompt_input(action="save", acknowledge_save=value)
+    context.helper.assert_not_called()
+
+
+@pytest.mark.parametrize("action", ["save", "discard"])
+def test_conflicting_acknowledgements_stop_before_runtime_or_helper(context, action):
+    assert invoke(action=action, acknowledge_save=True, acknowledge_discard=True)["status"] == "error"
+    context.helper.assert_not_called()
+    context.runtime.assert_not_called()
+
+
+@pytest.mark.parametrize("selected,environment", [(None, None), (732, None), (None, "732"),
+                                                  (731, "732"), (732, "731"), (True, None)])
+def test_save_requires_exact_existing_pid_binding(context, monkeypatch, selected, environment):
+    monkeypatch.setattr(server, "_selected_process_id", selected)
+    if environment is not None:
+        monkeypatch.setenv("SOLIDWORKS_MCP_PROCESS_ID", environment)
+    assert invoke(action="save", acknowledge_save=True)["status"] == "error"
+    context.helper.assert_not_called()
+
+
+def test_save_runtime_source_mismatch_stops_before_helper(context):
+    details = {"status": "blocked", "error_code": "SW_RUNTIME_SOURCE_CHANGED"}
+    context.runtime.side_effect = server.RuntimeIdentityError(details)
+    assert invoke(action="save", acknowledge_save=True) == details
+    context.helper.assert_not_called()

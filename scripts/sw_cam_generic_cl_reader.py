@@ -68,12 +68,21 @@ def numbers(text,count=None,trailing=False):
 def bounds(points):
     return [[min(p[i] for p in points) for i in range(3)],[max(p[i] for p in points) for i in range(3)]] if points else None
 
+def axial_tool_metadata_sign(axis):
+    """Declared tool metadata only; do not conflate its frame with local coordinates."""
+    require(type(axis) in (list,tuple) and len(axis)==3
+        and all(type(v) in (int,float) and math.isfinite(v) for v in axis)
+        and max(abs(axis[0]),abs(axis[1]),abs(abs(axis[2])-1.))<=1e-8,
+        "Only observed axial +Z or -Z tool metadata supported")
+    return 1 if axis[2]>0 else -1
+
+
 def validate_axial_helix_endpoint(circle,endpoint,axis,*,coordinate_quantum=None):
     """Observed descending +Z/CCW minor-arc dialect; no hidden-turn inference."""
     start=circle["start_raw"];center=circle["center_raw"];radius=circle["radius_raw"]
-    require(max(abs(a-b) for a,b in zip(circle["normal_raw"],[0.,0.,1.]))<=1e-8
-        and max(abs(a-b) for a,b in zip(axis,[0.,0.,1.]))<=1e-8,
-        "Only observed axial +Z helical normal/tool axis supported")
+    require(max(abs(a-b) for a,b in zip(circle["normal_raw"],[0.,0.,1.]))<=1e-8,
+        "Only observed local axial +Z helical normal supported")
+    tool_metadata_sign=axial_tool_metadata_sign(axis)
     require(circle["direction_token"]=="COUNTERCLOCKWISE","Only observed CCW helix supported")
     require(abs(start[2]-center[2])<=1e-5,"Helix center Z must equal start Z")
     dz=endpoint[2]-start[2];require(dz < -1e-5,"Only observed descending helix supported")
@@ -109,6 +118,10 @@ def validate_axial_helix_endpoint(circle,endpoint,axis,*,coordinate_quantum=None
             antipodal_residual_bound_raw=bound,angle_excess_over_pi_raw=angle-math.pi,
             angle_excess_bound_raw=angular_bound,coordinates_snapped=False,
             direction_semantics_basis="Observed +Z CCW single near-antipodal arc within six-decimal rounding bounds; raw coordinates and angle retained, hidden turns not inferred")
+    if tool_metadata_sign<0:
+        result.update(tool_axis_relation_to_local_circle_normal="antiparallel_declared_metadata",
+            tool_axis_coordinate_frame_verified=False,tool_axis_transformed=False,
+            coordinate_frame_note="GOTO/CIRCLE geometry retains its raw frame; TLAXIS is separate declared metadata. A qualified external frame is required for physical interpretation.")
     return result
 
 
@@ -217,8 +230,9 @@ def parse_generic_cl_bytes(raw,*,encoding="cp1251",expected_record_counts=None, 
                         and abs(math.sqrt(sum((point[i]-circle["center_raw"][i])**2 for i in range(3)))-circle["radius_raw"])<=1e-5
                         for point in (circle["start_raw"],xyz))
                     if not planar and abs(xyz[2]-circle["start_raw"][2])>1e-5:
-                        require(max(abs(a-b) for a,b in zip(motions[-2]["axis_raw"],[0.,0.,1.]))<=1e-8,
-                            "Helix start tool axis must also be +Z")
+                        require(axial_tool_metadata_sign(motions[-2]["axis_raw"])==axial_tool_metadata_sign(axis)
+                            and max(abs(a-b) for a,b in zip(motions[-2]["axis_raw"],axis))<=1e-8,
+                            "Helix start/end axial tool metadata must remain unchanged")
                         additions=validate_axial_helix_endpoint(circle,xyz,axis,coordinate_quantum=1e-6 if pending_coordinate_quantum==endpoint_coordinate_quantum==1e-6 else None)
                         circle.update(additions,endpoint_raw=xyz[:],endpoint_line=line_number,
                             endpoint_validated=True,coincident_endpoints=False)

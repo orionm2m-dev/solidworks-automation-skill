@@ -6,6 +6,7 @@ not complete feature geometry, and a save is not a reopen/persistence qualificat
 from __future__ import annotations
 
 from pathlib import Path
+from copy import deepcopy
 import re
 
 from scripts.sw_cam import _error, _member, document_snapshot
@@ -54,7 +55,10 @@ def _selected_scope(state, feature_id, operation_ids, feature_kind='open_pocket'
 def mill_feature_document_lifecycle(sw, clsid, typelib_path, *, expected_document_path, action,
         process_id, acknowledge_qualification_copy, expected_feature_native_id, expected_operation_native_ids, message_policy='vendor_default',
         expected_state_sha256=None, receipt_path=None, feature_kind='open_pocket',
-        expected_source_sha256=None, circle_creation_receipt_path=None, circle_creation_receipt_sha256=None):
+        expected_source_sha256=None, circle_creation_receipt_path=None, circle_creation_receipt_sha256=None,
+        definition_recovery_receipt_path=None,definition_recovery_receipt_sha256=None,
+        definition_save_receipt_path=None,definition_save_receipt_sha256=None,
+        definition_gop_receipt_path=None,definition_gop_receipt_sha256=None):
     from scripts.sw_cam_events import CamMessageSession
 
     report = dict(status='error', machine_kind='mill_single_feature_qualification', process_id=process_id,
@@ -70,6 +74,8 @@ def mill_feature_document_lifecycle(sw, clsid, typelib_path, *, expected_documen
         snapshot_scope='One selected MILL feature raw geometry and exact operation definitions; no independent depth or complete toolpath proof',
         last_CAM_snapshot_scope='inside active event subscription before cleanup', snapshot_diagnostics=[])
     circle_evidence = selected_context = None
+    definition_context=definition_plan=None
+    recovered=feature_kind=="autodetected_pocket"
     circular = feature_kind == 'circular_pocket'
     receipt = None
     receipt_created = False
@@ -79,6 +85,8 @@ def mill_feature_document_lifecycle(sw, clsid, typelib_path, *, expected_documen
         actual = _member(sw, 'GetProcessID')
         if type(actual) is not int or actual != process_id:
             raise ValueError('Exact SOLIDWORKS process identity changed')
+        if recovered and definition_context is not None:
+            return definition.identity(sw,definition_context)
         if circular:
             from scripts.sw_cam_circle_lifecycle_evidence import raw_part_identity
             doc=raw_part_identity(sw)
@@ -107,7 +115,15 @@ def mill_feature_document_lifecycle(sw, clsid, typelib_path, *, expected_documen
         report['snapshot_diagnostics'].append(diagnostic)
         # Shared circular capture owns its full/light identity guards; callback is event-only.
 
-        if circular:
+        if recovered:
+            state,native=definition.capture(sw,clsid,typelib_path,definition_context,check,diagnostic)
+            expected=deepcopy(definition_plan['after'])
+            if phase=='after_native_save':
+                expected['saved_file_sha256']=definition_context['expected_source_sha256']
+                expected['document']['needs_save']=False
+            if state!=expected or [r['native_id']for r in state['operations']]!=expected_operation_native_ids:
+                raise ValueError('Exact complete saved-GOP operation/feature/tool inventory changed')
+        elif circular:
             # Only an explicit native save may establish a new current-file checkpoint.
             refreshed_source=before_identity['saved_file_sha256'] if phase=='after_native_save' else None
             state,native=capture_selected_mill_context(sw,clsid,typelib_path,expected_document_path,
@@ -118,7 +134,7 @@ def mill_feature_document_lifecycle(sw, clsid, typelib_path, *, expected_documen
             state, native = capture_mill_feature_state(sw, clsid, typelib_path, expected_document_path,
                 expected_feature_native_id=expected_feature_native_id, check=check, diagnostic=diagnostic)
         check()
-        _selected_scope(state, expected_feature_native_id, expected_operation_native_ids, feature_kind)
+        if not recovered:_selected_scope(state, expected_feature_native_id, expected_operation_native_ids, feature_kind)
         after_identity = identity()
         check()
         observed = {key: state[key] for key in ('document', 'saved_file_sha256')}
@@ -142,9 +158,26 @@ def mill_feature_document_lifecycle(sw, clsid, typelib_path, *, expected_documen
 
     try:
         _selectors(expected_feature_native_id, expected_operation_native_ids)
-        if type(feature_kind) is not str or feature_kind not in ('open_pocket','circular_pocket'):
+        if type(feature_kind) is not str or feature_kind not in ('open_pocket','circular_pocket','autodetected_pocket'):
             raise ValueError('Exact supported lifecycle feature kind required')
-        if circular:
+        if recovered:
+            from scripts import sw_cam_pocket_definition_context as definition
+            from scripts.sw_cam_pocket_gop_evidence import read_gop_receipt
+            if action not in ('prepare','save') or not expected_operation_native_ids:
+                raise ValueError('Recovered GOP lifecycle supports prepare/save with exact nonempty operation IDs only')
+            definition.validate_request(feature_kind=feature_kind,definition_recovery_receipt_path=definition_recovery_receipt_path,
+                definition_recovery_receipt_sha256=definition_recovery_receipt_sha256,definition_save_receipt_path=definition_save_receipt_path,
+                definition_save_receipt_sha256=definition_save_receipt_sha256,circle_creation_receipt_path=circle_creation_receipt_path,circle_creation_receipt_sha256=circle_creation_receipt_sha256)
+            definition_context=definition.load(process_id=process_id,expected_document_path=expected_document_path,expected_source_sha256=expected_source_sha256,
+                expected_feature_native_id=expected_feature_native_id,definition_recovery_receipt_path=definition_recovery_receipt_path,
+                definition_recovery_receipt_sha256=definition_recovery_receipt_sha256,definition_save_receipt_path=definition_save_receipt_path,definition_save_receipt_sha256=definition_save_receipt_sha256)
+            definition_plan=read_gop_receipt(definition_gop_receipt_path,definition_gop_receipt_sha256,definition_context,expected_operation_native_ids)
+            definition_context['pins'].extend([definition_plan['gop_pin'],definition_plan['marker_pin']])
+            report.update(feature_kind=feature_kind,definition_gop_receipt_pin=definition_plan['gop_pin'],definition_gop_marker_pin=definition_plan['marker_pin'],geometry_unqualified=True,physical_depth_verified=False,production_qualified=False,
+                snapshot_scope='Exact recovered feature/scalar header, analytic sketch, protected source/pins and complete observed GOP operation/tool IDs/types/links/counts; no island geometry or physical machining proof')
+        elif any(x is not None for x in (definition_recovery_receipt_path,definition_recovery_receipt_sha256,definition_save_receipt_path,definition_save_receipt_sha256,definition_gop_receipt_path,definition_gop_receipt_sha256)):
+            raise ValueError('Recovered GOP evidence requires autodetected_pocket lifecycle')
+        elif circular:
             selected_context=load_selected_mill_context(process_id=process_id,
                 expected_document_path=expected_document_path,expected_feature_native_id=expected_feature_native_id,
                 expected_source_sha256=expected_source_sha256,feature_kind=feature_kind,
@@ -218,12 +251,17 @@ def mill_feature_document_lifecycle(sw, clsid, typelib_path, *, expected_documen
                     native_hresult=returned if type(returned) is int else None)
                 report['native_save_call_returned' if action == 'save' else 'native_close_call_returned'] = True
                 _write_receipt(receipt, report)
+                if recovered and action=='save' and type(returned)is int and returned==0:
+                    report['saved_file_sha256_after_native_return']=_file_hash(expected_document_path)
+                    _write_receipt(receipt,report)
                 check()
                 # Installed generated HRESULT/no-OUT vtable binding is tested with
                 # an in-memory ICWApp server; S_OK returns a strict Python int 0.
                 if type(returned) is not int or returned != 0:
                     raise ValueError('Unexpected native lifecycle HRESULT binding result')
                 if action == 'save':
+                    if recovered:
+                        definition_context=definition.after_native_save_source(definition_context,report['saved_file_sha256_after_native_return'],native_return_value=returned)
                     after, _ = capture('after_native_save')
                     report['after'] = after
                     _verify_save(before, after)

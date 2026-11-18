@@ -92,3 +92,39 @@ captures and the existing source/process/event/runtime guards are still required
 The new mode has offline software coverage only and needs separate native
 qualification; no geometry, feature binding, toolpath cause or machining claim is
 made. There is no new endpoint, mutation, Save or GTP action.
+
+
+## Explicit setup-transform component observation
+
+`setup_transform` reads the selected operation's `ICWMillOperation3.GetSetupParameters`
+(DISP24) into three owned dispatch buffers: transform, origin and axis. The transform
+must expose the exact declared `ICWTransform` metadata before its `GetData` (DISP3)
+getter. The six outputs are four dispatch objects named X axis, Y axis, Z axis and
+translation, followed by a finite scale and canonical VARIANT_BOOL rotation flag.
+Each of the four dispatch outputs must expose exact `ICWVector` metadata before
+`GetCoordinates` (DISP1, three DOUBLE OUT values). The origin uses exact
+`ICWPosition`; the setup axis uses exact `ICWUnitVector`. No interface is inferred
+from a name or substituted when a GUID differs.
+
+The mode reuses the bounded standard type-info reader and its TYPEATTR cleanup.
+Coordinates remain raw, finite and unnormalized. A null or unadmitted interface,
+missing metadata, COM failure or integer status1 is retained as a diagnostic;
+unsupported statuses, unpopulated/nonfinite numbers and unsafe context stop the
+observation. Actual outputs are retained before post-call event checks. There are
+eight fixed component getters per selected target and snapshot, plus declared QI
+and standard metadata reads, under the existing total read budget.
+
+`setup_transform_complete` requires all components and two matching guarded
+snapshots. `parameters_complete` remains false because this mode does not read
+Toolpath Feature parameters. The existing `pointer_interfaces_traversed` flag
+continues to describe the opaque outputs of `tp_geometry`; this mode explicitly
+traverses only the declared setup, transform and coordinate interfaces described
+above. No matrix is constructed. The SDK output names do not establish matrix
+row/column convention, forward/inverse direction, translation units or generic
+CL-to-world mapping. Those claims remain false even after complete raw observation.
+
+The same completed-configuration authority supports the current-saved circular
+route. Read at that configuration's saved source revision, before a later generation
+and Save changes its source hash. Actual operation/feature/setup IDs and the current
+source digest must come from verified receipts. This extension has offline software
+coverage only; native and machining qualification remain separate.
