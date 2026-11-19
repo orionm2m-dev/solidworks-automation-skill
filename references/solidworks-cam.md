@@ -1571,7 +1571,7 @@ Boolean dirty-flag change, with the existing numerical mass tolerance.
 Any message, drift, unknown setter outcome or unexpected delta stops without
 replay. No stock/options edit, AFR/GOP/GTP, save or TechDB setter is performed.
 The existing exact catalogue name `304L` (ID10, Stainless Steel group8) can be
-reused through a mapping for the current document; the old BASE_R22 mapping
+reused through a mapping for the current document; an earlier part's mapping
 path is not authorization for another copy. A native grade name is not delivery
 or +AT certification and does not qualify cutting parameters. After material
 readback, use the existing separate save lifecycle; bind the resulting current
