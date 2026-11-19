@@ -18,9 +18,21 @@ from scripts.sw_drawing import (
 from scripts.sw_review import review_drawing_layout
 
 
+class TypedPositionView:
+    """@brief 模拟 COM setter 解封 SAFEARRAY，而 getter 返回坐标序列。"""
+    @property
+    def Position(self):
+        return getattr(self, "_position", None)
+
+    @Position.setter
+    def Position(self, value):
+        decoded = getattr(value, "value", value)
+        self._position = tuple(decoded) if decoded is not None else None
+
+
 class FakeDimension:
     Name = "D1"
-    Type = 2
+    Type2 = 2
 
     def GetText(self, _index):
         return "25"
@@ -67,6 +79,28 @@ class FakeDrawing:
 
     def GetCurrentSheet(self):
         return FakeSheet()
+
+
+@pytest.mark.parametrize("sign", [-1, 1])
+def test_standard_view_mapping_accepts_both_projection_sides(sign):
+    from scripts.sw_drawing import _MODULE
+
+    class View:
+        def __init__(self, name, position, base=None):
+            self.Name, self.Position, self.base = name, position, base
+
+        def GetOrientationName(self):
+            return "*前视" if self.Name == "front" else ""
+
+        def GetBaseView(self):
+            return self.base
+
+    front = View("front", (.24, .19))
+    top = View("top", (.24, .19 + sign * .105), front)
+    right = View("right", (.24 + sign * .1, .19), front)
+    mapping, _, method = _MODULE._map_native_standard_views([front, top, right])
+    assert mapping == {"front": front, "top": top, "right": right}
+    assert method == "base_and_position"
 
 
 def test_auto_arrange_dimensions_calls_official_api_per_view():
@@ -132,6 +166,7 @@ def test_auto_arrange_dimensions_calls_official_api_per_view():
 
 def test_inspect_drawing_structure_reports_views_dimensions_and_template():
     result = inspect_drawing_structure(FakeDrawing())
+    assert result["dimensions"][0]["type"] == 2  # IDisplayDimension.Type2
     assert result["status"] == "pass"
     assert result["view_count"] == 1
     assert result["dimension_count"] == 1
@@ -263,6 +298,9 @@ def test_inspect_drawing_structure_reads_professional_annotation_entities():
             return "A"
 
     class Gtol(AnnotationEntity):
+        def GetFormat(self):
+            return 1
+
         def GetFrameCount(self):
             return 1
 
@@ -270,11 +308,11 @@ def test_inspect_drawing_structure_reads_professional_annotation_entities():
             return "A"
 
         def GetFrameSymbols3(self, index):
-            assert index == 0
+            assert index == 1
             return ["POSITION"]
 
         def GetFrameValues(self, index):
-            assert index == 0
+            assert index == 1
             return ["0.1", "A"]
 
     class SurfaceFinish(AnnotationEntity):
@@ -638,7 +676,7 @@ def test_layout_uses_dynamic_scale_for_oversized_model():
 
 def test_create_adaptive_views_uses_planned_positions_and_scale():
     """@brief COM 封装必须逐个创建视图并应用相同比例。"""
-    class View:
+    class View(TypedPositionView):
         ScaleRatio = None
 
     class Drawing:
@@ -662,9 +700,31 @@ def test_create_adaptive_views_uses_planned_positions_and_scale():
     assert all(view.ScaleRatio == tuple(layout["scale_ratio"]) for view in drawing.views)
 
 
+def test_view_scale_is_detached_from_automatic_sheet_scale_before_setting():
+    from scripts.sw_drawing import _MODULE
+
+    class View(TypedPositionView):
+        UseSheetScale = 1
+        UseParentScale = True
+
+        @property
+        def ScaleRatio(self):
+            return (2, 1) if self.UseSheetScale else self.ratio
+
+        @ScaleRatio.setter
+        def ScaleRatio(self, ratio):
+            if not self.UseSheetScale:
+                self.ratio = tuple(getattr(ratio, "value", ratio))
+
+    view = View()
+    _MODULE._apply_view_layout(view, {"name": "*Front", "center": [.2, .2]}, 1, 1)
+    assert view.UseSheetScale == 0 and view.UseParentScale is False
+    assert view.ScaleRatio == (1, 1)
+
+
 def test_create_adaptive_views_falls_back_to_native_third_angle_and_maps_orientation():
     """@brief 单视图 API 静默失败时必须按真实方向映射原生三视图。"""
-    class View:
+    class View(TypedPositionView):
         def __init__(self, orientation):
             self.orientation = orientation
             self.Name = f"Drawing View {orientation}"
@@ -718,7 +778,7 @@ def test_create_adaptive_views_falls_back_to_native_third_angle_and_maps_orienta
 def test_create_adaptive_first_angle_views_repositions_native_third_angle_fallback():
     """@brief SW 缺少第一角 API 时仍按第一角 DrawingSpec 回读并重排三视图。"""
 
-    class View:
+    class View(TypedPositionView):
         def __init__(self, orientation):
             self.orientation = orientation
             self.Name = f"Drawing View {orientation}"
@@ -772,7 +832,7 @@ def test_create_adaptive_first_angle_views_repositions_native_third_angle_fallba
 def test_create_adaptive_views_refines_spacing_from_native_outlines():
     """@brief 实际投影包围盒大于模型估算时，必须二次排布并消除视图重叠。"""
 
-    class View:
+    class View(TypedPositionView):
         def __init__(self, orientation, width, height):
             self.orientation = orientation
             self.Name = f"Drawing View {orientation}"

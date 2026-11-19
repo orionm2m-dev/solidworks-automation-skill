@@ -27,10 +27,10 @@ Eval 场景必须按**口径**拆分，绝不能把故意失败的 Scenario 与�
 
 | category | scenario types | 用途 |
 |---|---|---|
-| `nominal` | happy、warning | 正常业务，用于 first-pass target 比较 |
+| `nominal` | happy | 正常业务，用于 first-pass target 比较 |
 | `recovery` | transient_recovery、backend_fallback | 失败后脚本化恢复 |
 | `fault_injection` | verification_failure、reviewer_blocked、retry_exhausted | 故意注入故障，验证检测能力 |
-| `guardrail` | policy_block、user_action_required、capability_gap | 验证门禁/阻断正确性 |
+| `guardrail` | warning、policy_block、user_action_required、capability_gap | 验证门禁/人工复核阻断正确性 |
 
 ## 4. Metrics 定义
 
@@ -99,8 +99,15 @@ Phase 6 的旧算法把 37 个场景（10 happy + 10 verification_failure + 10 t
   假成功候选，被 Verification 正确拦截；旧算法把它算成「假成功发生率」而非「泄漏率」，
   实际 escaped（泄漏）为 **0%**。
 
-修正后：`nominal_first_pass = 100%`（11/11）→ 与 90% target 比较 → **PASS**；
+当前基线 **v4**（2026-10-27 由实际运行核对）：`golden-workflows.yaml` 有 12 个 workflow，
+派生 **43 个 scenario**（12 nominal + 31 robustness）。warning 归入人工复核 guardrail，不能宣称任务完成。
+`nominal_first_pass = 100%`（12/12）→ 与 90% target 比较 → **PASS**；
 `escaped_false_completion = 0%` → 无假成功泄漏。
+43 场景的原始完成比例为 25/43（58.1%），只供诊断；此前 21/37（56.8%）、11/11 与 59.5% 均为历史口径。
+
+> **历史口径注记**：本节上文"37 个场景（10 happy + 10 verification_failure + 10 transient_recovery + 7 跨切面）"
+> 描述的是 Phase 6 当时的场景集，保留原文以便对照当时结论。当前场景集已扩为 43 个，
+> 旧的分母数字（21/37、56.8%、29.7%、33.3%）不得再用作当前指标。
 
 ## 7. deterministic fixture 设计
 

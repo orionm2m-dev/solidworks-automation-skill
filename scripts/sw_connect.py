@@ -9,6 +9,10 @@ import re
 import tempfile
 import time
 from pathlib import Path
+try:
+    from .sw_file_load import SolidWorksDocumentOpenError, classify_sw_file_load_errors, classify_sw_file_load_warnings
+except ImportError:
+    from sw_file_load import SolidWorksDocumentOpenError, classify_sw_file_load_errors, classify_sw_file_load_warnings
 
 try:
     from .sw_preflight import ensure_solidworks_installed, import_com_dependencies
@@ -17,6 +21,10 @@ except ImportError:
 
 pythoncom, win32com_client, VARIANT = import_com_dependencies()
 import pywintypes
+try:
+    from .sw_process import solidworks_processes
+except ImportError:
+    from sw_process import solidworks_processes
 
 
 DOC_TYPE_MAP = {
@@ -69,6 +77,12 @@ class _LaunchGuard:
             import ctypes
 
             kernel32 = ctypes.windll.kernel32
+            from ctypes import wintypes
+            kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+            kernel32.CreateMutexW.restype = wintypes.HANDLE
+            kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            kernel32.ReleaseMutex.argtypes = [wintypes.HANDLE]
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
             self.handle = kernel32.CreateMutexW(None, False, self.name)
             if not self.handle:
                 raise SolidWorksConnectionError("SW_MUTEX", "locking", "无法创建 SolidWorks 启动互斥锁")
@@ -109,7 +123,10 @@ class _LaunchGuard:
             self._owns_file = False
 
 
-def get_com_member(obj, attr_name, *args):
+_MEMBER_UNSET = object()
+
+
+def get_com_member(obj, attr_name, *args, default=_MEMBER_UNSET):
     """
     兼容 pywin32 中“同一成员在不同环境下可能是属性也可能是方法”的情况。
 
@@ -117,11 +134,17 @@ def get_com_member(obj, attr_name, *args):
         obj: COM 对象
         attr_name: 成员名称
         *args: 当成员可调用时传入的参数
+        default: 当成员不存在时返回的值；未提供则按旧行为抛出 AttributeError
 
     返回:
-        成员值或调用结果
+        成员值或调用结果；成员缺失且提供了 default 时返回 default
     """
-    member = getattr(obj, attr_name)
+    try:
+        member = getattr(obj, attr_name)
+    except AttributeError:
+        if default is not _MEMBER_UNSET:
+            return default
+        raise
     if args:
         return member(*args)
     try:
@@ -194,7 +217,7 @@ def _prog_id_for_version(version):
 def _read_active_document(sw):
     """读取活动文档，兼容 COM 属性/方法差异。"""
     try:
-        return get_com_member(sw, "ActiveDoc")
+        return get_com_member(sw, "ActiveDoc", default=None)
     except Exception:
         return None
 
@@ -215,10 +238,16 @@ def _wait_until_ready(sw, timeout_seconds):
     )
 
 
-def close_owned_solidworks(sw, started_by_cad_studio):
+def close_owned_solidworks(sw, started_by_cad_studio, expected_pid=None):
     """只退出由当前 CAD Studio 会话启动的 SolidWorks 实例。"""
     if not started_by_cad_studio:
         return False
+    if expected_pid is not None:
+        try:
+            if int(get_com_member(sw, "GetProcessID")) != int(expected_pid):
+                return False
+        except Exception:
+            return False
     for member_name in ("ExitApp", "Quit"):
         try:
             member = getattr(sw, member_name)
@@ -492,7 +521,9 @@ def connect_solidworks(version=None, wait_seconds=5, visible=True, return_metada
         visible: 控制默认模式新启动实例的窗口；独立启动模式必须为 True
         return_metadata: True 时另返回连接来源与进程信息
         process_id: 可选正整数 PID；只附着此现有进程，不启动或回退。
-            未传参时继承 SOLIDWORKS_MCP_PROCESS_ID，均未设置则保留默认连接行为。
+            未传参时继承 SOLIDWORKS_MCP_PROCESS_ID，均未设置则走默认连接：
+            同版本实例已在运行但 ROT 未注册时只等待附着，不再 Dispatch；
+            只有启动前不存在的 PID 才记为本会话启动；请求版本与实际版本不符时报错。
         launch_mode: com 使用独立 COM 激活；executable 使用安装定位器启动主程序。
         startup_receipt_path: executable 模式必需的新绝对 JSON 日志路径。
         launch_new_instance: 明确创建新实例；与 process_id 互斥，忽略旧环境绑定。
@@ -501,7 +532,8 @@ def connect_solidworks(version=None, wait_seconds=5, visible=True, return_metada
 
     返回:
         (sw, model) 元组，model 可能为 None（无打开的文档时）；
-        return_metadata=True 时返回 (sw, model, metadata)。
+        return_metadata=True 时返回 (sw, model, metadata)；metadata 含实际版本
+        actual_version / actual_revision（PID 绑定与独立启动路径回读失败时为 None）。
     """
     if launch_mode not in ("com", "executable"):
         raise ValueError("launch_mode must be com or executable")
@@ -528,7 +560,9 @@ def connect_solidworks(version=None, wait_seconds=5, visible=True, return_metada
     prog_id = _prog_id_for_version(version)
     sw = None
     launched_here = False
+    dispatched = False
     moniker = None
+    actual = None
 
     verified_new_pid = None
     startup = None
@@ -544,20 +578,41 @@ def connect_solidworks(version=None, wait_seconds=5, visible=True, return_metada
         sw, moniker = _connect_process(process_id, version)
         print(f"已连接到指定 SolidWorks 实例（PID: {process_id}）")
     else:
-        # 默认连接保持原行为；启动和附着共享锁，避免同时拉起实例。
+        # 默认连接：启动和附着共享同一把互斥锁，避免多个 worker 同时拉起实例；
+        # 只有启动前进程清单中不存在的 PID 才算本会话启动，ROT 未注册时不重复 Dispatch。
         with _LaunchGuard():
+            before = solidworks_processes()
             try:
                 sw = win32com_client.GetActiveObject(prog_id)
                 print(f"已连接到运行中的 SolidWorks 实例（ProgID: {prog_id}）")
             except Exception as attach_error:
                 try:
-                    sw = win32com_client.Dispatch(prog_id)
-                    launched_here = True
+                    if before is None:
+                        raise SolidWorksConnectionError("SW_PROCESS_STATE_UNAVAILABLE", "attach", "无法读取 CAD 进程状态，已阻止不确定的启动")
+                    if before and (version is None or any(year is None or year == int(version) for year in before.values())):
+                        # ROT 尚未注册时等待已有实例，禁止重复 Dispatch 启动同版本。
+                        deadline = time.monotonic() + max(.1, float(wait_seconds))
+                        while time.monotonic() < deadline:
+                            try:
+                                sw = win32com_client.GetActiveObject(prog_id)
+                                break
+                            except Exception:
+                                time.sleep(.1)
+                        if sw is None:
+                            raise SolidWorksConnectionError("SW_INSTANCE_NOT_READY", "attach", "已有实例尚不可连接，已阻止重复启动")
+                    if sw is None:
+                        sw = win32com_client.Dispatch(prog_id)
+                        dispatched = True
+                        try:
+                            pid = int(get_com_member(sw, "GetProcessID"))
+                            launched_here = before is not None and pid > 0 and pid not in before
+                        except Exception:
+                            launched_here = False
                     try:
                         sw.Visible = visible
                     except Exception:
                         pass
-                    print(f"启动了新的 SolidWorks 实例（ProgID: {prog_id}）")
+                    print(f"已连接 SolidWorks（ProgID: {prog_id}）")
                     _wait_until_ready(sw, wait_seconds)
                 except SolidWorksConnectionError:
                     close_owned_solidworks(sw, launched_here)
@@ -568,8 +623,27 @@ def connect_solidworks(version=None, wait_seconds=5, visible=True, return_metada
                         "SW_LAUNCH_FAILED", "launch", f"无法启动 {prog_id}: {launch_error}; attach={attach_error}"
                     ) from launch_error
 
+            _wait_until_ready(sw, wait_seconds)
+            if dispatched and before is not None:
+                pid = int(get_com_member(sw, "GetProcessID"))
+                launched_here = pid > 0 and pid not in before
+            actual = get_sw_version(sw)
+            if version is not None and actual["year"] != int(version):
+                close_owned_solidworks(sw, launched_here)
+                raise SolidWorksConnectionError("SW_VERSION_MISMATCH", "verify", f"请求 {version}，实际连接 {actual['year']}")
+
     if sw is None:
         raise SolidWorksConnectionError("SW_NO_INSTANCE", "connect", "未获得 SolidWorks COM 实例")
+
+    if actual is None:
+        # PID 绑定与独立启动路径已在附着阶段按请求校验版本；这里回读仅供元数据，
+        # 读取失败不改变连接结果，不符时只报错，不关闭或终止任何实例。
+        try:
+            actual = get_sw_version(sw)
+        except Exception:
+            actual = {"year": None, "revision": None}
+        if version is not None and actual["year"] is not None and actual["year"] != int(version):
+            raise SolidWorksConnectionError("SW_VERSION_MISMATCH", "verify", f"请求 {version}，实际连接 {actual['year']}")
 
     model = _read_active_document(sw)
     if model:
@@ -597,6 +671,8 @@ def connect_solidworks(version=None, wait_seconds=5, visible=True, return_metada
         "prog_id": prog_id,
         "requested_version": int(version) if version is not None else None,
         "started_by_cad_studio": launched_here,
+        "actual_version": actual["year"],
+        "actual_revision": actual["revision"],
         "process_id": actual_process_id,
         "requested_process_id": process_id,
         "moniker": moniker,
@@ -689,7 +765,7 @@ def ensure_default_templates(sw):
     return templates
 
 
-def snapshot_open_documents(sw):
+def snapshot_open_documents(sw, *, strict=False):
     """
     快照当前已打开的文档标题集合。
 
@@ -700,12 +776,16 @@ def snapshot_open_documents(sw):
     titles = set()
     try:
         documents = get_com_member(sw, "GetDocuments")
-    except Exception:
+    except Exception as error:
+        if strict:
+            raise SolidWorksConnectionError("SW_DOCUMENT_STATE_UNAVAILABLE", "documents", "无法读取打开文档清单，已阻止新建") from error
         return titles
     for document in documents or ():
         try:
             titles.add(str(get_com_member(document, "GetTitle")))
-        except Exception:
+        except Exception as error:
+            if strict:
+                raise SolidWorksConnectionError("SW_DOCUMENT_STATE_UNAVAILABLE", "documents", "无法确认已有文档身份，已阻止新建") from error
             continue
     return titles
 
@@ -794,7 +874,7 @@ def _find_new_document(sw, preexisting_titles):
     return None
 
 
-def new_document(sw, doc_type="part", template_path=None):
+def new_document(sw, doc_type="part", template_path=None, *, max_documents=None):
     """
     创建新文档。
 
@@ -817,7 +897,10 @@ def new_document(sw, doc_type="part", template_path=None):
     else:
         template_path = _expand_path(template_path)
 
-    preexisting_titles = snapshot_open_documents(sw)
+    preexisting_titles = snapshot_open_documents(sw, strict=True)
+    budget = int(max_documents if max_documents is not None else os.environ.get("SW_MAX_DOCUMENTS", "8"))
+    if budget < 1 or len(preexisting_titles) >= budget:
+        raise SolidWorksConnectionError("SW_DOCUMENT_BUDGET", "new_document", f"打开文档数已达预算 {budget}；请保存并关闭本轮文档")
 
     model = sw.NewDocument(template_path, 0, 0, 0)
     if model is not None:
@@ -958,9 +1041,9 @@ def open_document(sw, file_path, read_only=False, silent=False, raise_on_error=F
     if model:
         print(f"已打开: {file_path}")
     else:
-        message = f"打开失败, 错误码: {errors.value}, 警告码: {warnings.value}"
+        message = f"打开失败, 错误码: {errors.value} ({classify_sw_file_load_errors(errors.value)}), 警告码: {warnings.value} ({classify_sw_file_load_warnings(warnings.value)})"
         if raise_on_error:
-            raise RuntimeError(message)
+            raise SolidWorksDocumentOpenError(message, errors.value, warnings.value)
         print(message)
     return model
 

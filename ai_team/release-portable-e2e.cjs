@@ -21,16 +21,29 @@ function assertSafeTestPath(target) {
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-async function waitUntil(check, label, timeout = 30_000) {
+/** @brief 有界等待就绪；程序退出或无法启动时立即报告，保留最后的连接错误。 */
+async function waitUntil(check, label, timeout = 90_000, health = () => null) {
   const deadline = Date.now() + timeout;
+  let lastError;
   while (Date.now() < deadline) {
+    const failure = health();
+    if (failure) throw new Error(`${label}: ${failure}`);
     try {
       const value = await check();
       if (value) return value;
-    } catch {}
+    } catch (error) { lastError = error; }
     await sleep(250);
   }
-  throw new Error(`timeout: ${label}`);
+  throw new Error(`timeout: ${label}${lastError ? `; last error: ${lastError.message}` : ""}`);
+}
+
+/** @brief 选取首个可交互 page；CDP 刚连上时 contexts() 可能为空或 page 尚未注册。 */
+function firstPage(browser) {
+  for (const context of browser.contexts()) {
+    const [candidate] = context.pages();
+    if (candidate) return candidate;
+  }
+  return null;
 }
 
 async function main() {
@@ -51,19 +64,26 @@ async function main() {
       WEBVIEW2_USER_DATA_FOLDER: webviewData,
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-port=9227",
     },
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  let launchError;
+  let output = "";
+  const record = (data) => { output = (output + data.toString("utf8")).slice(-32_768); };
+  app.stdout.on("data", record);
+  app.stderr.on("data", record);
+  app.on("error", (error) => { launchError = error; });
+  const health = () => launchError?.message
+    || (app.exitCode !== null ? `process exited with code ${app.exitCode}` : null)
+    || (app.signalCode ? `process exited with signal ${app.signalCode}` : null);
   let browser;
   try {
     await waitUntil(async () => {
-      try {
-        return (await fetch("http://127.0.0.1:9227/json/version")).ok;
-      } catch {
-        return false;
-      }
-    }, "portable Tauri CDP start");
+      return (await fetch("http://127.0.0.1:9227/json/version", { signal: AbortSignal.timeout(1_000) })).ok;
+    }, "portable Tauri CDP start", 90_000, health);
     browser = await chromium.connectOverCDP("http://127.0.0.1:9227");
-    const page = browser.contexts()[0].pages()[0];
+    // @brief CDP 端口就绪时 WebView2 的 page target 可能尚未注册；
+    //        必须先有界等待首个 page 出现，否则 contexts()[0].pages()[0] 为 undefined。
+    const page = await waitUntil(() => firstPage(browser), "portable Tauri page", 60_000, health);
     await page.waitForTimeout(2_000);
     const invoke = (command, args = {}) => page.evaluate(
       ([activeCommand, activeArgs]) => window.__TAURI_INTERNALS__.invoke(activeCommand, activeArgs),
@@ -93,13 +113,24 @@ async function main() {
     const stopped = await invoke("stop_worker");
     if (stopped.running) throw new Error(`worker 未停止: ${JSON.stringify(stopped)}`);
     console.log(JSON.stringify({ skillRoot: runtime.skillRoot, python: runtime.python, workerStarted: started, workerStopped: stopped }, null, 2));
+  } catch (error) {
+    // @brief 只记录启动状态和自身输出，不转储含签名密钥的进程环境。
+    fs.writeFileSync(path.join(releaseOutput, "e2e-diagnostics.json"), JSON.stringify({
+      executable, pid: app.pid, exitCode: app.exitCode, signalCode: app.signalCode,
+      error: error.message, launchError: launchError?.message,
+    }, null, 2), "utf8");
+    fs.writeFileSync(path.join(releaseOutput, "e2e-diagnostics.log"), output, "utf8");
+    throw error;
   } finally {
     if (browser) await browser.close().catch(() => {});
     app.kill("SIGKILL");
   }
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+module.exports = { waitUntil, firstPage };
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

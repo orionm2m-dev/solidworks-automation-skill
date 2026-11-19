@@ -833,7 +833,8 @@ def _start_condition(start_offset):
     """
     起始条件参数 (T0, StartOffset, FlipStartOffset)。
 
-    偏移为零时从草图平面开始；非零时使用 swStartOffset(3)，负值表示反向偏移。
+    偏移为零时从草图平面开始；非零时使用 swStartOffset(3，SW2026 原厂枚举核对)，
+    负值表示反向偏移。
     """
     if not start_offset:
         return 0, 0.0, False
@@ -848,9 +849,9 @@ def extrude_boss(model, sketch_name, depth, direction=True, merge=True, start_of
         model: IModelDoc2
         sketch_name: 草图名称（如 "Sketch1"）
         depth: 拉伸深度（米）
-        direction: True=正方向
+        direction: True=反转默认方向；凸台默认沿草图法向
         merge: True=合并结果；False 时生成独立实体
-        start_offset: 起始面相对草图平面的偏移（米），负值反向
+        start_offset: 起始面相对草图平面的偏移（米），负值反向；默认 0 保持原行为
     """
     _ensure_sketch_selected(model, sketch_name)
     start_type, start_value, start_flip = _start_condition(start_offset)
@@ -881,7 +882,8 @@ def extrude_boss(model, sketch_name, depth, direction=True, merge=True, start_of
     )
 
 
-def extrude_cut(model, sketch_name, depth, direction=True, flip=False, start_offset=0.0):
+def extrude_cut(model, sketch_name, depth, direction=False, flip=False, start_offset=0.0,
+                both_directions=False):
     """
     切除拉伸
 
@@ -889,9 +891,11 @@ def extrude_cut(model, sketch_name, depth, direction=True, flip=False, start_off
         model: IModelDoc2
         sketch_name: 草图名称
         depth: 切除深度（米），0 表示完全贯穿
-        direction: True=正方向
-        flip: True=翻转切除方向
-        start_offset: 起始面相对草图平面的偏移（米），负值反向
+        direction: True=反转默认方向；切除默认逆草图法向。默认 False：不传时切除方向
+            与旧版默认调用一致（旧版把 direction 误传到 Sd，Dir 恒为 False）
+        flip: True=切除轮廓外侧，False=切除轮廓内侧
+        start_offset: 起始面相对草图平面的偏移（米），负值反向；默认 0 保持原行为
+        both_directions: 两个方向使用同样终止条件，默认保持单向行为
     """
     _ensure_sketch_selected(model, sketch_name)
     start_type, start_value, start_flip = _start_condition(start_offset)
@@ -903,13 +907,11 @@ def extrude_cut(model, sketch_name, depth, direction=True, flip=False, start_off
         end_condition = 0  # swEndCondBlind
 
     return model.FeatureManager.FeatureCut4(
-        direction, flip, False,
-        end_condition, 0,
-        depth, 0,
-        False, False, False, False,
-        0.0, 0.0,
+        not both_directions, bool(flip), bool(direction),  # Sd, Flip, Dir
+        end_condition, end_condition if both_directions else 0, depth, depth if both_directions else 0,
+        False, False, False, False, 0.0, 0.0,
         False, False, False, False, False,
-        True, True, True, True,
+        True, True, False, False,  # assembly-scope flags -> False for part docs
         False, start_type, start_value, start_flip, False
     )
 
@@ -929,7 +931,7 @@ def extrude_cut_midplane(model, sketch_name, total_depth):
         False, False, False, False,
         0.0, 0.0,
         False, False, False, False, False,
-        True, True, True, True,
+        True, True, False, False,  # assembly-scope flags -> False for part docs
         False, 0, 0, False, False
     )
 
@@ -1057,15 +1059,12 @@ def linear_pattern(model, feature_name, d1_x, d1_y, d1_z, d1_spacing, d1_count,
         d1_*: 方向1 的方向向量、间距（米）和数量
         d2_*: 方向2（可选）
     """
-    _select_by_id(model.Extension, feature_name, "BODYFEATURE", mark=4)
-    return model.FeatureManager.FeatureLinearPattern3(
-        d1_spacing, d2_spacing,
-        d1_count, d2_count,
-        False, False,
-        str(d1_x), str(d1_y), str(d1_z),
-        str(d2_x), str(d2_y), str(d2_z),
-        False, False
-    )
+    try:
+        from .sw_pattern import linear_pattern as create_pattern
+    except ImportError:
+        from sw_pattern import linear_pattern as create_pattern
+    return create_pattern(model, feature_name, (d1_x, d1_y, d1_z), d1_spacing, d1_count,
+        (d2_x, d2_y, d2_z), d2_spacing, d2_count)
 
 
 def circular_pattern(model, feature_name, axis_name, angle_rad, count, equal_spacing=True):
@@ -1079,11 +1078,11 @@ def circular_pattern(model, feature_name, axis_name, angle_rad, count, equal_spa
         count: 实例数量
         equal_spacing: True=等间距
     """
-    _select_by_id(model.Extension, feature_name, "BODYFEATURE", mark=4)
-    _select_by_id(model.Extension, axis_name, "AXIS", append=True, mark=1)
-    return model.FeatureManager.FeatureCircularPattern4(
-        count, angle_rad, False, "None", False, equal_spacing, False
-    )
+    try:
+        from .sw_pattern import circular_pattern as create_pattern
+    except ImportError:
+        from sw_pattern import circular_pattern as create_pattern
+    return create_pattern(model, feature_name, axis_name, angle_rad, count, equal_spacing)
 
 
 def shell(model, thickness, faces_to_remove=None):

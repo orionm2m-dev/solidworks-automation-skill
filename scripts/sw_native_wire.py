@@ -1,9 +1,12 @@
 """带显式目标与证据的原生圆截面路径、STEP 导入和组件替换。"""
 from __future__ import annotations
-import base64, json, math, os, subprocess
+import json, math, os, subprocess
 from pathlib import Path
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+# @brief 允许最大合法规格通过标准输入传输，同时限制本机子进程的请求体积。
+MAX_NATIVE_REQUEST_BYTES = 1024 * 1024
 
 class Strict(BaseModel):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
@@ -98,8 +101,9 @@ def invoke_native(sw, target, action, **values):
     interop=next((p for p in [install/'api/redist',install] if (p/'SolidWorks.Interop.sldworks.dll').is_file()),None)
     if not interop: raise FileNotFoundError('Installed SOLIDWORKS PIA not found')
     payload=dict(process_id=int(get(sw,'GetProcessID')),source=str(expected),action=action,**values)
-    encoded=base64.b64encode(json.dumps(payload).encode()).decode()
-    proc=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(Path(__file__).with_suffix('.ps1')),'-InputBase64',encoded,'-InteropRoot',str(interop)],capture_output=True,encoding='utf-8',errors='replace',timeout=240,creationflags=subprocess.CREATE_NO_WINDOW)
+    request=json.dumps(payload,ensure_ascii=False,allow_nan=False)
+    if len(request.encode('utf-8'))>MAX_NATIVE_REQUEST_BYTES: raise ValueError('Native request exceeds 1 MiB')
+    proc=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(Path(__file__).with_suffix('.ps1')),'-InteropRoot',str(interop)],input=request,capture_output=True,encoding='utf-8',errors='replace',timeout=240,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
     if proc.returncode: raise RuntimeError(proc.stderr.strip() or proc.stdout.strip())
     return json.loads(proc.stdout.lstrip('\ufeff'))
 

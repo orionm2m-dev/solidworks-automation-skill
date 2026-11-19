@@ -1,4 +1,5 @@
 """进程绑定下的交付兜底隔离测试；不调用真实 CAD。"""
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -60,7 +61,10 @@ def test_missing_bound_instance_does_not_choose_another_typelib(monkeypatch):
 
 def test_unbound_comtypes_attach_keeps_legacy_behavior(monkeypatch):
     monkeypatch.delenv("SOLIDWORKS_MCP_PROCESS_ID", raising=False)
-    selected = object()
+    # 回退实例同样要核对真实 PID 与 2026 版本；附着已运行实例不算本会话启动。
+    selected = SimpleNamespace(GetProcessID=lambda: 4321, RevisionNumber=lambda: "34.1.1")
+    monkeypatch.setattr(sw_delivery, "solidworks_processes", lambda: {4321: 2026})
+    monkeypatch.setattr(sw_delivery, "_LaunchGuard", nullcontext)
     client = SimpleNamespace(GetActiveObject=Mock(return_value=selected), CreateObject=Mock())
     assert sw_delivery._connect_comtypes_solidworks(client, ["SldWorks.Application"]) == (selected, False, None)
     client.CreateObject.assert_not_called()
@@ -68,7 +72,10 @@ def test_unbound_comtypes_attach_keeps_legacy_behavior(monkeypatch):
 
 def test_unbound_comtypes_creation_keeps_legacy_behavior(monkeypatch):
     monkeypatch.delenv("SOLIDWORKS_MCP_PROCESS_ID", raising=False)
-    selected = object()
+    # 只有启动前进程清单中不存在的 PID 才算本会话创建。
+    selected = SimpleNamespace(GetProcessID=lambda: 4321, RevisionNumber=lambda: "34.1.1")
+    monkeypatch.setattr(sw_delivery, "solidworks_processes", lambda: {})
+    monkeypatch.setattr(sw_delivery, "_LaunchGuard", nullcontext)
     error = RuntimeError("not active")
     client = SimpleNamespace(GetActiveObject=Mock(side_effect=error), CreateObject=Mock(return_value=selected))
     assert sw_delivery._connect_comtypes_solidworks(client, ["SldWorks.Application"]) == (selected, True, error)

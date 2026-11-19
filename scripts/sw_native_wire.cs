@@ -18,10 +18,14 @@ public static class NativeWireTools {
  [DllImport("ole32.dll")] static extern int CreateBindCtx(int reserved,out System.Runtime.InteropServices.ComTypes.IBindCtx context);
  static bool Same(string a,string b){return string.Equals(Path.GetFullPath(a),Path.GetFullPath(b),StringComparison.OrdinalIgnoreCase);}
  static ISldWorks Bind(int pid){
+  if(pid<=0)throw new Exception("Requested process unavailable");
   System.Runtime.InteropServices.ComTypes.IRunningObjectTable table;System.Runtime.InteropServices.ComTypes.IBindCtx context;
   GetRunningObjectTable(0,out table);CreateBindCtx(0,out context);
   System.Runtime.InteropServices.ComTypes.IEnumMoniker en;table.EnumRunning(out en);var ms=new System.Runtime.InteropServices.ComTypes.IMoniker[1];
-  while(en.Next(1,ms,IntPtr.Zero)==0){string name;ms[0].GetDisplayName(context,null,out name);if(name!="SolidWorks_PID_"+pid)continue;object obj;table.GetObject(ms[0],out obj);var sw=(ISldWorks)obj;if(sw.GetProcessID()!=pid)throw new Exception("PID mismatch");return sw;}
+  while(en.Next(1,ms,IntPtr.Zero)==0){string name;ms[0].GetDisplayName(context,null,out name);if(name!="SolidWorks_PID_"+pid&&name!="!SolidWorks_PID_"+pid)continue;object obj;table.GetObject(ms[0],out obj);var sw=(ISldWorks)obj;if(sw.GetProcessID()!=pid)throw new Exception("PID mismatch");return sw;}
+  // @brief 部分 2026 实例仅注册标准活动对象；只有 PID 与宿主完全一致才允许使用。
+  try{var active=(ISldWorks)Marshal.GetActiveObject("SldWorks.Application");if(active.GetProcessID()==pid)return active;}
+  catch(COMException){}
   throw new Exception("Requested process unavailable");
  }
  static IModelDoc2 Guard(ISldWorks sw,string path){var d=(IModelDoc2)sw.ActiveDoc;if(d==null||string.IsNullOrEmpty(d.GetPathName())||!Same(d.GetPathName(),path))throw new Exception("Active document target mismatch");return d;}
@@ -94,7 +98,8 @@ public static class NativeWireTools {
   return new{decal_id=id,images_stored_in_model=true,document_decals=before+1,face_decals=onFace+1,face_area_mm2=face.GetArea()*1e6,face_box_mm=((double[])face.GetBox()).Select(v=>v*1000).ToArray(),image_path=r.image_path,rotation_deg=r.rotation_deg,mirror_width=r.mirror_width,mirror_height=r.mirror_height,use_alpha=r.use_alpha};
  }
  public static string Run(string input){
-  var r=json.Deserialize<Request>(input);var sw=Bind(r.process_id);var d=Guard(sw,r.source);var result=new Dictionary<string,object>{{"status","ok"},{"process_id",r.process_id},{"saved",false},{"manual_review_required",true}};
+  // @brief 只有导入请求保存；未执行保存不能用 saved=false 冒充保存失败。
+  var r=json.Deserialize<Request>(input);var sw=Bind(r.process_id);var d=Guard(sw,r.source);var result=new Dictionary<string,object>{{"status","ok"},{"process_id",r.process_id},{"save_requested",r.action=="import"},{"manual_review_required",true}};
   if(r.action=="inspect"){
    if(d.GetType()==1)result["bodies"]=Bodies(d).Select(BodyRow).ToArray();else if(d.GetType()==2)result["components"]=Components(d).Select(ComponentRow).ToArray();
    result["features"]=Features(d).Select(f=>new{name=f.Name,type=f.GetTypeName2()}).ToArray();

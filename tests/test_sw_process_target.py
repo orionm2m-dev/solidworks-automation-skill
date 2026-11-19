@@ -205,7 +205,9 @@ def test_legacy_default_still_attaches_without_rot(harness):
     assert metadata["requested_process_id"] is None
 
 
-def test_legacy_default_still_launches_if_no_active_instance(harness):
+def test_legacy_default_still_launches_if_no_active_instance(harness, monkeypatch):
+    # 默认连接只把启动前进程清单中不存在的 PID 视为本会话启动；这里模拟没有运行中的实例。
+    monkeypatch.setattr(connection, "solidworks_processes", lambda: {})
     wanted = app(123)
     harness.legacy.side_effect = RuntimeError("no active object")
     harness.dispatch.side_effect = None

@@ -3,9 +3,10 @@ use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Transaction};
 use serde_json::{json, Value};
 use std::io::Write;
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{
     fs,
     fs::OpenOptions,
@@ -13,6 +14,8 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use wait_timeout::ChildExt;
+
+mod lmstudio;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -33,6 +36,8 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 struct WorkerState {
     child: Mutex<Option<Child>>,
+    starting: Mutex<()>,
+    cancel_start: AtomicBool,
 }
 
 fn queue_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -805,6 +810,18 @@ fn validate_new_queue_job(job: &Value) -> Result<(), String> {
         let knowledge = knowledge
             .as_object()
             .ok_or_else(|| "uiConfig.knowledgeBase 必须是对象。".to_string())?;
+        if knowledge
+            .get("officialApiDocsEnabled")
+            .is_some_and(|value| !value.is_boolean())
+        {
+            return Err("officialApiDocsEnabled 必须是布尔值。".to_string());
+        }
+        if knowledge
+            .get("parallelApiFallbackEnabled")
+            .is_some_and(|value| !value.is_boolean())
+        {
+            return Err("parallelApiFallbackEnabled 必须是布尔值。".to_string());
+        }
         if knowledge.get("cloudEnabled").and_then(Value::as_bool) == Some(true) {
             let endpoint = knowledge
                 .get("endpoint")
@@ -1272,8 +1289,42 @@ fn is_queue_metadata_path(path: &Path) -> bool {
     )
 }
 
+/// @brief 固定运行时与四种 Agent 的命令名，覆盖现有 PATH 回退。
+fn supported_program_name(program: &str) -> bool {
+    matches!(
+        program,
+        "python"
+            | "py"
+            | "node"
+            | "node.exe"
+            | "codex"
+            | "codex.exe"
+            | "claude"
+            | "claude.exe"
+            | "gemini"
+            | "gemini.exe"
+            | "opencode"
+            | "opencode.exe"
+    )
+}
+
 fn command_exists(program: &str, args: &[&str]) -> bool {
-    let mut command = Command::new(program);
+    // CWE-78: 只把白名单程序名落到子进程入口（调用方全部传字面量）。
+    let mut command = match program {
+        "python" => Command::new("python"),
+        "py" => Command::new("py"),
+        "node" => Command::new("node"),
+        "node.exe" => Command::new("node.exe"),
+        "codex" => Command::new("codex"),
+        "codex.exe" => Command::new("codex.exe"),
+        "claude" => Command::new("claude"),
+        "claude.exe" => Command::new("claude.exe"),
+        "gemini" => Command::new("gemini"),
+        "gemini.exe" => Command::new("gemini.exe"),
+        "opencode" => Command::new("opencode"),
+        "opencode.exe" => Command::new("opencode.exe"),
+        _ => return false,
+    };
     command.args(args).arg("--version");
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
@@ -1282,17 +1333,151 @@ fn command_exists(program: &str, args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
+fn user_python_path() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        std::env::var_os("LOCALAPPDATA")
+            .map(|root| PathBuf::from(root).join(r"Programs\Python\Python312\python.exe"))
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+/// @brief 只允许已识别的 Python 命令或固定用户安装路径，绝不经 shell 拼接。
+fn python_process(program: &str) -> Result<Command, String> {
+    match program {
+        "python" | "py" => Ok(Command::new(program)),
+        other => {
+            let expected = user_python_path()
+                .and_then(|path| path.canonicalize().ok())
+                .ok_or_else(|| "未找到用户级 Python 安装。".to_string())?;
+            let actual = Path::new(other)
+                .canonicalize()
+                .map_err(|_| "无法验证 Python 路径。".to_string())?;
+            if actual != expected {
+                return Err("拒绝不受信任的 Python 路径。".to_string());
+            }
+            Ok(Command::new(expected))
+        }
+    }
+}
+
+fn python_compatible(program: &str, args: &[&str]) -> bool {
+    let Ok(mut command) = python_process(program) else {
+        return false;
+    };
+    command
+        .args(args)
+        .arg("-c")
+        .arg("import sys; sys.exit(0 if sys.version_info >= (3, 10) else 2)");
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    command_output_with_timeout(&mut command, Duration::from_secs(5))
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
 fn python_command() -> Result<(String, Vec<String>), String> {
-    if command_exists("python", &[]) {
+    if python_compatible("python", &[]) {
         return Ok(("python".to_string(), Vec::new()));
     }
-    if command_exists("py", &["-3"]) {
+    if python_compatible("py", &["-3"]) {
         return Ok(("py".to_string(), vec!["-3".to_string()]));
+    }
+    if let Some(path) = user_python_path().filter(|path| path.is_file()) {
+        let program = path.to_string_lossy().to_string();
+        if python_compatible(&program, &[]) {
+            return Ok((program, Vec::new()));
+        }
     }
     Err(
         "没有找到 Python。请先安装 Python 3，或把 python/py 加入 PATH 后再启动本地执行器。"
             .to_string(),
     )
+}
+
+/// @brief 仅在启动 worker 时按需安装 Python；环境诊断保持只读。
+fn ensure_worker_python(cancelled: &AtomicBool) -> Result<(String, Vec<String>), String> {
+    if cancelled.load(Ordering::SeqCst) {
+        return Err("已取消本地执行器启动。".to_string());
+    }
+    if let Ok(python) = python_command() {
+        return if cancelled.load(Ordering::SeqCst) {
+            Err("已取消本地执行器启动。".to_string())
+        } else {
+            Ok(python)
+        };
+    }
+    if cancelled.load(Ordering::SeqCst) {
+        return Err("已取消本地执行器启动。".to_string());
+    }
+    if std::env::var("SW_AUTO_INSTALL_DEPENDENCIES")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "off" | "false" | "0"
+            )
+        })
+        .unwrap_or(false)
+    {
+        return Err("未找到 Python，且自动安装已关闭。".to_string());
+    }
+    #[cfg(windows)]
+    {
+        let mut installer = Command::new("winget");
+        installer.args([
+            "install",
+            "--id",
+            "Python.Python.3.12",
+            "--exact",
+            "--source",
+            "winget",
+            "--scope",
+            "user",
+            "--silent",
+            "--disable-interactivity",
+            "--accept-package-agreements",
+            "--accept-source-agreements",
+        ]);
+        installer
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW);
+        let mut child = installer.spawn().map_err(|_| {
+            "没有找到 Python，且无法启动 winget 自动安装。请安装 Python 3.10+ 后重试。".to_string()
+        })?;
+        let deadline = Instant::now() + Duration::from_secs(300);
+        let status = loop {
+            if cancelled.load(Ordering::SeqCst) {
+                let _ = terminate_process_tree(&mut child);
+                return Err("已取消 Python 自动安装。".to_string());
+            }
+            if Instant::now() >= deadline {
+                let _ = terminate_process_tree(&mut child);
+                return Err("Python 自动安装超时，请检查网络或手动安装后重试。".to_string());
+            }
+            match child.wait_timeout(Duration::from_millis(200)) {
+                Ok(Some(status)) => break status,
+                Ok(None) => {}
+                Err(error) => {
+                    let _ = terminate_process_tree(&mut child);
+                    return Err(format!("Python 自动安装失败: {error}"));
+                }
+            }
+        };
+        if !status.success() {
+            return Err("Python 自动安装失败，请检查 winget、网络或用户权限。".to_string());
+        }
+        python_command()
+            .map_err(|_| "Python 安装完成但尚不能运行，请检查安装或重启应用。".to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        Err("未找到 Python 3.10+；当前平台请先安装 Python。".to_string())
+    }
 }
 
 fn detected_skill_root(app: &AppHandle, requested: Option<&str>) -> Result<PathBuf, String> {
@@ -1327,8 +1512,77 @@ fn detected_skill_root(app: &AppHandle, requested: Option<&str>) -> Result<PathB
         })
 }
 
+/// @brief 判断 `program` 是否为 Windows 批处理脚本（.cmd/.bat）。
+/// 这些文件只能由 cmd.exe 解释执行；CreateProcessW 对它们的隐式委托
+/// 在含非 ASCII 路径 + 非 GBK 代码页环境（如 GitHub 英文 runner）下不稳定。
+#[cfg(windows)]
+fn is_batch_script(program: &Path) -> bool {
+    program
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn is_batch_script(_program: &Path) -> bool {
+    false
+}
+
+/// @brief 剥离 `fs::canonicalize` 产生的 `\\?\`（verbatim path）前缀，得到普通绝对路径。
+/// cmd.exe 不识别 verbatim 前缀；本函数仅用于传给 cmd.exe 的批处理路径。
+#[cfg(windows)]
+fn strip_verbatim_prefix(program: &Path) -> PathBuf {
+    let text = program.to_string_lossy();
+    PathBuf::from(text.strip_prefix(r"\\?\").unwrap_or(&text).to_string())
+}
+
+#[cfg(not(windows))]
+fn strip_verbatim_prefix(program: &Path) -> PathBuf {
+    program.to_path_buf()
+}
+
 fn command_summary_with_prefix(command: &(String, Vec<String>), args: &[&str]) -> Value {
-    let mut process = Command::new(&command.0);
+    // CWE-78: 子进程仅接受白名单命令名，或无 ".." 穿越段的绝对路径可执行文件
+    // （local_agent_command 各构造分支只产出这两类来源）。
+    // 路径来自 local_agent_command 的已安装入口或用户显式 *_BIN 配置，
+    // 不接受任务数据作为程序；绝对路径本身不是来源认证，还要验证真实文件。
+    if !(supported_program_name(command.0.as_str())
+        || (Path::new(&command.0).is_absolute()
+            && Path::new(&command.0).is_file()
+            && !Path::new(&command.0)
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))))
+    {
+        return json!({
+            "ok": false,
+            "message": format!("拒绝不受信任的外部程序: {}", command.0)
+        });
+    }
+    let program = if supported_program_name(command.0.as_str()) {
+        PathBuf::from(&command.0)
+    } else {
+        match fs::canonicalize(&command.0) {
+            Ok(path) => path,
+            Err(error) => return json!({"ok":false,"message":error.to_string()}),
+        }
+    };
+    // @brief Windows 上不要依赖 CreateProcessW 对 .cmd/.bat 的隐式批处理转换：
+    // 该未文档化行为会把程序转成 `cmd.exe /c`，在含中文路径 + 非 GBK 代码页
+    // （如 GitHub 英文 runner）下偶发报 "The system cannot find the path specified."。
+    // 改为显式 `cmd.exe /d /c` 并沿用 .arg 的标准引号转义（Rust 会给含空格的
+    // program 自动加引号，cmd.exe 剥离后得到真实路径），避免隐式委托的代码页歧义。
+    // 注意：canonicalize 返回 `\\?\` 前缀的 verbatim 路径，cmd.exe 不识别该前缀，
+    // 必须剥离后再传入。
+    // 安全边界：仅对扩展名为 .cmd/.bat 的程序启用；白名单/绝对路径/is_file/无 `..`
+    // 校验已在上面完成，args 均为可信固定值（--version / login status / auth 字面量）。
+    let mut process = if is_batch_script(&program) {
+        let mut cmd = Command::new("cmd.exe");
+        cmd.arg("/d").arg("/c").arg(strip_verbatim_prefix(&program));
+        cmd
+    } else {
+        Command::new(&program)
+    };
     process.args(&command.1).args(args);
     #[cfg(windows)]
     process.creation_flags(CREATE_NO_WINDOW);
@@ -1681,7 +1935,19 @@ fn detect_autocad() -> Option<PathBuf> {
 
 /// @brief 调用 Skill 的统一环境诊断，非零退出码仍允许读取结构化修复建议。
 fn collect_doctor_report(program: &str, args: &[String], skill_root: &Path) -> Value {
-    let mut doctor = Command::new(program);
+    // CWE-78: python_process 只接受白名单程序名或固定用户安装位置。
+    let mut doctor = match python_process(program) {
+        Ok(command) => command,
+        Err(error) => {
+            return json!({
+                "schemaVersion": "1.0",
+                "summary": { "status": "error" },
+                "checks": [],
+                "remediations": [],
+                "error": error
+            });
+        }
+    };
     doctor
         .args(args)
         .current_dir(skill_root)
@@ -1720,7 +1986,8 @@ fn collect_runtime_health(app: AppHandle) -> Result<Value, String> {
         .unwrap_or_default();
     let (python, solidworks, doctor) = match python_command() {
         Ok((program, args)) => {
-            let mut preflight = Command::new(&program);
+            // CWE-78: python_process 校验命令和固定用户安装路径。
+            let mut preflight = python_process(&program)?;
             preflight
                 .args(&args)
                 .current_dir(&skill_root)
@@ -2470,38 +2737,59 @@ fn worker_status(app: AppHandle, state: State<'_, WorkerState>) -> Result<Value,
         }
         return Ok(status);
     }
+    let starting = state.starting.try_lock().is_err();
     Ok(json!({
         "running": false,
         "pid": null,
-        "message": "worker 未启动",
+        "message": if starting { "正在检测并配置本地环境" } else { "worker 未启动" },
         "health": read_worker_health(&app)
     }))
 }
 
 #[tauri::command]
-fn start_worker(
+async fn start_worker(
     app: AppHandle,
-    state: State<'_, WorkerState>,
     repo_path: String,
     enable_codex: bool,
     codex_full_access: bool,
 ) -> Result<Value, String> {
-    let mut guard = state.child.lock().map_err(|error| error.to_string())?;
-    if let Some(child) = guard.as_mut() {
-        let pid = child.id();
-        let status = worker_status_from_child(child)?;
-        if status.get("running").and_then(Value::as_bool) == Some(true) {
-            return Ok(status);
+    tauri::async_runtime::spawn_blocking(move || {
+        start_worker_blocking(app, repo_path, enable_codex, codex_full_access)
+    })
+    .await
+    .map_err(|error| format!("本地执行器启动任务失败: {error}"))?
+}
+
+fn start_worker_blocking(
+    app: AppHandle,
+    repo_path: String,
+    enable_codex: bool,
+    codex_full_access: bool,
+) -> Result<Value, String> {
+    let state = app.state::<WorkerState>();
+    let _start_guard = state
+        .starting
+        .try_lock()
+        .map_err(|_| "本地执行器正在启动，请稍候。".to_string())?;
+    state.cancel_start.store(false, Ordering::SeqCst);
+    {
+        let mut guard = state.child.lock().map_err(|error| error.to_string())?;
+        if let Some(child) = guard.as_mut() {
+            let pid = child.id();
+            let status = worker_status_from_child(child)?;
+            if status.get("running").and_then(Value::as_bool) == Some(true) {
+                return Ok(status);
+            }
+            recover_jobs_owned_by_worker(&app, pid)?;
+            *guard = None;
         }
-        recover_jobs_owned_by_worker(&app, pid)?;
-        *guard = None;
     }
 
     let queue = queue_dir(&app)?;
     let _ = fs::remove_file(queue.join("worker_health.json"));
     let repo_path = detected_skill_root(&app, Some(&repo_path))?;
-    let (python, python_args) = python_command()?;
-    let mut command = Command::new(python);
+    let (python, python_args) = ensure_worker_python(&state.cancel_start)?;
+    let mut command = python_process(&python)?;
     command.args(python_args);
     command
         .current_dir(repo_path)
@@ -2520,6 +2808,10 @@ fn start_worker(
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
 
+    let mut guard = state.child.lock().map_err(|error| error.to_string())?;
+    if state.cancel_start.load(Ordering::SeqCst) {
+        return Err("已取消本地执行器启动。".to_string());
+    }
     let child = command
         .spawn()
         .map_err(|error| format!("本地执行器启动失败: {error}"))?;
@@ -2679,6 +2971,7 @@ fn recover_jobs_owned_by_worker(app: &AppHandle, worker_pid: u32) -> Result<u64,
 
 fn stop_worker_process(app: &AppHandle) -> Result<Value, String> {
     let state = app.state::<WorkerState>();
+    state.cancel_start.store(true, Ordering::SeqCst);
     let mut guard = state.child.lock().map_err(|error| error.to_string())?;
     if let Some(mut child) = guard.take() {
         let pid = child.id();
@@ -2697,6 +2990,11 @@ fn stop_worker_process(app: &AppHandle) -> Result<Value, String> {
                 return Err(format!("worker 停止失败: {error}"));
             }
         }
+    }
+    drop(guard);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while state.starting.try_lock().is_err() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(50));
     }
     Ok(json!({
         "running": false,
@@ -2775,6 +3073,35 @@ fn read_queue_log_tail(app: AppHandle, id: String) -> Result<Value, String> {
     }))
 }
 
+/// @brief 读取 CC Switch 根目录内的固定文件名；拒绝越界与 ".." 穿越段（CWE-22）。
+fn cc_switch_file_path(root: &Path, file_name: &str) -> Result<PathBuf, String> {
+    if !matches!(file_name, "config.json" | "settings.json" | "cc-switch.db") {
+        return Err("CC Switch 文件名不在固定清单中".into());
+    }
+    // 根目录可以是用户配置的链接；根内文件必须留在该根的真实位置内。
+    let canonical_root = fs::canonicalize(root).map_err(|error| error.to_string())?;
+    let target = fs::canonicalize(root.join(file_name)).map_err(|error| error.to_string())?;
+    if !target.starts_with(&canonical_root) || !target.is_file() {
+        return Err("CC Switch 配置链接指向根目录之外或不是普通文件".into());
+    }
+    Ok(target)
+}
+
+/// @brief JSON 配置有界读取，SQLite 同样复用真实文件边界。
+fn read_cc_switch_file(root: &Path, file_name: &str) -> Result<String, String> {
+    use std::io::Read;
+    let target = cc_switch_file_path(root, file_name)?;
+    let file = fs::File::open(target).map_err(|error| error.to_string())?;
+    let mut raw = String::new();
+    file.take(4 * 1024 * 1024 + 1)
+        .read_to_string(&mut raw)
+        .map_err(|error| error.to_string())?;
+    if raw.len() > 4 * 1024 * 1024 {
+        return Err("CC Switch JSON 超过 4 MiB".into());
+    }
+    Ok(raw)
+}
+
 #[tauri::command]
 fn sync_cc_switch_config() -> Result<Value, String> {
     let home = std::env::var("USERPROFILE")
@@ -2785,6 +3112,7 @@ fn sync_cc_switch_config() -> Result<Value, String> {
     let config_path = root.join("config.json");
     let settings_path = root.join("settings.json");
     if database_path.exists() {
+        let database_path = cc_switch_file_path(&root, "cc-switch.db")?;
         let connection = Connection::open_with_flags(
             &database_path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -2804,7 +3132,7 @@ fn sync_cc_switch_config() -> Result<Value, String> {
                 .and_then(Value::as_str)
                 .unwrap_or("")
         };
-        let settings = fs::read_to_string(&settings_path)
+        let settings = read_cc_switch_file(&root, "settings.json")
             .ok()
             .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
             .unwrap_or(Value::Null);
@@ -2840,9 +3168,9 @@ fn sync_cc_switch_config() -> Result<Value, String> {
         );
     }
 
-    let config_raw = fs::read_to_string(&config_path).map_err(|error| error.to_string())?;
+    let config_raw = read_cc_switch_file(&root, "config.json")?;
     let config = serde_json::from_str::<Value>(&config_raw).map_err(|error| error.to_string())?;
-    let settings = fs::read_to_string(&settings_path)
+    let settings = read_cc_switch_file(&root, "settings.json")
         .ok()
         .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
         .unwrap_or(Value::Null);
@@ -2875,10 +3203,14 @@ pub fn run() {
     tauri::Builder::default()
         .manage(WorkerState {
             child: Mutex::new(None),
+            starting: Mutex::new(()),
+            cancel_start: AtomicBool::new(false),
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            lmstudio::lmstudio_models,
+            lmstudio::lmstudio_infer,
             save_queue_job,
             approve_queue_job,
             approve_review_job,
@@ -3048,6 +3380,38 @@ mod tests {
     }
 
     #[test]
+    fn validates_official_api_document_switch() {
+        let mut job = queued_job();
+        job["uiConfig"]["knowledgeBase"]["officialApiDocsEnabled"] = json!(false);
+        validate_new_queue_job(&job).expect("boolean switch is valid");
+        job["uiConfig"]["knowledgeBase"]["officialApiDocsEnabled"] = json!("false");
+        assert!(validate_new_queue_job(&job)
+            .expect_err("invalid switch")
+            .contains("officialApiDocsEnabled"));
+        job["uiConfig"]["knowledgeBase"]["officialApiDocsEnabled"] = json!(true);
+        job["uiConfig"]["knowledgeBase"]["parallelApiFallbackEnabled"] = json!(false);
+        validate_new_queue_job(&job).expect("boolean parallel switch is valid");
+        job["uiConfig"]["knowledgeBase"]["parallelApiFallbackEnabled"] = json!("false");
+        assert!(validate_new_queue_job(&job)
+            .expect_err("invalid parallel switch")
+            .contains("parallelApiFallbackEnabled"));
+    }
+
+    #[test]
+    fn python_process_rejects_arbitrary_programs() {
+        assert!(super::python_process("python").is_ok());
+        assert!(super::python_process("py").is_ok());
+        assert!(super::python_process("untrusted-python.exe").is_err());
+    }
+
+    #[test]
+    fn cancelled_worker_start_never_attempts_installation() {
+        let cancelled = std::sync::atomic::AtomicBool::new(true);
+        let error = super::ensure_worker_python(&cancelled).expect_err("cancelled start");
+        assert!(error.contains("取消"));
+    }
+
+    #[test]
     fn retry_resets_failed_runtime_state_and_preserves_approval() {
         let mut job = queued_job();
         job["status"] = json!("failed");
@@ -3212,13 +3576,11 @@ mod tests {
                 );",
             )
             .expect("cc switch schema");
+        // 明确的假凭据用于验证输出不泄漏，保留可读夹具。
         connection
             .execute(
                 "INSERT INTO providers VALUES (?1, 'codex', '工作路由', ?2, '', 'custom', '', 1, 0)",
-                params![
-                    "route-1",
-                    r#"{"auth":{"OPENAI_API_KEY":"secret-must-not-leak"},"config":"model = \"gpt-5.5\""}"#
-                ],
+                params!["route-1", r#"{"auth":{"OPENAI_API_KEY":"secret-must-not-leak"},"config":"model = \"gpt-5.5\""}"#],
             )
             .expect("codex provider");
         connection
@@ -3356,3 +3718,6 @@ mod tests {
         assert!(payload.contains("D:/deliveries/model.step"));
     }
 }
+
+#[cfg(test)]
+mod runtime_boundary_tests;

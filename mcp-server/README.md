@@ -19,7 +19,7 @@ exclusive receipts. It does not generate toolpaths, post NC or save the part.
 The reusable `scripts/mcp_request.py` client performs sequential protocol calls from JSON
 and records results without overwriting existing evidence.
 
-本目录提供一个本地 `stdio` MCP Server，同时暴露无 CAD 开放格式工具和 SolidWorks COM 白名单工具。MCP 与 CAD Studio、Skill、CLI 共用能力清单和数据协议。
+本目录提供一个本地 MCP Server，同时暴露无 CAD 开放格式工具和 SolidWorks COM 白名单工具。MCP 与 CAD Studio、Skill、CLI 共用能力清单和数据协议。
 
 SolidWorks 是 Windows 桌面 COM 应用，因此本 server 默认使用 `stdio`。每个 server 可以绑定一个已运行的 SOLIDWORKS 进程；原生操作按目标 PID 使用跨进程 Windows mutex 串行执行。两个独立的 server 分别绑定不同 PID 时可以并行工作。
 
@@ -95,12 +95,14 @@ Windows 下原生 COM 操作会持有按 PID 命名的 mutex `Local\SolidWorksAu
 
 验证范围：Windows / Python 3.10，文档误匹配的零写入测试、未保存标题、同名异路径、旧模式兼容、严格模式与真实跨进程 Windows mutex。SOLIDWORKS 2026 SP4.1（Revision 34.4.1）已通过全新 stdio MCP 进程验证：错误路径和缺失目标均在写入前拒绝，匹配路径的包围盒读取成功，原活动文档、保存标志及外观保持不变；该控制路径作为 `pilot`，不宣称提供事务回滚或隔离人工操作。
 
+除 `stdio` 外，还可用 `--transport streamable-http` 把同一套工具以 HTTP 方式暴露，供**不在同一台机器上**的 MCP 客户端连接（例如 Linux 上的 agent 远程驱动 Windows 上的 SolidWorks）。此时全局串行锁依然生效，请仍然只接一个客户端。
+
 ## 环境要求
 
 - Windows 10/11
 - 仅调用 `cadstudio_write_open_format` 时不需要安装 SolidWorks/AutoCAD
-- 调用 `solidworks_*` 原生工具时需要 SolidWorks 已安装并至少启动过一次，完成 COM 注册
-- Python 3.8+
+- 原生 SolidWorks 操作以 SolidWorks 2026 为支持与验收目标；安装后至少启动一次，完成 COM 注册
+- Python 3.10+
 - Python 依赖：
 
 ```powershell
@@ -117,20 +119,203 @@ python mcp-server\server.py
 
 该命令通常由 MCP 客户端作为子进程启动，不需要手动长期运行。
 
-## Smithery 发布
+## 工具发现网关（可选，默认关闭）
 
-根目录 `manifest.json` 遵循 MCPB 规范，并使用 `tools_generated: true`。先用 `mcpb pack` 生成标准包，再运行以下命令生成包含 FastMCP 实际 `inputSchema` 的 Smithery 发布包：
+不设置 `SW_MCP_DISCOVERY` 和 `SW_MCP_APPROVAL` 时不安装网关：`tools/list` 列出全部命名工具，
+调用直接执行，PID 绑定、文档目标校验和跨进程 mutex 照常生效。设置任一变量后，服务端在全部
+工具注册完成后安装网关：`SW_MCP_DISCOVERY=search` 时 `tools/list` 只暴露三个发现入口，原生工具
+按需检索；`SW_MCP_DISCOVERY=full`（或只设置 `SW_MCP_APPROVAL`）时保留全部命名工具，调用同样
+经过网关。
+
+网关只执行 `mcp-server/policy.py` 登记了副作用等级的工具，未登记的工具一律拒绝。当前分级只
+覆盖通用建模、装配、导出、工程图、CAD Studio 和原生路径工具；CAM、进程列表与运行身份
+（`solidworks_list_instances`、`solidworks_runtime_status`）、组件变换、胶囊草图、原生工程图
+布局等工具尚未登记，启用网关后会被拒绝。启用前须在 `policy.py` 补齐分级，覆盖情况由
+`tests/test_mcp_discovery.py` 的 `test_policy_covers_every_registered_tool` 检查。
+
+发现模式下 `SW_MCP_APPROVAL=auto` 信任客户端已取得当前任务授权，任务内调用不再逐次请求服务端
+批准；需要更严格控制时可启用 `server` 模式。初始工具列表体积可通过
+`python -m pytest -q tests/test_mcp_discovery_quality.py` 验证。
+
+| 入口 | 作用 |
+| --- | --- |
+| `sw_search_tools` | 按中英文说法检索候选，返回名称、说明、相关度和副作用等级；不执行操作 |
+| `sw_describe_tool` | 读取单个工具的完整输入 Schema、副作用等级和是否需要人工批准 |
+| `sw_call_tool` | 按名称执行；经过策略检查，审批行为取决于所选模式及其信任边界 |
+
+直接点名调用被隐藏的原生工具同样会经过网关，未知工具一律拒绝。
+
+网关启用后需要客户端逐工具展示权限提示时，用 `SW_MCP_DISCOVERY=full` 显示全部命名工具。
+两种网关模式共用同一套执行检查；`stdio` 和 `--transport streamable-http` 行为一致。
+
+### 环境变量
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `SW_MCP_DISCOVERY` | 未设置（不安装网关） | `search` 发现模式；`full` 原生命名工具经网关调用 |
+| `SW_MCP_APPROVAL` | 未设置（网关启用时按 `auto`） | `auto`：发现模式用 `task`、完整模式用 `client`；`task`：信任客户端的任务授权，不逐次确认；`server`：本地逐次审批账本；`client`：交给客户端逐工具审批，仅允许完整模式；`elicit`：走 MCP elicitation（可能被 agent 自动应答）；`off`：关闭服务端审批 |
+| `SW_MCP_APPROVAL_DIR` | `%LOCALAPPDATA%\SolidWorksMCP\approvals` | 审批账本目录 |
+| `SW_API_LOOKUP_NETWORK` | `on` | 设置 `off` 禁止本项目 API 查证访问官方文档；不控制客户端自己的搜索 |
+| `SW_API_LOOKUP_AUTO_INSTALL` | `on` | 设置 `off` 禁止 API 查证自动安装依赖和恢复帮助文件 |
+| `SW_AUTO_INSTALL_DEPENDENCIES` | `on` | 设置 `off` 禁止基础 COM 预检和桌面执行器自动安装依赖 |
+
+`solidworks_lookup_api` 支持 `interface` + `member` 或自然语言 `task`，按目标版本查证本机类型库、API Help 和官方文档；直读失败且无缓存时使用匿名 Parallel，仅发送公开版本、接口、成员及官方链接。默认按需自动配置依赖，MCP 注解因此标记为可能修改环境；`auto_install=false` 禁用安装，`offline=true` 禁用联网和安装。服务端会按参数区分副作用，用户配置的服务端审批模式仍然生效。结果区分版本证据、来源和获取时间，不能代替真机验证。多个目标无法确定时不会猜测或启动 SolidWorks。`solidworks_connect` 支持可选 `version` 年份并检查实际连接版本。
+
+### 任务授权和可选逐次审批
+
+网关启用时，`task` 模式（发现模式下 `auto` 的取值）由客户端或用户负责界定任务授权；MCP 服务端**不能验证**客户端是否实际
+询问过用户，不提供逐工具权限隔离。服务端仍会拒绝未登记的工具，并沿用参数校验、
+目标限制与 SolidWorks 串行执行；具备相同本机权限的进程可以绕过本服务。
+
+已保存文档的活动文档操作可选传入 `document_target`（绝对 `path` 和 `process_id`），
+服务端将核对目标；不传时沿用工具原有的活动文档行为，以支持未保存文档和现有工作流。
+
+以下是显式选择 `SW_MCP_APPROVAL=server` 时的逐次审批机制。
+
+**信任边界：**审批账本和命令行运行在同一操作系统用户权限下。TTY 检查不能证明
+输入来自真人：具有该用户权限的进程可能模拟终端或直接访问账本和签名密钥。因此，
+账本适用于可信本地环境中的操作确认，不是隔离同用户 Agent 或恶意进程的安全边界。
+需要可靠逐操作的人审时，应使用经过验证的可信客户端/独立审批机制；`client`、
+`elicit` 和 `off` 模式也不能单凭配置名称保证存在人工确认。
+
+工具可能使用活动文档、间接路径或输入文件中的引用。目前范围授权已停用，旧范围授权也不会
+被消费。`server` / `elicit` 模式下，支持绑定的活动文档操作必须经 `sw_call_tool` 提供
+`document_target`，包含已保存文档的绝对 `path` 和 SolidWorks `process_id`。例如先使用
+`solidworks_connect` 读取 `process_id` 与 `document.path`，再把两者放进 `document_target`；
+服务端将目标与参数一起展示并绑定到批准，在持锁获取活动文档时复核 PID 和路径。
+
+未保存的文档、关闭文档、文档单位设置、添加组件、模型审查、Pack and Go 及原生子进程
+操作暂不支持此绑定并保持阻止。PID 和路径用于定位，
+不能证明文档内容或外部引用未变化，也不能隔离具有相同系统用户权限的进程。`full` +
+`client` 或 `off` 保持原有客户端控制，但服务端不保证其审批有效。本机制尚未完成真实
+SolidWorks 的目标切换验证，不应将其当作已验收的安全边界。
+
+模型传入 `approved: true` 或类似参数不会生效。写操作被阻止时，返回内容会给出审批请求 ID，
+需要在能访问本机的终端执行：
 
 ```powershell
-mcpb pack . .\dist\solidworks-automation-skill-1.3.0.mcpb
-python .\scripts\build_smithery_mcpb.py `
-  .\dist\solidworks-automation-skill-1.3.0.mcpb `
-  .\dist\solidworks-automation-skill-1.3.0-smithery.mcpb
-smithery mcp publish .\dist\solidworks-automation-skill-1.3.0-smithery.mcpb `
-  -n wzyn20051216/solidworks-automation-skill
+python scripts\sw_mcp_approve.py list
+python scripts\sw_mcp_approve.py approve <请求ID>
 ```
 
-Smithery 当前发布接口要求工具卡包含 `inputSchema`，而 MCPB 0.4 的静态 `tools` 项不允许该字段，因此发布包由脚本从 MCP Server 注册表自动生成，避免手工维护两套 schema。
+批准与「工具 + 完整参数摘要 + 服务端会话 + 有效期」绑定，一次性使用（默认 15 分钟）；
+参数改变、服务端重启或更换会话后需重新请求批准。显式路径包含在参数中，但不代表
+已校验输入文件内容、隐式引用或文档状态；不能将该机制用于不可信环境。
+请求记录和授权记录各有 1000 条上限；达到上限时服务端安全拒绝新增记录，不自动删除
+历史文件。用户需确认记录归属后自行备份和归档，才能继续使用审批。
+
+### 启用网关
+
+默认不设置变量即保持原有界面：全部原生工具可见、直接调用，由客户端决定是否逐工具审批。
+补齐 `policy.py` 分级后，可在 MCP 客户端配置里给 server 进程加环境变量启用发现模式：
+
+```jsonc
+{
+  "command": "python",
+  "args": ["C:\\path\\to\\mcp-server\\server.py"],
+  "env": { "SW_MCP_DISCOVERY": "search", "SW_MCP_APPROVAL": "auto" }
+}
+```
+
+`{ "SW_MCP_DISCOVERY": "full", "SW_MCP_APPROVAL": "client" }` 保留全部命名工具，同时经过网关的
+策略检查。修改环境变量后需重启 MCP 连接。
+
+### 协议验证
+
+```powershell
+python scripts\validate_mcp.py                # 校验打包注册表、默认界面、full 和 search
+python scripts\validate_mcp.py --mode both    # 只校验 full 和 search
+python scripts\validate_mcp.py --mode bundle  # 只校验打包注册表
+python scripts\validate_mcp.py --mode search
+```
+
+默认界面和完整模式校验必需工具全部可见且不暴露发现入口；发现模式校验会确认 3 个入口可见、
+每个必需工具都能按名称检索并读到 Schema。打包注册表校验在不设置网关变量的环境中运行
+`build_smithery_mcpb.py` 的工具卡收集：search 恰好是 3 个发现入口，full 包含全部必需工具。
+每种模式都会先核对服务端输入校验用的螺纹库类型与 `scripts/sw_thread_feature.py` 一致。
+
+## HTTP 传输（streamable-http）
+
+当 MCP 客户端与 SolidWorks 不在同一台机器上时（例如 Linux 上的 agent 驱动 Windows 上的 SolidWorks），无法让客户端直接拉起本机的 stdio 子进程，此时改用 HTTP 传输：
+
+```powershell
+python -m pip install uvicorn
+$env:SW_MCP_TOKEN = "<替换为随机共享密钥>"
+python mcp-server\server.py --transport streamable-http --host 0.0.0.0 --port 8000 `
+  --allow-host "192.168.1.10:*" --output-root "C:\cad-output"
+```
+
+- 端点：`http://<本机IP>:8000/mcp`（Streamable HTTP，FastMCP 默认路径 `/mcp`）
+- `--host` 默认 `127.0.0.1`；局域网访问需显式传 `0.0.0.0`，并放行对应端口的防火墙
+- `--port` 默认 `8000`
+- 也可用环境变量 `SW_MCP_HOST` / `SW_MCP_PORT` 提供默认值，命令行参数优先
+- **`uvicorn` 是可选依赖**：仅在 `--transport streamable-http` 时需要；缺失时会给出明确提示
+- 默认值仍是 `stdio`，现有 MCP 客户端配置无需改动
+- 非回环监听必须设置 `SW_MCP_TOKEN` 和显式 `--allow-host`；Host 填客户端访问的实际 IP/域名，可重复指定
+- 客户端请求携带 `Authorization: Bearer <共享密钥>`；浏览器客户端另需明确 `--allow-origin "https://客户端域名"`
+- Host/Origin 校验保持开启；用本机私有测试端点验证过握手、401、错误 Host 与错误 Origin 拒绝
+- 通过公网或不可信网络连接时，使用带 TLS 的反向代理或受控隧道保护传输
+
+客户端配置示例（OpenCode / 其他支持 remote MCP 的客户端）：
+
+```jsonc
+{
+  "mcp": {
+    "servers": {
+      "solidworks": {
+        "type": "remote",
+        "url": "http://192.168.1.10:8000/mcp",
+        "headers": { "Authorization": "Bearer <共享密钥>" }
+      }
+    }
+  }
+}
+```
+
+客户端的 URL/headers 配置字段以对应客户端文档为准。该传输使用现有 MCP 进程和 COM 串行锁。
+
+### 取回预览与交付文件
+
+输出文件位于 `--output-root`（或 `SW_MCP_OUTPUT_ROOT`）内时，工具结果附加 `artifact_refs`，包含不透明 `artifact_id`、`uri`、文件大小和 SHA-256。未配置时只允许系统临时目录下的 `solidworks-automation-artifacts`；建议明确指定交付目录。
+
+- 调用 `cadstudio_read_artifact`，参数为 `{"params":{"artifact_id":"<结果中的 ID>"}}`，小图返回标准 PNG 内容块。
+- 用 `resources/read` 读取结果中的 `cad-artifact://delivery/...` URI，取回不超过 8 MiB 的原始二进制文件。
+- 大文件用 `cadstudio_read_artifact`，设置 `as_preview:false`、`offset`、`max_bytes`，按 `next_offset` 拼接 base64 块；完成后比对 SHA-256。
+- 读取适配复用既有 Artifact Ledger；文件改变、目录越界或任意路径参数均不能作为已验证产物读取。
+
+远端输入仍需预先放到 CAD 主机；产物读取接口只服务已有交付文件。
+工具数量随版本变化，以 `tools/list` 为准；`scripts/validate_mcp.py` 会输出各模式的可见数量。发现模式下这些工具不出现在 `tools/list` 中，但检索、Schema 读取和执行行为与完整模式一致。`cadstudio_list_drc_rules` 列出设计审计规则；`cadstudio_check_drc` 检查中性文档并写报告，属于写操作，严格模式需要审批。API 查证可按需配置依赖，其权限行为见上文。
+
+## Windows MCPB 扩展
+
+在支持 MCPB 的桌面客户端中导入正式发布的 `SolidWorks-Automation-Skill-<版本>.mcpb`。
+例如，在 Claude Desktop 的扩展设置中进入高级设置，选择 **Install Extension…** 并打开该文件。
+原生 SolidWorks 工具需要已安装并获得许可的 SolidWorks。扩展沿用 MCP 服务的默认界面；只有在扩展配置中设置 `SW_MCP_DISCOVERY` 或 `SW_MCP_APPROVAL` 时才启用发现网关和写操作审批。
+
+启动器会查找 `uv` 并按包内锁文件准备 Python 3.12 环境。首次运行需要能够获取 Python 和依赖。
+如果客户端日志显示缺少 `uv`，请运行下列命令，随后完全退出并重开客户端，再启用扩展。
+没有 WinGet 时，请参照 [uv 官方安装文档](https://docs.astral.sh/uv/getting-started/installation/)。
+
+```powershell
+winget install --id astral-sh.uv -e
+```
+
+从 Git 检出的仓库本地打包时，使用发布脚本生成标准包。Smithery 变体从同一个包生成，并从运行时注册表读取实际的工具输入 Schema。
+
+```powershell
+$version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+python .\scripts\build_mcpb.py
+python .\scripts\build_smithery_mcpb.py `
+  ".\release-output\SolidWorks-Automation-Skill-$version.mcpb" `
+  ".\release-output\SolidWorks-Automation-Skill-$version-smithery.mcpb" --repo-root .
+```
+
+文件名带 `-smithery` 的变体用于 Smithery 的工具清单。桌面扩展请选标准包。
+服务端注册表始终包含三个发现入口和全部命名工具，工具卡因此与打包时的环境变量无关。
+Smithery 变体会把 `SW_MCP_DISCOVERY=<mode>`（默认 `search`，可用 `--mode full`）写进清单，
+运行时即启用网关：`policy.py` 未登记的工具（目前包括 CAM 等工具，见上文“工具发现网关”）
+在该变体中会被拒绝执行，补齐分级前只能使用已登记的工具。标准包不设置这些变量。
+Windows 正式发布同时提供 MCPB 和带签名的 CAD Studio 安装包。
 
 ## 多客户端自动注册
 
@@ -208,10 +393,12 @@ claude mcp add --scope user solidworks -- python C:\path\to\solidworks-automatio
 | `cadstudio_resolve_backend` | 按能力真源、接口语义、可用运行时、Revision 和加载项条件选择 Python/C#/C++/SWBasic/OCCT 等后端 | 否 |
 | `cadstudio_write_open_format` | 从本地 `.cadstudio.json` 白名单写出 STEP/IGES/BREP/STL/OBJ/GLB/DXF/SVG/PDF/PNG、Preview Manifest/Scene 和几何/哈希证据 | 否 |
 | `cadstudio_build_dxf_preview_scene` | 只读 DXF 白名单转换为不覆盖旧文件的 `.scene.json` | 否 |
-| `cadstudio_check_dfm` | 对 NeutralCadDocument 执行机加工、钣金、激光切割或 3D 打印 DFM 规则检查，支持 supplier profile 与 B-Rep 证据；缺关键输入返回 blocked，规则通过仍需人工复核 | 否 |
+| `cadstudio_read_artifact` | 按交付 ID 返回 PNG 预览或有界二进制块，校验已有 Ledger 的 SHA-256 | 否 |
+| `cadstudio_check_dfm` | 对 NeutralCadDocument 执行机加工、钣金、激光切割、3D 打印或注塑声明型 DFM 检查；缺关键输入返回 blocked，规则通过仍需人工复核 | 否 |
 | `cadstudio_check_routing` | 校验中性 Routing 端点、分段、长度、弯曲半径、碰撞/间隙、支撑和 Routing BOM | 否 |
 | `cadstudio_routing_preflight` | 探测 SOLIDWORKS Routing 类型库、加载项注册和许可证证据；缺证据返回 blocked | 否 |
 | `solidworks_addin_host_status` | 只读检查 C# Add-in 程序集、HKCU/HKLM 注册层级、进程内 UI/事件诊断和阻塞码 | 否 |
+| `solidworks_lookup_api` | 按目标版本查证 API；默认联网并按需自动安装依赖，不启动或修改 CAD | 按参数：默认可能修改环境；可关闭自动安装 |
 | `cadstudio_fea_preflight` | 探测 CalculiX/Elmer 求解器，不执行任意命令 | 否 |
 | `cadstudio_prepare_fea` | 从 FEA 1.0/1.1 请求生成版本化 CalculiX `.inp`，不运行任意脚本 | 否 |
 | `cadstudio_run_fea` | 运行白名单 CalculiX 线性或受限非线性静力任务并解析位移、应力和收敛证据 | 否 |

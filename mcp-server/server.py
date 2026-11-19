@@ -1,13 +1,21 @@
 """
 SolidWorks MCP Server.
 
-This stdio MCP server wraps the existing solidworks-automation skill scripts so
-MCP clients can operate a local Windows SolidWorks desktop session through
-Python COM. Calls are serialized per bound SolidWorks process.
+This MCP server wraps the existing solidworks-automation skill scripts so MCP
+clients can operate a local Windows SolidWorks desktop session through Python
+COM. Calls are serialized per bound SolidWorks process.
+
+It speaks MCP over ``stdio`` by default. Pass ``--transport streamable-http`` to
+serve the same tools over HTTP instead, so a client running on another machine
+can connect without spawning a local child process.
 """
 from __future__ import annotations
 
+import argparse
+import asyncio
+import base64
 import importlib
+import importlib.util
 import json
 import math
 import os
@@ -21,7 +29,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
+from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
@@ -41,6 +51,8 @@ if __name__ == "__main__":
 
 
 SERVER_DIR = Path(__file__).resolve().parent
+if str(SERVER_DIR) not in sys.path:
+    sys.path.insert(0, str(SERVER_DIR))
 REPO_DIR = SERVER_DIR.parent
 SCRIPTS_DIR = REPO_DIR / "scripts"
 if str(REPO_DIR) not in sys.path:
@@ -52,14 +64,19 @@ from scripts.sw_preflight import missing_com_dependencies, solidworks_installed 
 from scripts.sw_operation_guard import (  # noqa: E402
     SolidWorksDocumentMismatch, absolute_document_path, check_document_target, solidworks_operation_lock,
 )
+from scripts.core.execution import normalize_tool_payload  # noqa: E402
+from artifact_access import ArtifactAccess, MAX_INLINE  # noqa: E402
+from document_identity import has_bound_document, verify_bound_document  # noqa: E402
 
 
 from scripts.sw_runtime_identity import RuntimeIdentity, RuntimeIdentityError  # noqa: E402
 from scripts.sw_rigid_transform import build_rigid_transform_data  # noqa: E402
-from scripts.sw_connect import SW_TOGGLE_ENABLE_3D_INTERCONNECT, interconnect_document_type  # noqa: E402
-from scripts.sw_thread_feature import (  # noqa: E402
-    THREAD_TYPES, add_thread_feature, find_circular_edge, list_circular_edges,
-)
+# scripts.sw_connect 与 scripts.sw_thread_feature 在模块顶层导入 COM 依赖；它们在使用处
+# 延迟导入，保证服务无 pywin32/comtypes 时也能启动并注册全部工具。
+# 输入模型的校验在持锁和 _load_automation_modules 之前执行，不能导入这些模块，否则会
+# 绕过 import_com_dependencies(allow_install=False) 触发依赖自动安装。螺纹库类型因此在
+# 这里保留一份副本，须与 scripts.sw_thread_feature.THREAD_TYPES 一致（validate_mcp 校验）。
+_THREAD_TYPES = ("Metric Die", "Metric Tap", "Inch Die", "Inch Tap", "SP4xx Bottle", "SP4xx Bottle Lite")
 
 _runtime_identity = RuntimeIdentity.capture(REPO_DIR)
 
@@ -72,6 +89,8 @@ def _load_automation_modules() -> None:
     global pythoncom, _automation_loaded
     if _automation_loaded:
         return
+    from scripts.sw_preflight import import_com_dependencies
+    import_com_dependencies(allow_install=False)
 
     connect = importlib.import_module("scripts.sw_connect")
     part = importlib.import_module("scripts.sw_part")
@@ -159,6 +178,7 @@ def _load_automation_modules() -> None:
         "collect_geometry_measurements": review.collect_geometry_measurements,
         "validate_hole_positions": review.validate_hole_positions,
         "drawing_generate_from_spec": drawing.generate_drawing_from_spec,
+        "drawing_generate_package": drawing.generate_drawing_package,
         "drawing_export_sheet_to_pdf": drawing.export_sheet_to_pdf,
         "drawing_save_review_previews": review.save_review_previews,
         "drawing_inspect_bmp_preview": review.inspect_bmp_preview,
@@ -288,7 +308,7 @@ class ExportFormat(str, Enum):
 
 
 HEADLESS_OPEN_FORMATS = {"cadstudio", "step", "iges", "brep", "stl", "obj", "glb", "dxf", "svg", "pdf", "png"}
-DFM_PROCESSES = {"auto", "machining", "sheet_metal", "laser_cutting", "3d_printing", "CNC", "FDM", "SLA"}
+DFM_PROCESSES = {"auto", "machining", "sheet_metal", "laser_cutting", "3d_printing", "injection_molding", "injection", "注塑", "CNC", "FDM", "SLA"}
 FEA_SOLVERS = {"auto", "calculix", "elmer"}
 
 
@@ -474,6 +494,7 @@ class SolidWorksConnectInput(BaseInput):
     startup_receipt_path: Optional[str] = Field(default=None, description="New absolute JSON receipt with an existing parent; required only for executable startup.")
     visible: bool = Field(default=True, description="Whether a newly started SolidWorks instance should be visible.")
     wait_seconds: int = Field(default=5, ge=0, le=60, description="Seconds to wait after starting SolidWorks.")
+    version: Optional[int] = Field(default=None, ge=2010, le=2035, description="Optional target SolidWorks year; reject a different connected version.")
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
     @model_validator(mode="after")
@@ -490,6 +511,26 @@ class SolidWorksConnectInput(BaseInput):
             raise ValueError("launch_new_instance and process_id are mutually exclusive")
         if self.launch_new_instance and self.visible is not True:
             raise ValueError("Isolated persistent launch requires visible=true and verified UserControl=true")
+        return self
+
+
+class SolidWorksApiLookupInput(BaseInput):
+    """Input for version-specific API evidence lookup and optional setup."""
+
+    interface: Optional[str] = Field(default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z][A-Za-z0-9_]*$")
+    member: Optional[str] = Field(default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z][A-Za-z0-9_]*$")
+    task: Optional[str] = Field(default=None, min_length=1, max_length=10000, description="Natural-language task, processed locally to identify API candidates.")
+    version: Optional[int] = Field(default=None, ge=2010, le=2035, description="Target SolidWorks year; otherwise identify the current instance or unique installation.")
+    process_id: Optional[int] = Field(default=None, gt=0, description="Optional target running SolidWorks process ID.")
+    offline: bool = Field(default=False, strict=True, description="Do not access the network; local help and previously retrieved document cache may still be used.")
+    parallel_fallback: bool = Field(default=True, strict=True, description="Use anonymous Parallel MCP when direct retrieval fails and no cached document is available.")
+    auto_install: bool = Field(default=True, strict=True, description="Automatically install missing lookup dependencies and recover verified local API Help when online.")
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+    @model_validator(mode="after")
+    def validate_lookup_request(self):
+        if bool(self.task) == bool(self.interface or self.member) or (not self.task and not (self.interface and self.member)):
+            raise ValueError("Provide either task, or both interface and member.")
         return self
 
 
@@ -553,6 +594,25 @@ class CadStudioDxfPreviewInput(BaseInput):
             raise ValueError("Output must use the .scene.json suffix")
         if path.exists():
             raise ValueError(f"Refusing to overwrite existing PreviewScene: {path.name}")
+        return value
+
+
+class CadStudioDrcReviewInput(BaseInput):
+    """中性文档设计规则检查；报告会写入新文件。"""
+
+    input_path: str = Field(..., min_length=1, description="Existing NeutralCadDocument JSON file.")
+    output_path: str = Field(..., min_length=1, description="JSON report path; existing files are never overwritten.")
+    profile_paths: list[str] = Field(default_factory=list, max_length=8)
+    rule_packs: list[str] = Field(default_factory=list, max_length=8)
+    baseline_path: Optional[str] = Field(default=None, description="Optional prior DRC report JSON.")
+    regression_gate: bool = Field(default=False, description="Compare findings to the supplied baseline.")
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON)
+
+    @field_validator("input_path", "output_path")
+    @classmethod
+    def json_path(cls, value: str) -> str:
+        if Path(os.path.expandvars(value)).expanduser().suffix.lower() != ".json":
+            raise ValueError("Path must refer to a JSON file")
         return value
 
 
@@ -3989,8 +4049,8 @@ class SolidWorksThreadFeatureInput(ActiveDocumentInput):
             raise ValueError("depth_mm is required for blind end condition")
         if self.end_condition == "revolutions" and self.revolutions is None:
             raise ValueError("revolutions is required for revolutions end condition")
-        if self.thread_type not in THREAD_TYPES:
-            raise ValueError(f"thread_type must be one of {THREAD_TYPES}")
+        if self.thread_type not in _THREAD_TYPES:
+            raise ValueError(f"thread_type must be one of {_THREAD_TYPES}")
         return self
 
 
@@ -4504,6 +4564,10 @@ def _active_model_required(params=None):
     model = get_com_member(sw, "ActiveDoc")
     if model is None:
         raise RuntimeError("No active SolidWorks document. Use solidworks_open_document or solidworks_new_document first.")
+    if has_bound_document():
+        # 发现网关为本次调用绑定了文档身份：在持锁期间核验 PID 与路径，
+        # 核验后将同一个 model 对象交给调用方。
+        verify_bound_document(get_com_member(sw, "GetProcessID"), get_com_member(model, "GetPathName"))
     check_document_target(
         get_com_member(model, "GetPathName"), get_com_member(model, "GetTitle"),
         expected_path=getattr(params, "expected_document_path", None),
@@ -4609,6 +4673,7 @@ def _set_component_fixed(asm_model, component, fixed: bool = True) -> bool:
 
 def _result(payload: Dict[str, Any], response_format: ResponseFormat) -> str:
     """Format a tool response as JSON or Markdown."""
+    payload = _normalize_payload(payload)
     if response_format == ResponseFormat.JSON:
         return json.dumps(payload, ensure_ascii=False, indent=2)
     lines = [f"# {payload.get('status', 'result')}"]
@@ -4621,6 +4686,56 @@ def _result(payload: Dict[str, Any], response_format: ResponseFormat) -> str:
         else:
             lines.append(f"- **{key}**: {value}")
     return "\n".join(lines)
+
+
+def _artifact_access():
+    """@brief 使用既有 CAD Studio 工作目录存账本；输出根由操作员配置。"""
+    import tempfile
+    from apps.desktop.cad_workbench.queue_worker import default_tauri_queue_dir
+    root = os.environ.get("SW_MCP_OUTPUT_ROOT") or str(Path(tempfile.gettempdir()) / "solidworks-automation-artifacts")
+    queue = os.environ.get("SW_MCP_QUEUE_DIR") or str(default_tauri_queue_dir())
+    return ArtifactAccess(root, queue)
+
+
+# 这些状态不登记交付产物。
+_FAILED_STATUSES = {"error", "failed", "fail", "blocked"}
+
+
+def _normalize_payload(payload):
+    """@brief 统一失败事实校验；兼容按约定只修改不保存的工具和 CAM 保存快照。
+
+    部分工具（组件变换、可见性、压缩、重组、删除、草图和面修改等）从不保存文档，
+    用 ``saved=False`` 声明“未保存”。没有输出路径且未声明 ``save_requested=True`` 时
+    它不是保存失败。CAM 工具把保存后回读的状态快照（字典）放在 ``saved`` 中，它是证据
+    而不是布尔执行事实，保存是否成功由工具自身的 status 和回读校验给出。这两种情况下
+    ``saved`` 不参与校验并原样保留；其余失败字段（success、exported、rebuild_ok、
+    feature_created 等）照常校验。
+    """
+    if not isinstance(payload, dict):
+        return payload
+    saved = payload.get("saved")
+    unsaved_by_contract = (saved is False and payload.get("save_requested") is not True
+                           and not payload.get("output_path") and not payload.get("outputPath"))
+    if not unsaved_by_contract and not isinstance(saved, dict):
+        return normalize_tool_payload(payload)
+    normalized = normalize_tool_payload({key: value for key, value in payload.items() if key != "saved"})
+    # 保持原字段顺序，校验新增的字段（error_code 等）追加在后。
+    result = {key: saved if key == "saved" else normalized.get(key) for key in payload}
+    result.update((key, value) for key, value in normalized.items() if key not in payload)
+    return result
+
+
+def _attach_artifact_refs(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """@brief 登记输出目录内的交付文件；登记失败不改变已完成 CAD 操作的结果。"""
+    try:
+        refs = _artifact_access().publish(payload)
+    except Exception as exc:
+        # 操作已经执行：报告为失败会诱导调用方重放修改。
+        payload["artifact_refs_error"] = f"{type(exc).__name__}: {exc}"
+        return payload
+    if refs:
+        payload["artifact_refs"] = refs
+    return payload
 
 
 def _tool_error(exc: Exception, response_format: ResponseFormat = ResponseFormat.JSON) -> str:
@@ -4639,6 +4754,15 @@ def _tool_error(exc: Exception, response_format: ResponseFormat = ResponseFormat
     if isinstance(exc, SolidWorksDocumentMismatch):
         payload.update(exc.details)
         payload["suggestion"] = "Verify the target document and retry with its exact path. No automatic window switching is performed."
+    code = getattr(exc, "code", None)
+    if code:
+        payload["error_code"] = str(code)
+        payload["retryable"] = False
+        if hasattr(exc, "warnings") and hasattr(exc, "error_code"):
+            payload["file_load_errors"] = exc.error_code
+            payload["file_load_warnings"] = exc.warnings
+        if str(code) in {"SW_DOCUMENT_BUDGET", "SW_DOCUMENT_STATE_UNAVAILABLE", "SW_INSTANCE_NOT_READY", "SW_PROCESS_STATE_UNAVAILABLE", "SW_VERSION_MISMATCH", "SW_INSTANCE_MISMATCH", "SW_PACK_AND_GO_TIMEOUT", "SW_PACK_AND_GO_WORKER_PROTOCOL"}:
+            payload["status"] = "blocked"
     return _result(payload, response_format)
 
 
@@ -4695,6 +4819,9 @@ def _run_locked(operation, response_format: ResponseFormat, load_automation: boo
                 payload.setdefault('runtime_identity', identity)
             if load_automation and _selected_process_id is not None and isinstance(payload, dict):
                 payload.setdefault("process_id", _selected_process_id)
+        payload = _normalize_payload(payload)
+        if isinstance(payload, dict) and payload.get("status") not in _FAILED_STATUSES:
+            _attach_artifact_refs(payload)
         return _result(payload, response_format)
     except Exception as exc:
         return _tool_error(exc, response_format)
@@ -4780,6 +4907,41 @@ def cadstudio_build_dxf_preview_scene(params: CadStudioDxfPreviewInput) -> str:
         }
 
     return _run_locked(op, params.response_format, load_automation=False)
+
+
+@mcp.tool(
+    name="cadstudio_check_drc",
+    title="Review Neutral CAD Design Rules",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def cadstudio_check_drc(params: CadStudioDrcReviewInput) -> str:
+    """Check supplied design evidence; missing evidence requires review. Writes a versioned JSON report."""
+    def op():
+        from scripts.design_rule_check import write_drc_report
+
+        def path(value: str) -> Path:
+            return Path(os.path.expandvars(value)).expanduser().resolve()
+
+        return write_drc_report(path(params.input_path), path(params.output_path),
+                                profiles=[path(value) for value in params.profile_paths],
+                                rule_packs=params.rule_packs,
+                                baseline=path(params.baseline_path) if params.baseline_path else None,
+                                regression_gate=params.regression_gate)
+    return _run_locked(op, params.response_format, load_automation=False)
+
+
+@mcp.tool(
+    name="cadstudio_list_drc_rules",
+    title="List Design Audit Rules",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def cadstudio_list_drc_rules() -> str:
+    """List design audit rules and available declarative rule packs."""
+    def op():
+        from scripts.design_rule_check import list_rules
+        from scripts.design_rule_profiles import list_rule_packs
+        return {**list_rules(), "rulePacks": list_rule_packs()}
+    return _run_locked(op, ResponseFormat.JSON, load_automation=False)
 
 
 @mcp.tool(
@@ -5064,22 +5226,39 @@ def cadstudio_create_ocp_surface(params: CadStudioOcpSurfaceInput) -> str:
     },
 )
 def solidworks_connect(params: SolidWorksConnectInput = SolidWorksConnectInput()) -> str:
-    """Connect and pin this MCP server to a verified SOLIDWORKS process; explicit PID never falls back or starts one."""
+    """Connect and pin this MCP server to a verified SOLIDWORKS process; explicit PID never falls back or starts one. Returns the SolidWorks version (revision, year) and active document status."""
 
     def op():
         options = dict(wait_seconds=params.wait_seconds, visible=params.visible, process_id=params.process_id)
+        if params.version is not None:
+            options["version"] = params.version
         if params.launch_new_instance:
             options.update(launch_new_instance=True, return_metadata=True)
             if params.launch_mode == "executable":
                 options.update(launch_mode="executable", startup_receipt_path=params.startup_receipt_path)
         connected = connect_solidworks(**options)
         sw, model = connected[:2]
+        process_id = _selected_process_id
+        if process_id is None:
+            try:
+                process_id = int(get_com_member(sw, "GetProcessID"))
+            except Exception:
+                process_id = None
+            if process_id is not None and process_id <= 0:
+                process_id = None
+        revision = get_com_member(sw, "RevisionNumber")
+        revision = None if revision is None else str(revision)
+        try:
+            year = int(revision.split(".", 1)[0]) + 1992
+        except (AttributeError, ValueError, IndexError):
+            year = None
         return {
-            "process_id": _selected_process_id,
+            "process_id": process_id,
             "session_target": {"process_id": _selected_process_id, "scope": "mcp_server", "strict": True},
             "status": "ok",
             **({"connection": connected[2]} if params.launch_new_instance else {}),
-            "revision": get_com_member(sw, "RevisionNumber"),
+            "revision": revision,
+            "year": year,
             "active_document": _model_summary(model) if model else None,
         }
 
@@ -6411,6 +6590,32 @@ def solidworks_cam_save_prompt(params: SolidWorksCamSavePromptInput) -> str:
 
 
 @mcp.tool(
+    name="solidworks_lookup_api",
+    title="查证 SolidWorks API 接口",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+)
+async def solidworks_lookup_api(params: SolidWorksApiLookupInput) -> str:
+    """按接口或自然语言任务查证目标版本 API；默认按需配置依赖，可关闭自动安装和联网。"""
+    from scripts.sw_api_lookup import lookup_api, lookup_task
+
+    cancelled = threading.Event()
+    try:
+        kwargs = {"process_id": params.process_id, "online": not params.offline,
+                  "parallel_fallback": params.parallel_fallback, "auto_install": params.auto_install,
+                  "cancelled": cancelled.is_set}
+        if params.task:
+            result = await asyncio.to_thread(lookup_task, params.task, params.version, **kwargs)
+        else:
+            result = await asyncio.to_thread(lookup_api, params.interface, params.member, params.version, **kwargs)
+        return _result(result, params.response_format)
+    except asyncio.CancelledError:
+        cancelled.set()
+        raise
+    except Exception as exc:
+        return _tool_error(exc, params.response_format)
+
+
+@mcp.tool(
     name="solidworks_health_check",
     title="Check SolidWorks Automation Health",
     annotations={
@@ -6714,6 +6919,8 @@ def solidworks_create_basic_part(params: SolidWorksCreateBasicPartInput) -> str:
                 sketch_rectangle(model, 0.0, 0.0, mm(params.width_mm), mm(params.height_mm))
             else:
                 raise ValueError(f"Unsupported shape: {params.shape}")
+            from scripts.sw_sketch_quality import fully_define_sketch
+            sketch_quality = fully_define_sketch(model)
         feature = extrude_boss(model, sketch_name, mm(params.depth_mm))
         appearance_ok = None
         if params.color:
@@ -6721,10 +6928,12 @@ def solidworks_create_basic_part(params: SolidWorksCreateBasicPartInput) -> str:
         save_ok = None
         if params.output_path:
             save_ok = save_document(model, params.output_path)
-        model.ForceRebuild3(False)
+        rebuild_ok = bool(model.ForceRebuild3(False))
         return {
             "status": "ok",
             "shape": params.shape.value,
+            "sketch_quality": sketch_quality,
+            "rebuild_ok": rebuild_ok,
             "feature_created": feature is not None,
             "feature_name": get_com_member(feature, "Name") if feature else None,
             "appearance_ok": appearance_ok,
@@ -7159,7 +7368,7 @@ def solidworks_pattern(params: SolidWorksPatternInput) -> str:
             direction = {"x": (1.0, 0.0, 0.0), "y": (0.0, 1.0, 0.0), "z": (0.0, 0.0, 1.0)}[params.direction]
             feature = linear_pattern(
                 model, params.feature_name,
-                mm(direction[0]), mm(direction[1]), mm(direction[2]),
+                direction[0], direction[1], direction[2],
                 mm(params.spacing_mm), params.count,
             )
         else:
@@ -7467,6 +7676,8 @@ def solidworks_open_document(params: SolidWorksOpenDocumentInput) -> str:
     """Open a SolidWorks document by absolute path and make it available for later MCP tools."""
 
     def op():
+        from scripts.sw_connect import SW_TOGGLE_ENABLE_3D_INTERCONNECT, interconnect_document_type
+
         sw, _ = connect_solidworks(wait_seconds=1)
         interconnect = None
         if interconnect_document_type(params.path) is not None:
@@ -7710,6 +7921,8 @@ def solidworks_list_circular_edges(params: SolidWorksCircularEdgesInput) -> str:
     """List circular edges (centre mm, axis, diameter mm) of all solid bodies in the active part via ICurve.CircleParams; works on imported bodies."""
 
     def op():
+        from scripts.sw_thread_feature import list_circular_edges
+
         _sw, model = _active_part_required(params)
         radius_m = mm(params.diameter_mm) / 2.0 if params.diameter_mm is not None else None
         listing = list_circular_edges(model, radius_m, mm(params.diameter_tolerance_mm) / 2.0, params.limit)
@@ -7739,6 +7952,8 @@ def solidworks_add_thread_feature(params: SolidWorksThreadFeatureInput) -> str:
     """Create a native Thread feature (swFmSweepThread) starting at a circular edge found by centre and diameter; reports volume and face-count change; does not save."""
 
     def op():
+        from scripts.sw_thread_feature import add_thread_feature, find_circular_edge
+
         _sw, model = _active_part_required(params)
         edge = find_circular_edge(model, [mm(v) for v in params.edge_center_mm], mm(params.edge_diameter_mm) / 2.0, mm(params.edge_tolerance_mm))
         result = add_thread_feature(
@@ -8423,11 +8638,15 @@ def solidworks_review_active(params: SolidWorksReviewInput) -> str:
                 basename=params.basename, views=params.views, zoom_box_mm=params.zoom_box_mm)
         else:
             report, report_path = run_review(model, params.output_dir, basename=params.basename)
+        evaluation = report.get("evaluation") or {}
         result = {
-            "status": "ok",
+            "status": "failed" if evaluation.get("status") == "fail" else "review_required" if evaluation.get("manual_review_required") else "ok",
             "report_path": report_path,
             "evaluation": report.get("evaluation"),
             "checks": report.get("checks"),
+            "previews": report.get("previews", []),
+            "sketch_quality": report.get("sketch_quality"),
+            "manual_review_required": bool(evaluation.get("manual_review_required")),
             "document": _model_summary(model),
         }
         if targeted:
@@ -8454,68 +8673,13 @@ def _drawing_report_path(output_dir: Path, basename: str) -> Path:
     },
 )
 def solidworks_generate_drawing(params: SolidWorksGenerateDrawingInput) -> str:
-    """按 DrawingSpec v1 创建工程图、PDF、预览和机器审视报告。"""
+    """按 DrawingSpec 自动创建工程图、原生尺寸/基本尺寸、基准及单框/复合 GD&T（公共基准、投影公差带、轮廓偏置、CZ/SZ），保存重开核验并导出 PDF、预览和审视报告（原生标注限 SW2026，设计公差须明确）。"""
 
     def op():
-        output_dir = Path(os.path.expandvars(params.output_dir)).expanduser().resolve()
-        drawing_path = output_dir / params.drawing_filename
-        pdf_path = drawing_path.with_suffix(".pdf")
-        report_path = output_dir / f"{drawing_path.stem}_review_report.json"
-        if not params.overwrite and any(path.exists() for path in (drawing_path, pdf_path, report_path)):
-            raise ValueError("输出文件已存在；请更换 output_dir、设置 overwrite=true，或保留旧交付物并另起运行目录")
-
-        spec_validation = drawing_validate_spec(params.spec_path)
-        if spec_validation.get("status") == "blocked":
-            return spec_validation
-        spec = spec_validation["spec"]
-        source_path = Path(os.path.expandvars(str(spec["sourceModel"]))).expanduser().resolve()
-        if not source_path.is_file():
-            raise FileNotFoundError(f"DrawingSpec.sourceModel 不存在: {source_path}")
-        sw, _active = connect_solidworks(wait_seconds=1, visible=True)
-        source_model = open_document(sw, str(source_path), read_only=False, silent=True, raise_on_error=True)
-        drawing_model = new_document(sw, "drawing")
-        generation = drawing_generate_from_spec(
-            drawing_model,
-            spec,
-            str(source_path),
-            template_candidates=spec.get("templateCandidates"),
-        )
-        if generation.get("status") in {"blocked", "failed"}:
-            return generation
-        if not save_document(drawing_model, str(drawing_path)):
-            raise RuntimeError(f"工程图保存失败: {drawing_path}")
-        pdf_ok = drawing_export_sheet_to_pdf(drawing_model, str(pdf_path), sw_app=sw)
-        previews = drawing_save_review_previews(
-            drawing_model,
-            output_dir / "previews",
-            basename=drawing_path.stem,
-            views=("front", "top", "right"),
-        )
-        preview_evidence = [drawing_inspect_bmp_preview(path) for path in previews]
-        geometry_evidence = collect_geometry_measurements(source_model) if spec.get("holeRequirements") else None
-        review = drawing_review_artifacts(
-            spec,
-            structure=generation.get("structure"),
-            pdf_path=pdf_path if pdf_ok and pdf_path.is_file() else None,
-            preview_evidence=preview_evidence,
-            model_evidence=geometry_evidence,
-        )
-        payload = {
-            "status": review.get("status", "review_required"),
-            "capability": "solidworks-engineering-drawing",
-            "sourceModel": str(source_path),
-            "outputs": {
-                "slddrw": {"path": str(drawing_path), "exists": drawing_path.is_file(), "size_bytes": drawing_path.stat().st_size if drawing_path.is_file() else 0},
-                "pdf": {"path": str(pdf_path), "exists": pdf_path.is_file(), "size_bytes": pdf_path.stat().st_size if pdf_path.is_file() else 0},
-                "previews": preview_evidence,
-            },
-            "generation": generation,
-            "review": review,
-            "manual_review_required": bool(review.get("manual_review_required", True)),
-        }
-        report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        payload["reportPath"] = str(report_path)
-        return payload
+        # 先经本服务的连接入口固定并核验 PID；工程图包内部的 SolidWorksSession
+        # 通过 SOLIDWORKS_MCP_PROCESS_ID 继承同一实例，不会另选默认实例或新启动实例。
+        connect_solidworks(wait_seconds=1, visible=True)
+        return drawing_generate_package(params.spec_path, params.output_dir, params.drawing_filename, overwrite=params.overwrite)
 
     return _run_locked(op, params.response_format)
 
@@ -8859,15 +9023,125 @@ def solidworks_validate_motion_study(params: SolidWorksMotionValidationInput = S
     return _run_locked(op, params.response_format)
 
 
+class ArtifactReadInput(BaseInput):
+    """@brief 使用交付 ID 取回图片或有界文件块，禁止传任意本地路径。"""
+    artifact_id: str = Field(..., pattern=r"^mcp-[0-9a-f]{32}-[0-9]{1,5}$")
+    offset: int = Field(default=0, ge=0)
+    max_bytes: int = Field(default=1024 * 1024, ge=1, le=MAX_INLINE)
+    as_preview: bool = Field(default=True)
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format for chunk results.")
+
+
+@mcp.tool(name="cadstudio_read_artifact", title="Read Verified CAD Artifact",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+def cadstudio_read_artifact(params: ArtifactReadInput):
+    """Return an in-protocol PNG preview or a hashed file chunk for an issued artifact ID."""
+    try:
+        path, data, metadata = _artifact_access().read(params.artifact_id, params.offset, params.max_bytes)
+        if params.as_preview and params.offset == 0 and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp"}:
+            path, data, metadata = _artifact_access().read(params.artifact_id, 0, MAX_INLINE)
+            if metadata["next_offset"] is not None:
+                raise ValueError("预览图片超过内联大小上限")
+            import io
+            from PIL import Image as PillowImage
+            from mcp.server.fastmcp import Image
+            with PillowImage.open(io.BytesIO(data)) as source:
+                if source.width * source.height > 20_000_000:
+                    raise ValueError("预览像素数超过上限")
+                converted = io.BytesIO()
+                source.convert("RGB").save(converted, format="PNG")
+            encoded = converted.getvalue()
+            if len(encoded) > MAX_INLINE:
+                raise ValueError("转换后的 PNG 超过内联大小上限，请取回原始文件块")
+            return Image(data=encoded, format="png")
+        return _result({"status": "ok", **metadata, "encoding": "base64",
+            "data": base64.b64encode(data).decode("ascii")}, params.response_format)
+    except Exception as error:
+        return _tool_error(error, params.response_format)
+
+
+@mcp.resource("cad-artifact://delivery/{artifact_id}", mime_type="application/octet-stream")
+def read_artifact_resource(artifact_id: str) -> bytes:
+    """@brief 原始交付文件资源；超大文件通过有界块工具读取。"""
+    _, data, metadata = _artifact_access().read(artifact_id)
+    if metadata["next_offset"] is not None:
+        raise ValueError("文件超过内联资源大小，请使用 cadstudio_read_artifact 分块读取")
+    return data
+
+
 from scripts.sw_native_wire import register_tools as _register_native_wire_tools
-_register_native_wire_tools(mcp, connect_solidworks, _run_locked, ResponseFormat)
+# @brief 连接函数在调用时解析：沿用本服务的进程绑定包装，也允许测试替换。
+_register_native_wire_tools(
+    mcp, lambda **kwargs: connect_solidworks(**kwargs), _run_locked, ResponseFormat,
+)
 
 
 def main() -> None:
-    """Run the SolidWorks MCP server over stdio."""
+    """Run the SolidWorks MCP server.
+
+    ``stdio`` stays the default so existing MCP host configurations keep working
+    unchanged. ``--transport streamable-http`` serves the same tool surface over
+    HTTP for remote clients.
+    """
+    parser = argparse.ArgumentParser(description="SolidWorks MCP server")
+    parser.add_argument(
+        "--transport",
+        choices=("stdio", "streamable-http"),
+        default="stdio",
+        help="MCP transport to serve (default: stdio)",
+    )
+    parser.add_argument(
+        "--host",
+        default=os.environ.get("SW_MCP_HOST", "127.0.0.1"),
+        help="Bind address for streamable-http (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Bind port for streamable-http (default: 8000)",
+    )
+    parser.add_argument("--allow-host", action="append", default=[], help="允许的远端 Host，例如 cad.example:*，可重复")
+    parser.add_argument("--allow-origin", action="append", default=[], help="允许的浏览器 Origin，可重复")
+    parser.add_argument("--output-root", default=os.environ.get("SW_MCP_OUTPUT_ROOT"), help="允许客户端取回的产物目录")
+    args = parser.parse_args()
+
     if sys.stdout is not _MCP_STDOUT:
         sys.stdout = _MCP_STDOUT
-    mcp.run(transport="stdio")
+    if args.output_root:
+        os.environ["SW_MCP_OUTPUT_ROOT"] = args.output_root
+
+    if args.transport == "stdio":
+        mcp.run(transport="stdio")
+        return
+    try:
+        args.port = args.port if args.port is not None else int(os.environ.get("SW_MCP_PORT", "8000"))
+    except ValueError:
+        parser.error("SW_MCP_PORT 必须是整数")
+    if not 1 <= args.port <= 65535:
+        parser.error("port 必须在 1..65535")
+    token = os.environ.get("SW_MCP_TOKEN")
+    if args.host not in {"127.0.0.1", "localhost", "::1"} and (not token or not args.allow_host):
+        parser.error("远端监听需设置 SW_MCP_TOKEN 并显式指定 --allow-host")
+
+    # streamable-http is served by uvicorn, which FastMCP imports lazily.
+    if importlib.util.find_spec("uvicorn") is None:
+        raise SystemExit(
+            "streamable-http transport requires uvicorn: "
+            "python -m pip install uvicorn"
+        )
+    # FastMCP reads the bind address from its settings, so set them before run().
+    mcp.settings.host = args.host
+    mcp.settings.port = args.port
+    from mcp.server.transport_security import TransportSecuritySettings
+    from http_transport import TokenAuthMiddleware
+    import uvicorn
+    mcp.settings.transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", *args.allow_host],
+        allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*", *args.allow_origin],
+    )
+    uvicorn.run(TokenAuthMiddleware(mcp.streamable_http_app(), token), host=args.host, port=args.port)
 
 
 
@@ -17907,6 +18181,135 @@ def solidworks_cam_read_recovered_pocket_lengths(params: SolidWorksCamRecoveredP
             result = backend.revoke(result, error)
         return result
     return _run_locked(op, params.response_format)
+
+
+# ---------------------------------------------------------------------------
+# 工具发现与审批网关（显式启用）
+# ---------------------------------------------------------------------------
+# 默认保持原有界面：全部命名工具直接可见、直接调用，不安装网关。设置
+# SW_MCP_DISCOVERY（search 或 full）或 SW_MCP_APPROVAL 后安装网关：search 只暴露
+# 三个发现入口，把原生工具的 Schema 从上下文里拿掉；full 保留全部命名工具。
+# 网关拒绝 policy.py 未登记副作用等级的工具，启用前须确认分级覆盖全部工具。
+# 注册表本身与模式无关，始终包含三个发现入口：打包脚本（build_smithery_mcpb.py）
+# 从 _tools 读取 search/full 两种工具卡，不能受运行时环境变量影响。
+_DISCOVERY_MODE = os.environ.get("SW_MCP_DISCOVERY", "").strip().lower()
+_APPROVAL_MODE = os.environ.get("SW_MCP_APPROVAL", "").strip().lower()
+
+from gate import DISCOVERY_TOOLS, ToolGate  # noqa: E402
+
+
+class _NamedToolSurface:
+    """@brief 网关未启用时的注册表代理：只隐藏发现入口，命名工具原样列出和直接调用。"""
+
+    def __init__(self, manager: Any):
+        self._manager = manager
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "_manager":
+            raise AttributeError(name)
+        return getattr(self._manager, name)
+
+    @property
+    def _tools(self) -> Dict[str, Any]:
+        """@brief 完整注册表（含发现入口），供打包脚本和测试读取。"""
+        return self._manager._tools
+
+    def add_tool(self, *args: Any, **kwargs: Any) -> Any:
+        return self._manager.add_tool(*args, **kwargs)
+
+    def remove_tool(self, name: str) -> Any:
+        return self._manager.remove_tool(name)
+
+    def get_tool(self, name: str) -> Any:
+        return None if name in DISCOVERY_TOOLS else self._manager.get_tool(name)
+
+    def list_tools(self) -> list[Any]:
+        return [tool for tool in self._manager.list_tools() if tool.name not in DISCOVERY_TOOLS]
+
+    async def call_tool(self, name: str, arguments: Dict[str, Any], context: Any = None,
+                        convert_result: bool = False) -> Any:
+        if name in DISCOVERY_TOOLS:
+            raise ToolError(f"Unknown tool: {name}（工具发现网关未启用：设置 SW_MCP_DISCOVERY 或 "
+                            "SW_MCP_APPROVAL 后重启服务）")
+        return await self._manager.call_tool(name, arguments, context=context, convert_result=convert_result)
+
+
+_gate: Optional[ToolGate] = None
+if _DISCOVERY_MODE or _APPROVAL_MODE:
+    # @brief 注册表换成网关代理：此时工具已全部注册，之后所有 list/call 都经过它。
+    _gate = ToolGate(mcp._tool_manager, mode=_DISCOVERY_MODE or "full",
+                     approval_mode=_APPROVAL_MODE or "auto")
+    mcp._tool_manager = _gate
+else:
+    mcp._tool_manager = _NamedToolSurface(mcp._tool_manager)
+
+
+def _require_gate() -> ToolGate:
+    if _gate is None:
+        raise ToolError("工具发现网关未启用：设置 SW_MCP_DISCOVERY 或 SW_MCP_APPROVAL 后重启服务。")
+    return _gate
+
+
+@mcp.tool(
+    name="sw_search_tools",
+    title="Search Tool Catalog",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def sw_search_tools(query: str, limit: int = 5) -> str:
+    """按中英文 CAD 术语、命令名或别名检索工具，返回少量候选及其副作用等级；不执行任何操作。"""
+    gate = _require_gate()
+    try:
+        results = gate.search(query, limit)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    return json.dumps(
+        {"query": query, "count": len(results), "results": results},
+        ensure_ascii=False,
+    )
+
+
+@mcp.tool(
+    name="sw_describe_tool",
+    title="Describe Tool",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def sw_describe_tool(name: str) -> str:
+    """返回一个工具的完整输入 Schema、副作用等级，以及执行前是否需要人工批准。"""
+    tool = _require_gate().describe(name)
+    if tool is None:
+        raise ToolError(f"未知工具: {name}。先用 sw_search_tools 检索。")
+    return json.dumps(tool, ensure_ascii=False)
+
+
+@mcp.tool(
+    name="sw_call_tool",
+    title="Call Tool by Name",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+async def sw_call_tool(name: str, arguments: Dict[str, Any] | None = None,
+                       document_target: Dict[str, Any] | None = None, ctx: Context = None) -> Any:
+    """按名称执行工具；可选提供已保存文档路径和 SolidWorks 进程 ID 以核验目标。"""
+    if name in DISCOVERY_TOOLS:
+        raise ToolError("sw_call_tool 不能调用发现入口自身。")
+    gate = _require_gate()
+    if gate.get_tool(name) is None:
+        raise ToolError(f"未知工具: {name}。先用 sw_search_tools 检索。")
+    result = await gate.call_tool(name, arguments or {}, context=ctx, convert_result=True,
+                                  document_target=document_target)
+    # FastMCP 的嵌套调用可能同时返回 content 和 structuredContent；直接返回
+    # tuple 会被外层工具再次转换成纯文本，导致调用方丢失结构化结果。
+    if isinstance(result, CallToolResult):
+        return result
+    if isinstance(result, tuple) and len(result) == 2:
+        content, structured = result
+        return CallToolResult(content=list(content), structuredContent=structured, isError=False)
+    if isinstance(result, dict):
+        return CallToolResult(
+            content=[TextContent(type="text", text=json.dumps(result, indent=2))],
+            structuredContent=result,
+            isError=False,
+        )
+    return CallToolResult(content=list(result), isError=False)
 
 
 if __name__ == "__main__":
