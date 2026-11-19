@@ -244,13 +244,13 @@ def test_delete_unknown_component_leaves_assembly_untouched() -> None:
 def test_reorganize_finds_components_renamed_by_solidworks() -> None:
     assembly = FakeAssembly([
         FakeComponent("Housing-1", doc_type=2),
-        FakeComponent("Body-1", (0.08208, -0.0938, -0.0005), path="C:/models/ORM-000101-M3_A.SLDPRT"),
-        FakeComponent("Detail-1", (0.08471, -0.03635, -0.0005), path="C:/models/ORM-000103-M3_A.SLDPRT"),
+        FakeComponent("Body-1", (0.08208, -0.0938, -0.0005), path="C:/models/DEMO-PART-001.SLDPRT"),
+        FakeComponent("Detail-1", (0.08471, -0.03635, -0.0005), path="C:/models/DEMO-PART-003.SLDPRT"),
     ], rename_on_move=True)
 
     result = sw_assembly.reorganize_components(assembly, ["Body-1", "Detail-1"], "Housing-1")
 
-    assert [row["to"] for row in result["moved"]] == ["Housing-1/ORM-000101-M3_A-1", "Housing-1/ORM-000103-M3_A-1"]
+    assert [row["to"] for row in result["moved"]] == ["Housing-1/DEMO-PART-001-1", "Housing-1/DEMO-PART-003-1"]
     assert all(row["renamed"] and row["position_preserved"] for row in result["moved"])
     assert result["component_count_after"] == 1
 
@@ -258,21 +258,21 @@ def test_reorganize_finds_components_renamed_by_solidworks() -> None:
 def test_reorganize_matches_renamed_instances_of_one_part_by_position() -> None:
     assembly = FakeAssembly([
         FakeComponent("Housing-1", doc_type=2),
-        FakeComponent("Tab-1", (0.01, 0.0, 0.0), path="C:/models/ORM-000108-M3_A.SLDPRT"),
-        FakeComponent("Tab-2", (0.02, 0.0, 0.0), path="C:/models/ORM-000108-M3_A.SLDPRT"),
+        FakeComponent("Tab-1", (0.01, 0.0, 0.0), path="C:/models/DEMO-PART-008.SLDPRT"),
+        FakeComponent("Tab-2", (0.02, 0.0, 0.0), path="C:/models/DEMO-PART-008.SLDPRT"),
     ], rename_on_move=True)
 
     result = sw_assembly.reorganize_components(assembly, ["Tab-1", "Tab-2"], "Housing-1")
 
     assert [row["origin_mm_after"][0] for row in result["moved"]] == [10.0, 20.0]
-    assert sorted(row["to"] for row in result["moved"]) == ["Housing-1/ORM-000108-M3_A-1", "Housing-1/ORM-000108-M3_A-2"]
+    assert sorted(row["to"] for row in result["moved"]) == ["Housing-1/DEMO-PART-008-1", "Housing-1/DEMO-PART-008-2"]
 
 
 def test_reorganize_reports_ambiguous_renamed_components() -> None:
     assembly = FakeAssembly([
         FakeComponent("Housing-1", doc_type=2),
-        FakeComponent("Body-1", (0.01, 0.0, 0.0), path="C:/models/ORM-000101-M3_A.SLDPRT"),
-        FakeComponent("Body-2", (0.01, 0.0, 0.0), path="C:/models/ORM-000101-M3_A.SLDPRT"),
+        FakeComponent("Body-1", (0.01, 0.0, 0.0), path="C:/models/DEMO-PART-001.SLDPRT"),
+        FakeComponent("Body-2", (0.01, 0.0, 0.0), path="C:/models/DEMO-PART-001.SLDPRT"),
     ], rename_on_move=True)
 
     with pytest.raises(RuntimeError, match="候选 2 个"):
