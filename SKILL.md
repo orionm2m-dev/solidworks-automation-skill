@@ -21,6 +21,8 @@ metadata: { "openclaw": { "homepage": "https://github.com/wzyn20051216/solidwork
 ## CAD/CAM progress reporting
 
 - After each completed CAD/CAM stage, report progress in small verifiable operations against an explicit plan: first the number of operations whose toolpaths are generated and geometrically verified, then the current operation and its stage (planned, settings created, toolpath generated, geometry verified, complete). Do not count prepared settings, model preparation, API research or MCP development as finished toolpaths; state the concrete result and the remaining work instead of "partial".
+- Do not hide several finished toolpaths inside one unfinished section, and do not split identical passes to raise the count.
+- If an overall package percentage is kept, show it separately together with how it is calculated. Do not change weights to raise the figure; if acceptance has not advanced, say so.
 
 ## Обновление нативного модуля и реестр Windows
 
