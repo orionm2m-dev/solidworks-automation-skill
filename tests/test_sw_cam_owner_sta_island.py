@@ -413,7 +413,7 @@ def test_native_request_preserves_explicit_observed_drive_path(sample):
 
 
 def test_saved_producer_identity_survives_owned_restart():
-    runtime=Path(r"C:/Users/Denis Fedorov/.codex/skills/solidworks-automation")
+    runtime=Path(__file__).resolve().parents[1]
     sys.path.insert(0,str(runtime))
     original=Path(__file__).parents[2]/"FIRST1_QUALIFICATION_SEALED_01.json"
     if not original.is_file():
