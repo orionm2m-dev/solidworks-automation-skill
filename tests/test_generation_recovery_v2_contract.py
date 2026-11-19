@@ -1,5 +1,5 @@
 """Independent pure admission tests. No CAD, filesystem authority or native seams mocked.
-Fixture is the byte-identical genuine V2 partial receipt; no status or scope relabelling.
+Fixture is an observed V2 partial receipt with sample paths and part names; no status or scope relabelling.
 All numeric CAM observations are retained; repeated capture aliases are rebuilt below.
 """
 from copy import deepcopy

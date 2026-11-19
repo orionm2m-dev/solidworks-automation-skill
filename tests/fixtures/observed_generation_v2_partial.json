@@ -5,7 +5,7 @@
   "status": "uncertain",
   "phase": "finished",
   "request": {
-    "expected_document_path": "Z:/mnt/projects/vybro/Hardware/Mechanics/ISO/Review/CAM_R25_20261111/ManufacturingCaps/BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
+    "expected_document_path": "Z:/demo-cam/models/caps/DEMO_PART_CAPS_01.SLDPRT",
     "process_id": 49052,
     "expected_process_create_time": 1794385454.008,
     "expected_source_sha256": "58b885db8ec64b1d32d56446efcfeb7eec4b6f75c957e03801d99f65e293b804",
@@ -15,19 +15,19 @@
       70
     ],
     "selected_operation_native_id": 69,
-    "current_context_receipt_path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_RECOVERY_NATIVE_01.json",
+    "current_context_receipt_path": "Z:\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_RECOVERY_NATIVE_01.json",
     "current_context_receipt_sha256": "f51894c366c0ca7d6a7b0f24ba3168263fb420d9284f10d97cd2e1bb81fc97ef",
-    "recipe_path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_saved_caps_pocket_20261111\\gop_request_data\\CAPS_ROUGH_RECIPE_01.json",
+    "recipe_path": "Z:\\demo-cam\\staging\\cam_saved_caps_pocket_20261111\\gop_request_data\\CAPS_ROUGH_RECIPE_01.json",
     "recipe_sha256": "a284b4f3b7b62b4948bacf692da792375cb321cba1bda1156ba59c2a6e19b063",
-    "saved_cl_path": "C:/projects/vybro-cam-evidence/20261110_base361/caps_rough69_cl_01/UPPER_ROUGH.cl",
-    "receipt_path": "Z:/mnt/projects/vybro/Tools/Staging/cam_existing_sketch_caps_20261111/root_execution/CAPS_ROUGH_GENERATE_NATIVE_01.json",
+    "saved_cl_path": "C:/work/demo-cam-evidence/run_01/caps_rough69_cl_01/UPPER_ROUGH.cl",
+    "receipt_path": "Z:/demo-cam/staging/cam_existing_sketch_caps_20261111/root_execution/CAPS_ROUGH_GENERATE_NATIVE_01.json",
     "qualification_only": true,
     "acknowledge_settings_generation_save_export": true,
     "message_policy": "vendor_default"
   },
   "configuration_receipt_pin": {
-    "path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_RECOVERY_NATIVE_01.json",
-    "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_RECOVERY_NATIVE_01.json",
+    "path": "Z:\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_RECOVERY_NATIVE_01.json",
+    "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_RECOVERY_NATIVE_01.json",
     "bytes": 1577819,
     "sha256": "f51894c366c0ca7d6a7b0f24ba3168263fb420d9284f10d97cd2e1bb81fc97ef",
     "identity": [
@@ -40,8 +40,8 @@
     ]
   },
   "current_baseline_receipt_pin": {
-    "path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_RECOVERY_NATIVE_01.json",
-    "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_RECOVERY_NATIVE_01.json",
+    "path": "Z:\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_RECOVERY_NATIVE_01.json",
+    "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_RECOVERY_NATIVE_01.json",
     "bytes": 1577819,
     "sha256": "f51894c366c0ca7d6a7b0f24ba3168263fb420d9284f10d97cd2e1bb81fc97ef",
     "identity": [
@@ -118,8 +118,8 @@
     ]
   },
   "recipe_pin": {
-    "path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_saved_caps_pocket_20261111\\gop_request_data\\CAPS_ROUGH_RECIPE_01.json",
-    "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_saved_caps_pocket_20261111\\gop_request_data\\CAPS_ROUGH_RECIPE_01.json",
+    "path": "Z:\\demo-cam\\staging\\cam_saved_caps_pocket_20261111\\gop_request_data\\CAPS_ROUGH_RECIPE_01.json",
+    "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_saved_caps_pocket_20261111\\gop_request_data\\CAPS_ROUGH_RECIPE_01.json",
     "bytes": 1162,
     "sha256": "a284b4f3b7b62b4948bacf692da792375cb321cba1bda1156ba59c2a6e19b063",
     "identity": [
@@ -133,8 +133,8 @@
   },
   "evidence_pins": [
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_PAIR_PARAMETERS_NATIVE_01.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_PAIR_PARAMETERS_NATIVE_01.json",
+      "path": "Z:\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_PAIR_PARAMETERS_NATIVE_01.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_PAIR_PARAMETERS_NATIVE_01.json",
       "bytes": 166596,
       "sha256": "504439acc2ef5e613093b774c5d61526f38f9ae66027954bf8878f1d43e0b27c",
       "identity": [
@@ -147,16 +147,16 @@
       ]
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ExplicitGuideIslands\\BASE_R25_EXPLICIT_ISLANDS.SLDPRT",
+      "path": "Z:\\demo-cam\\models\\islands\\DEMO_PART_ISLANDS.SLDPRT",
       "sha256": "f0c787c99dae8ad92b6d5750bc2ab52b0514319399cd0b0f44cdb844b2542106"
     },
     {
-      "path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\RESULT_AFTER_CAPS.step",
+      "path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\RESULT_AFTER_CAPS.step",
       "sha256": "f3a716668efe85833bb9c9e767b6827d725484ab8d21933de240dc60b0b65b07"
     },
     {
-      "path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_SETUP_NATIVE_01.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_SETUP_NATIVE_01.json",
+      "path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_SETUP_NATIVE_01.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_SETUP_NATIVE_01.json",
       "bytes": 15122,
       "sha256": "25e3687c7ead5fc4d3f401ae3b4c20211fffcd8c8749abf70b575cacc1d29824",
       "identity": [
@@ -169,8 +169,8 @@
       ]
     },
     {
-      "path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_SETUP_SAVE_NATIVE_01.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_SETUP_SAVE_NATIVE_01.json",
+      "path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_SETUP_SAVE_NATIVE_01.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_SETUP_SAVE_NATIVE_01.json",
       "bytes": 14428,
       "sha256": "2bf3d75ced05fec6892a7e529ab3af9614044ed39ea18ad5a663260597af7269",
       "identity": [
@@ -183,8 +183,8 @@
       ]
     },
     {
-      "path": "C:\\projects\\vybro-cam-evidence\\20261110_base361\\BASE_R25_EXPLICIT_OUTER_PROFILE_NATIVE_01.json",
-      "canonical_path": "C:\\projects\\vybro-cam-evidence\\20261110_base361\\BASE_R25_EXPLICIT_OUTER_PROFILE_NATIVE_01.json",
+      "path": "C:\\work\\demo-cam-evidence\\run_01\\DEMO_OUTER_PROFILE_NATIVE_01.json",
+      "canonical_path": "C:\\work\\demo-cam-evidence\\run_01\\DEMO_OUTER_PROFILE_NATIVE_01.json",
       "bytes": 20368,
       "sha256": "864f25fc0916f2a5b83e6e3e15588f7a23fd03f2001bac7abf033a911f1681c3",
       "identity": [
@@ -197,8 +197,8 @@
       ]
     },
     {
-      "path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_REMAINING3_NATIVE_02.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_REMAINING3_NATIVE_02.json",
+      "path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_REMAINING3_NATIVE_02.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_REMAINING3_NATIVE_02.json",
       "bytes": 111719,
       "sha256": "6accf42cabd9dca33ecd17c3b7d5870d9fdd6df4c2aa4828f12db8127a5d1d52",
       "identity": [
@@ -211,8 +211,8 @@
       ]
     },
     {
-      "path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_geometry_20261111\\geometry_result_01.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_geometry_20261111\\geometry_result_01.json",
+      "path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_geometry_20261111\\geometry_result_01.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_geometry_20261111\\geometry_result_01.json",
       "bytes": 38501,
       "sha256": "1db2ca46b3f1eee7d004c4646d65dbcb9027cc4086729c79c72aed692b83a1e9",
       "identity": [
@@ -225,8 +225,8 @@
       ]
     },
     {
-      "path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\SAVE_VERIFIED_CAPS_RESULT_01.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\SAVE_VERIFIED_CAPS_RESULT_01.json",
+      "path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\SAVE_VERIFIED_CAPS_RESULT_01.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\SAVE_VERIFIED_CAPS_RESULT_01.json",
       "bytes": 18145,
       "sha256": "c3589d30dda4b67e81d6929483b3752ec9b6261c93bfe703de259f64d6a7780f",
       "identity": [
@@ -239,8 +239,8 @@
       ]
     },
     {
-      "path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\AFTER_VERIFIED_CAPS_ZERO_CAM_NATIVE_01.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\AFTER_VERIFIED_CAPS_ZERO_CAM_NATIVE_01.json",
+      "path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\AFTER_VERIFIED_CAPS_ZERO_CAM_NATIVE_01.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\AFTER_VERIFIED_CAPS_ZERO_CAM_NATIVE_01.json",
       "bytes": 24631,
       "sha256": "318d7f62fba83f2133cfe7bae07b62be42487056c542331c49ce96982c1a8e80",
       "identity": [
@@ -253,8 +253,8 @@
       ]
     },
     {
-      "path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_REMAINING3_RESULT_02.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_REMAINING3_RESULT_02.json",
+      "path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_REMAINING3_RESULT_02.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_REMAINING3_RESULT_02.json",
       "bytes": 171984,
       "sha256": "9a9d90278e16ca0e0bae89d134174ac75ae7473ffaa5358ad0656e1fba85634a",
       "identity": [
@@ -267,31 +267,31 @@
       ]
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\BASELINE_BEFORE_CAPS.step",
+      "path": "Z:\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\BASELINE_BEFORE_CAPS.step",
       "sha256": "8429e42d8d3213ba637d3605690a72032c475c31fabff34e6d3e0665a136903f"
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_upper_islands_20261111\\geometry\\NATIVE_GUIDE_ANALYTIC_CONTRACT_01.json",
+      "path": "Z:\\demo-cam\\staging\\cam_upper_islands_20261111\\geometry\\NATIVE_GUIDE_ANALYTIC_CONTRACT_01.json",
       "sha256": "c1b8df54b5866e37e228fd31a2bc86c4974de46c3d59c5ee7154635778c49408"
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_geometry_20261111\\check_cam_cap_geometry.py",
+      "path": "Z:\\demo-cam\\staging\\cam_existing_sketch_caps_geometry_20261111\\check_cam_cap_geometry.py",
       "sha256": "371b4cd58a1fc58c2a74fb8a98897e77f27dd70d64cf1cd7807952e6fd673d08"
     },
     {
-      "path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\verify_step_geometry.py",
+      "path": "\\\\fileserver\\cad\\demo-cam\\tools\\verify_step_geometry.py",
       "sha256": "c1da252ee66f049cace44a2931fe224eb71c7cf2ce99dabb26e5167ab4b977a6"
     },
     {
-      "path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\check_added_material_motion.py",
+      "path": "\\\\fileserver\\cad\\demo-cam\\tools\\check_added_material_motion.py",
       "sha256": "896274adc49dce6e7bc7ab3d6b8ac1ccb6a466bb5cbcaa7be0b7cb20c2e8c1be"
     },
     {
-      "path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\build_base_battery_guide_trial.py",
+      "path": "\\\\fileserver\\cad\\demo-cam\\tools\\build_guide_trial.py",
       "sha256": "3962f40fa9bb7b01a539a431f4281eefd1febf8c3203792de0843fe767aa5241"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_autodetected_pocket.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_autodetected_pocket.py",
       "sha256": "b2482ad4efe171040ccc2b18c22d4ff9a983a3823e38d5fee26817358371c120"
     },
     {
@@ -299,8 +299,8 @@
       "sha256": "651384d08d7a86db43a6e2aadd5b3fa37f099570e43a7d65230b4892248f0e10"
     },
     {
-      "path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_AUTODETECTED_POCKET_NATIVE_01.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_AUTODETECTED_POCKET_NATIVE_01.json",
+      "path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_AUTODETECTED_POCKET_NATIVE_01.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_AUTODETECTED_POCKET_NATIVE_01.json",
       "bytes": 60271,
       "sha256": "87752950c4d24d0ea98134d2360ca658ae4137dcef87d72ea203edf6a572beae",
       "identity": [
@@ -313,8 +313,8 @@
       ]
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ManufacturingCaps\\pocket_definition_410b9ad8f782345a413823d31d4a7f3e3a1313b1bbfb365adf00989b8106be7e.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ManufacturingCaps\\pocket_definition_410b9ad8f782345a413823d31d4a7f3e3a1313b1bbfb365adf00989b8106be7e.json",
+      "path": "Z:\\demo-cam\\models\\caps\\pocket_definition_410b9ad8f782345a413823d31d4a7f3e3a1313b1bbfb365adf00989b8106be7e.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\models\\caps\\pocket_definition_410b9ad8f782345a413823d31d4a7f3e3a1313b1bbfb365adf00989b8106be7e.json",
       "bytes": 428,
       "sha256": "41137f691ff12aae5969db79584e925503557aec763d12a7a30f48ecbe29c26b",
       "identity": [
@@ -327,12 +327,12 @@
       ]
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_autodetected_pocket_recovery.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_autodetected_pocket_recovery.py",
       "sha256": "0edf66d0ab8283a3417bbdcd235ed8971b1cdee4c967ecc90ec1cded43887de0"
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_DETECTED_POCKET_RECOVERY_NATIVE_01.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_DETECTED_POCKET_RECOVERY_NATIVE_01.json",
+      "path": "Z:\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_DETECTED_POCKET_RECOVERY_NATIVE_01.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_DETECTED_POCKET_RECOVERY_NATIVE_01.json",
       "bytes": 80180,
       "sha256": "1219f81b8afa00f4ed9897308c86ca578b13190447ce4723914287d17b3d521d",
       "identity": [
@@ -345,8 +345,8 @@
       ]
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_DEFINITION_SAVE_NATIVE_01.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_DEFINITION_SAVE_NATIVE_01.json",
+      "path": "Z:\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_DEFINITION_SAVE_NATIVE_01.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_DEFINITION_SAVE_NATIVE_01.json",
       "bytes": 14425,
       "sha256": "08b1da456b05c4ceb22ec6e214f890b6d52c117ec187feb66437fe5c4b093f52",
       "identity": [
@@ -359,8 +359,8 @@
       ]
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_GOP_NATIVE_01.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_GOP_NATIVE_01.json",
+      "path": "Z:\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_GOP_NATIVE_01.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_GOP_NATIVE_01.json",
       "bytes": 50205,
       "sha256": "f6fe4fae23d85e2fe18b40c50d74141c96da5d7b54f22eb8fbc3846f2b3ce25b",
       "identity": [
@@ -373,8 +373,8 @@
       ]
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ManufacturingCaps\\feature_gop_480c77e93223dc49a83e75fdf1942aaada7cd4198f3e30119214fed851ebf705.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ManufacturingCaps\\feature_gop_480c77e93223dc49a83e75fdf1942aaada7cd4198f3e30119214fed851ebf705.json",
+      "path": "Z:\\demo-cam\\models\\caps\\feature_gop_480c77e93223dc49a83e75fdf1942aaada7cd4198f3e30119214fed851ebf705.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\models\\caps\\feature_gop_480c77e93223dc49a83e75fdf1942aaada7cd4198f3e30119214fed851ebf705.json",
       "bytes": 452,
       "sha256": "b96ad4d17cd628f2c21e867df1675b9594af93a42737d21aa140bc5409b7362f",
       "identity": [
@@ -387,8 +387,8 @@
       ]
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_GOP_SAVE_NATIVE_01.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_GOP_SAVE_NATIVE_01.json",
+      "path": "Z:\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_GOP_SAVE_NATIVE_01.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_GOP_SAVE_NATIVE_01.json",
       "bytes": 59005,
       "sha256": "303e51e5fcc3332a812d2b059a351216d7d118bc8309d928977e6f51649ec275",
       "identity": [
@@ -401,48 +401,48 @@
       ]
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_pocket_pair_read.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_pocket_pair_read.py",
       "sha256": "0915c3681fec0550e644b1732e4cf2ee4bbc19670a1dad3b137330beca96fbf4"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_pocket_definition_context.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_pocket_definition_context.py",
       "sha256": "c5e938d5e6311a98fdc25f01ac3f01d86c81072bab026866fa64bddda11aee28"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_mill_current_parameters.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_mill_current_parameters.py",
       "sha256": "45fe73a36a2c585e0035bb7c8b7c4e4f738244760eadc4c71250feb66169a172"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_guide_group_parameters.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_guide_group_parameters.py",
       "sha256": "d68d8a58d4665264856de17e294d1fdd1bb7051d6a38fe831c5bf14cb70c2993"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_pocket_pair_read.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_pocket_pair_read.py",
       "sha256": "597d3869f8b8e7fe3e021398d339e889b1a6736c9e554d175ce815e3579092e5"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_fresh_finish_field_batch.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_fresh_finish_field_batch.py",
       "sha256": "0acf86dd24b54e0bc064d727226625360ae2862d023ccbb0bcbf658c7def96dc"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_fresh_finish_protected_read.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_fresh_finish_protected_read.py",
       "sha256": "64eb2ece9252a67ddea230b2ee3e5860bed858ae0c3e05089aacb9cd4d955f61"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_chamfer_clearance_read.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_chamfer_clearance_read.py",
       "sha256": "0b3e3b2cd1731bb0c97590dfe4d4d97c5ba28472be08d785755d0a7856d6b49c"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_chamfer_nc_planes.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_chamfer_nc_planes.py",
       "sha256": "015a799fb848559e61cd722e25a1859541e0fc98a5fac7c4256e0dd579bbcb9a"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\.venv\\lib\\site-packages\\comtypes\\gen\\_FE488661_0BD8_11D6_2012_2018CE99E55F_0_25_0.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\.venv\\lib\\site-packages\\comtypes\\gen\\_FE488661_0BD8_11D6_2012_2018CE99E55F_0_25_0.py",
       "sha256": "359e2d39a970d2362fa1b44750963b9a64e1fa819d2d046e38174affa37eb3c4"
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_TOOL_NATIVE_01.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_TOOL_NATIVE_01.json",
+      "path": "Z:\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_TOOL_NATIVE_01.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_TOOL_NATIVE_01.json",
       "bytes": 1227951,
       "sha256": "a2365e95c5eaed268cc6696590c038757c1e4148f5e5afc3d871be453fdf677a",
       "identity": [
@@ -455,8 +455,8 @@
       ]
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ManufacturingCaps\\current_pair_tool_98c5f75cb4f1da4a2f249bc819d5a175efe45f80902fce3b079bfe0b86af1379.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ManufacturingCaps\\current_pair_tool_98c5f75cb4f1da4a2f249bc819d5a175efe45f80902fce3b079bfe0b86af1379.json",
+      "path": "Z:\\demo-cam\\models\\caps\\current_pair_tool_98c5f75cb4f1da4a2f249bc819d5a175efe45f80902fce3b079bfe0b86af1379.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\models\\caps\\current_pair_tool_98c5f75cb4f1da4a2f249bc819d5a175efe45f80902fce3b079bfe0b86af1379.json",
       "bytes": 3472,
       "sha256": "9c20b1cb4f5ccadb30945fe73a56f5cd20b0a89cae203765cddc8d6d19fe0548",
       "identity": [
@@ -469,8 +469,8 @@
       ]
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_TOOL_RESULT_01.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_TOOL_RESULT_01.json",
+      "path": "Z:\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_TOOL_RESULT_01.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_TOOL_RESULT_01.json",
       "bytes": 4380,
       "sha256": "4c25c8b43d72154a4b855587faf9d8b67c09b7ccc8a9aa0e144c2b4f1edf524f",
       "identity": [
@@ -483,8 +483,8 @@
       ]
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_EXECUTOR_EXIT_01.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_EXECUTOR_EXIT_01.json",
+      "path": "Z:\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_EXECUTOR_EXIT_01.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_EXECUTOR_EXIT_01.json",
       "bytes": 2196,
       "sha256": "65501f356376d54e5e33eec5ab60a415ff1911e9a72f7f126bc813ec35e4f898",
       "identity": [
@@ -497,8 +497,8 @@
       ]
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_current_pair_tool_20261111\\ROOT_TOOL_RECIPE_01.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_current_pair_tool_20261111\\ROOT_TOOL_RECIPE_01.json",
+      "path": "Z:\\demo-cam\\staging\\cam_current_pair_tool_20261111\\ROOT_TOOL_RECIPE_01.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_current_pair_tool_20261111\\ROOT_TOOL_RECIPE_01.json",
       "bytes": 1462,
       "sha256": "e14cea4c5928fc0bb93bdf51060b21bcfd747ebc7ff193dc91698f6cdec15d62",
       "identity": [
@@ -511,60 +511,60 @@
       ]
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Info\\Research\\Collar_print_fit_20261023\\m60_implementation\\native_R22\\cam_completion_20261026\\parallel_execution\\finish_square_candidate_20261030\\RESULT.json",
+      "path": "Z:\\demo-cam\\research\\cam\\parallel_execution\\finish_square_candidate_20261030\\RESULT.json",
       "sha256": "91498b7743ab32a7fa89a1085566cb5ce83fcd8c9566adc7619daa31db2a686e"
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Info\\Research\\Collar_print_fit_20261023\\m60_implementation\\native_R22\\cam_completion_20261026\\resume_20261028\\98a_finish_recipe_receipt.json",
+      "path": "Z:\\demo-cam\\research\\cam\\resume_20261028\\98a_finish_recipe_receipt.json",
       "sha256": "6979fabc60f7496b72e20c989d252648746afb64829e45a8b4e523e11b4e13b9"
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_upper_islands_20261111\\configuration_reuse_20261111\\TWO_OPERATION_CONFIGURATION_REUSE_PLAN_01.json",
+      "path": "Z:\\demo-cam\\staging\\cam_upper_islands_20261111\\configuration_reuse_20261111\\TWO_OPERATION_CONFIGURATION_REUSE_PLAN_01.json",
       "sha256": "3f069cfe69de265b68ce291930d2b68c78fa343536d187cb855966412634f0a1"
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Info\\Research\\Collar_print_fit_20261023\\m60_implementation\\native_R22\\cam_completion_20261026\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
+      "path": "Z:\\demo-cam\\research\\cam\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
       "sha256": "4f705ee14218f3da43f2923e3438281c76fec352aff4518fdcc296252d8e7fc3"
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Info\\Research\\Collar_print_fit_20261023\\m60_implementation\\native_R22\\cam_completion_20261026\\development_staging\\installed_er16_holder_20261028\\installed_profile_nominal.json",
+      "path": "Z:\\demo-cam\\research\\cam\\development_staging\\installed_er16_holder_20261028\\installed_profile_nominal.json",
       "sha256": "aba4cd0b29ef52f53fd76bc9d1f2136ff2aecf36386898fb922849751f8d70d6"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_pair_tool.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_pair_tool.py",
       "sha256": "8e597c746ad8fe4888f727cb16248a8346e3d1716c4b631e6a68edb9ae89620d"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_pocket_context.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_pocket_context.py",
       "sha256": "55f28762db3f19d3283689281210220d66dab180a49524137ed54670f84f3f39"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_neck_tool_candidate.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_neck_tool_candidate.py",
       "sha256": "9ee5b3c083365b5b540fb3f3b955db6eec1a5ead9b8ecc43d42b555e86d28fa2"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_serial_flat_tool.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_serial_flat_tool.py",
       "sha256": "30dfa0775afff810f9a032c71eb14212e2ba0bd1ca5b374ce9856204d5a92668"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_serial_flat_profile.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_serial_flat_profile.py",
       "sha256": "4dfcdcef9cc4f0ead71e2355394bb380ebd22f739638f7710c08813fc3a0693b"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_exact_cutter_reuse.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_exact_cutter_reuse.py",
       "sha256": "cbf895b14ccdc510421ea88a1bdf79477aa848dd95af8c61f166336072c01004"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_taper_tool_candidate.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_taper_tool_candidate.py",
       "sha256": "9eb7b1b6b82f239178699dc76232f18eca79f10ba37389bb4e7b1de7e6be6ef3"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_pair_tool_recovery.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_pair_tool_recovery.py",
       "sha256": "51ed303c5862cad7c1e0b6af1bdd2959ca3ddb7a1c4dab9a799e38db2abbdcc5"
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_RECOVERY_NATIVE_01.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_RECOVERY_NATIVE_01.json",
+      "path": "Z:\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_RECOVERY_NATIVE_01.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_existing_sketch_caps_20261111\\root_execution\\CAPS_D8_RECOVERY_NATIVE_01.json",
       "bytes": 1577819,
       "sha256": "f51894c366c0ca7d6a7b0f24ba3168263fb420d9284f10d97cd2e1bb81fc97ef",
       "identity": [
@@ -577,12 +577,12 @@
       ]
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ManufacturingCaps\\BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
+      "path": "Z:\\demo-cam\\models\\caps\\DEMO_PART_CAPS_01.SLDPRT",
       "sha256": "58b885db8ec64b1d32d56446efcfeb7eec4b6f75c957e03801d99f65e293b804"
     },
     {
-      "path": "Z:\\mnt\\projects\\vybro\\Tools\\Staging\\cam_saved_caps_pocket_20261111\\gop_request_data\\CAPS_ROUGH_RECIPE_01.json",
-      "canonical_path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Tools\\Staging\\cam_saved_caps_pocket_20261111\\gop_request_data\\CAPS_ROUGH_RECIPE_01.json",
+      "path": "Z:\\demo-cam\\staging\\cam_saved_caps_pocket_20261111\\gop_request_data\\CAPS_ROUGH_RECIPE_01.json",
+      "canonical_path": "\\\\fileserver\\cad\\demo-cam\\staging\\cam_saved_caps_pocket_20261111\\gop_request_data\\CAPS_ROUGH_RECIPE_01.json",
       "bytes": 1162,
       "sha256": "a284b4f3b7b62b4948bacf692da792375cb321cba1bda1156ba59c2a6e19b063",
       "identity": [
@@ -595,61 +595,61 @@
       ]
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_pocket_generate_v2.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_pocket_generate_v2.py",
       "sha256": "8545ce2a393fd55ff5010221da11c5e3f5114165f6a891ed1e5fa1f23ab6ae83"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_pocket_generation_delta.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_pocket_generation_delta.py",
       "sha256": "737f79d17c5c1e34c8fa3bffc901176373cd1994ab91f18d75d8e8f49f7e74f1"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_saved_parameter_fields.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_saved_parameter_fields.py",
       "sha256": "a33e04d89d61623482425821100351d797a203f42778a27c1e087996e5e7dc1f"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_saved_generation.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_saved_generation.py",
       "sha256": "190d0ef6096de9c26c56fbd59e3f3205372aa42e704bd4827742cf26f391bcb9"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_generation_native.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_generation_native.py",
       "sha256": "d3c45f5e8f77b8b02e74647e305d16cc669b4332f55b53a0e2886104b2b1ffa1"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_setup_transform_observation.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_setup_transform_observation.py",
       "sha256": "d8bff2478558d19ee120195f35e354df12b385db8960a3a5385012e131486c81"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_virtual_feature_observation.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_virtual_feature_observation.py",
       "sha256": "1c7b133bea89dc3946d6627973bc85cd6fa328ba100976ef578a82f82baca6d1"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_pocket_context_v2.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_pocket_context_v2.py",
       "sha256": "e626f3b03e2daa2cc75125a100acb50af611920b1b84977974d732e004e04515"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_saved_generation_delta.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_current_saved_generation_delta.py",
       "sha256": "9d9b60df43d95a66a450f9618998f8e3710c977bdfde27ec34c5da6b4b12c56d"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_generic_cl_reader.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_generic_cl_reader.py",
       "sha256": "ad89ed68f0954033ec14e69076724c041deff54339353ae6764804ff3097db7a"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_generic_cl_reader_bounded.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_generic_cl_reader_bounded.py",
       "sha256": "a88008105525458d4d9ceae3ec54401ae0c85a4272a23edd3d57af2ecdd81ad5"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_pocket_definition_capture_v2.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_pocket_definition_capture_v2.py",
       "sha256": "a95909bd7af800fb877d19257f39f92f7795213fe610b093782dbd71829ddc58"
     },
     {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_dispatch_guard.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\scripts\\sw_cam_dispatch_guard.py",
       "sha256": "7ee1ffbb5c79691b4fe8d18e9ebb81ca933ecbd539cfac0d283978a17fe40410"
     }
   ],
   "abi": {
     "generated_pin": {
-      "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\.venv\\lib\\site-packages\\comtypes\\gen\\_FE488661_0BD8_11D6_2012_2018CE99E55F_0_25_0.py",
+      "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\.venv\\lib\\site-packages\\comtypes\\gen\\_FE488661_0BD8_11D6_2012_2018CE99E55F_0_25_0.py",
       "sha256": "359e2d39a970d2362fa1b44750963b9a64e1fa819d2d046e38174affa37eb3c4"
     },
     "interface_names": [
@@ -690,7 +690,7 @@
         "sha256": "651384d08d7a86db43a6e2aadd5b3fa37f099570e43a7d65230b4892248f0e10"
       },
       "generated_pin": {
-        "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\.venv\\lib\\site-packages\\comtypes\\gen\\_FE488661_0BD8_11D6_2012_2018CE99E55F_0_25_0.py",
+        "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\.venv\\lib\\site-packages\\comtypes\\gen\\_FE488661_0BD8_11D6_2012_2018CE99E55F_0_25_0.py",
         "sha256": "359e2d39a970d2362fa1b44750963b9a64e1fa819d2d046e38174affa37eb3c4"
       },
       "members": [
@@ -888,7 +888,7 @@
         "sha256": "651384d08d7a86db43a6e2aadd5b3fa37f099570e43a7d65230b4892248f0e10"
       },
       "generated_pin": {
-        "path": "C:\\Users\\Denis Fedorov\\.codex\\skills\\solidworks-automation\\.venv\\lib\\site-packages\\comtypes\\gen\\_FE488661_0BD8_11D6_2012_2018CE99E55F_0_25_0.py",
+        "path": "C:\\Users\\user\\.codex\\skills\\solidworks-automation\\.venv\\lib\\site-packages\\comtypes\\gen\\_FE488661_0BD8_11D6_2012_2018CE99E55F_0_25_0.py",
         "sha256": "359e2d39a970d2362fa1b44750963b9a64e1fa819d2d046e38174affa37eb3c4"
       },
       "members": [
@@ -1488,8 +1488,8 @@
           "feature_association_verified": false,
           "units_verified": false,
           "document": {
-            "path": "Z:\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ManufacturingCaps\\BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
-            "title": "BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
+            "path": "Z:\\demo-cam\\models\\caps\\DEMO_PART_CAPS_01.SLDPRT",
+            "title": "DEMO_PART_CAPS_01.SLDPRT",
             "type": 1,
             "needs_save": false
           },
@@ -1528,7 +1528,7 @@
         "last_native_method": "Protrusion",
         "actual_sketch_snapshot": {
           "pid": 49052,
-          "path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ManufacturingCaps\\BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
+          "path": "\\\\fileserver\\cad\\demo-cam\\models\\caps\\DEMO_PART_CAPS_01.SLDPRT",
           "saved_file_sha256": "58b885db8ec64b1d32d56446efcfeb7eec4b6f75c957e03801d99f65e293b804",
           "needs_save": false,
           "features": [
@@ -3225,7 +3225,7 @@
                 },
                 "GetName": {
                   "recorded": true,
-                  "raw": "Z:\\mnt\\projects\\vybro\\Info\\Research\\Collar_print_fit_20261023\\m60_implementation\\native_R22\\cam_completion_20261026\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
+                  "raw": "Z:\\demo-cam\\research\\cam\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
                   "python_shape": {
                     "python_type": "str"
                   },
@@ -4928,8 +4928,8 @@
           "feature_association_verified": false,
           "units_verified": false,
           "document": {
-            "path": "Z:\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ManufacturingCaps\\BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
-            "title": "BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
+            "path": "Z:\\demo-cam\\models\\caps\\DEMO_PART_CAPS_01.SLDPRT",
+            "title": "DEMO_PART_CAPS_01.SLDPRT",
             "type": 1,
             "needs_save": false
           },
@@ -6320,7 +6320,7 @@
                 },
                 "GetName": {
                   "recorded": true,
-                  "raw": "Z:\\mnt\\projects\\vybro\\Info\\Research\\Collar_print_fit_20261023\\m60_implementation\\native_R22\\cam_completion_20261026\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
+                  "raw": "Z:\\demo-cam\\research\\cam\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
                   "python_shape": {
                     "python_type": "str"
                   },
@@ -8027,8 +8027,8 @@
           "feature_association_verified": false,
           "units_verified": false,
           "document": {
-            "path": "Z:\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ManufacturingCaps\\BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
-            "title": "BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
+            "path": "Z:\\demo-cam\\models\\caps\\DEMO_PART_CAPS_01.SLDPRT",
+            "title": "DEMO_PART_CAPS_01.SLDPRT",
             "type": 1,
             "needs_save": false
           },
@@ -8067,7 +8067,7 @@
         "last_native_method": "Protrusion",
         "actual_sketch_snapshot": {
           "pid": 49052,
-          "path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ManufacturingCaps\\BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
+          "path": "\\\\fileserver\\cad\\demo-cam\\models\\caps\\DEMO_PART_CAPS_01.SLDPRT",
           "saved_file_sha256": "58b885db8ec64b1d32d56446efcfeb7eec4b6f75c957e03801d99f65e293b804",
           "needs_save": false,
           "features": [
@@ -9764,7 +9764,7 @@
                 },
                 "GetName": {
                   "recorded": true,
-                  "raw": "Z:\\mnt\\projects\\vybro\\Info\\Research\\Collar_print_fit_20261023\\m60_implementation\\native_R22\\cam_completion_20261026\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
+                  "raw": "Z:\\demo-cam\\research\\cam\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
                   "python_shape": {
                     "python_type": "str"
                   },
@@ -11467,8 +11467,8 @@
           "feature_association_verified": false,
           "units_verified": false,
           "document": {
-            "path": "Z:\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ManufacturingCaps\\BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
-            "title": "BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
+            "path": "Z:\\demo-cam\\models\\caps\\DEMO_PART_CAPS_01.SLDPRT",
+            "title": "DEMO_PART_CAPS_01.SLDPRT",
             "type": 1,
             "needs_save": false
           },
@@ -12859,7 +12859,7 @@
                 },
                 "GetName": {
                   "recorded": true,
-                  "raw": "Z:\\mnt\\projects\\vybro\\Info\\Research\\Collar_print_fit_20261023\\m60_implementation\\native_R22\\cam_completion_20261026\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
+                  "raw": "Z:\\demo-cam\\research\\cam\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
                   "python_shape": {
                     "python_type": "str"
                   },
@@ -14568,8 +14568,8 @@
           "feature_association_verified": false,
           "units_verified": false,
           "document": {
-            "path": "Z:\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ManufacturingCaps\\BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
-            "title": "BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
+            "path": "Z:\\demo-cam\\models\\caps\\DEMO_PART_CAPS_01.SLDPRT",
+            "title": "DEMO_PART_CAPS_01.SLDPRT",
             "type": 1,
             "needs_save": false
           },
@@ -14608,7 +14608,7 @@
         "last_native_method": "Protrusion",
         "actual_sketch_snapshot": {
           "pid": 49052,
-          "path": "\\\\wsl.localhost\\Ubuntu-22.04\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ManufacturingCaps\\BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
+          "path": "\\\\fileserver\\cad\\demo-cam\\models\\caps\\DEMO_PART_CAPS_01.SLDPRT",
           "saved_file_sha256": "58b885db8ec64b1d32d56446efcfeb7eec4b6f75c957e03801d99f65e293b804",
           "needs_save": false,
           "features": [
@@ -16305,7 +16305,7 @@
                 },
                 "GetName": {
                   "recorded": true,
-                  "raw": "Z:\\mnt\\projects\\vybro\\Info\\Research\\Collar_print_fit_20261023\\m60_implementation\\native_R22\\cam_completion_20261026\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
+                  "raw": "Z:\\demo-cam\\research\\cam\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
                   "python_shape": {
                     "python_type": "str"
                   },
@@ -18010,8 +18010,8 @@
           "feature_association_verified": false,
           "units_verified": false,
           "document": {
-            "path": "Z:\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ManufacturingCaps\\BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
-            "title": "BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
+            "path": "Z:\\demo-cam\\models\\caps\\DEMO_PART_CAPS_01.SLDPRT",
+            "title": "DEMO_PART_CAPS_01.SLDPRT",
             "type": 1,
             "needs_save": false
           },
@@ -19402,7 +19402,7 @@
                 },
                 "GetName": {
                   "recorded": true,
-                  "raw": "Z:\\mnt\\projects\\vybro\\Info\\Research\\Collar_print_fit_20261023\\m60_implementation\\native_R22\\cam_completion_20261026\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
+                  "raw": "Z:\\demo-cam\\research\\cam\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
                   "python_shape": {
                     "python_type": "str"
                   },
@@ -21231,8 +21231,8 @@
       "feature_association_verified": false,
       "units_verified": false,
       "document": {
-        "path": "Z:\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ManufacturingCaps\\BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
-        "title": "BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
+        "path": "Z:\\demo-cam\\models\\caps\\DEMO_PART_CAPS_01.SLDPRT",
+        "title": "DEMO_PART_CAPS_01.SLDPRT",
         "type": 1,
         "needs_save": false
       },
@@ -22623,7 +22623,7 @@
             },
             "GetName": {
               "recorded": true,
-              "raw": "Z:\\mnt\\projects\\vybro\\Info\\Research\\Collar_print_fit_20261023\\m60_implementation\\native_R22\\cam_completion_20261026\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
+              "raw": "Z:\\demo-cam\\research\\cam\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
               "python_shape": {
                 "python_type": "str"
               },
@@ -25079,8 +25079,8 @@
       "feature_association_verified": false,
       "units_verified": false,
       "document": {
-        "path": "Z:\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ManufacturingCaps\\BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
-        "title": "BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
+        "path": "Z:\\demo-cam\\models\\caps\\DEMO_PART_CAPS_01.SLDPRT",
+        "title": "DEMO_PART_CAPS_01.SLDPRT",
         "type": 1,
         "needs_save": false
       },
@@ -26471,7 +26471,7 @@
             },
             "GetName": {
               "recorded": true,
-              "raw": "Z:\\mnt\\projects\\vybro\\Info\\Research\\Collar_print_fit_20261023\\m60_implementation\\native_R22\\cam_completion_20261026\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
+              "raw": "Z:\\demo-cam\\research\\cam\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
               "python_shape": {
                 "python_type": "str"
               },
@@ -28175,8 +28175,8 @@
       "feature_association_verified": false,
       "units_verified": false,
       "document": {
-        "path": "Z:\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R25_20261111\\ManufacturingCaps\\BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
-        "title": "BASE_R25_FULL_GUIDE_CAPS_01.SLDPRT",
+        "path": "Z:\\demo-cam\\models\\caps\\DEMO_PART_CAPS_01.SLDPRT",
+        "title": "DEMO_PART_CAPS_01.SLDPRT",
         "type": 1,
         "needs_save": false
       },
@@ -29567,7 +29567,7 @@
             },
             "GetName": {
               "recorded": true,
-              "raw": "Z:\\mnt\\projects\\vybro\\Info\\Research\\Collar_print_fit_20261023\\m60_implementation\\native_R22\\cam_completion_20261026\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
+              "raw": "Z:\\demo-cam\\research\\cam\\development_staging\\installed_er16_holder_20261028\\c40-16erp412.mh",
               "python_shape": {
                 "python_type": "str"
               },

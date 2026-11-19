@@ -1,7 +1,7 @@
 {
   "document": {
-    "path": "Z:\\mnt\\projects\\vybro\\Hardware\\Mechanics\\ISO\\Review\\CAM_R23_20261026\\Qualification\\BASE_R23_MILL_AFR_RAW_QUAL.SLDPRT",
-    "title": "BASE_R23_MILL_AFR_RAW_QUAL.SLDPRT",
+    "path": "Z:\\demo-cam\\models\\qualification\\DEMO_PART_MILL_QUAL.SLDPRT",
+    "title": "DEMO_PART_MILL_QUAL.SLDPRT",
     "type": 1,
     "needs_save": false
   },
@@ -101,7 +101,7 @@
       0.0325,
       0.028
     ],
-    "stl_path": "Z:\\mnt\\projects\\vybro\\Info\\Research\\Collar_print_fit_20261023\\m60_implementation\\native_R22\\cam_completion_20261026\\base_r23_stock_export_01\\stock.stl",
+    "stl_path": "Z:\\demo-cam\\research\\cam\\stock_export_01\\stock.stl",
     "length_units_raw": 0,
     "coordinate_system": "",
     "offset_read_status": "unavailable_native_false",
