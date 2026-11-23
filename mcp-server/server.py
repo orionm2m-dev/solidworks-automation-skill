@@ -8833,6 +8833,104 @@ def solidworks_drawing_export_dwg(params: SolidWorksDrawingExportDwgInput) -> st
     return _run_locked(op, params.response_format)
 
 
+class SolidWorksDrawingModelViewInput(BaseInput):
+    named_view: str = Field(default="*Front", min_length=1, max_length=80,
+                            description="Model view name; English standard names (*Front, *Top, *Isometric...) map to the localized ones.")
+    center_mm: Tuple[float, float]
+    scale: Optional[float] = Field(default=None, gt=0, le=100, description="View scale; omit to use the sheet scale.")
+    display: Literal["wireframe", "hidden_visible", "hidden_removed", "shaded"] = "hidden_removed"
+    name: Optional[str] = Field(default=None, min_length=1, max_length=80)
+
+
+class SolidWorksDrawingInsertModelViewsInput(ActiveDocumentInput):
+    """在现有工程图指定页放置零件/装配体视图（保留图框）。"""
+    model_path: str = Field(min_length=1, description="Absolute .SLDPRT/.SLDASM path.")
+    sheet: str = Field(min_length=1, max_length=80)
+    views: List[SolidWorksDrawingModelViewInput] = Field(min_length=1, max_length=16)
+    dry_run: bool = True
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @field_validator("model_path")
+    @classmethod
+    def _model(cls, value):
+        return _absolute_with_suffix(value, {".sldprt", ".sldasm"}, "model_path")
+
+
+class SolidWorksDrawingRevisionRowInput(BaseInput):
+    revision: str = Field(min_length=1, max_length=8)
+    description: str = Field(default="", max_length=400)
+    date: str = Field(default="", max_length=40)
+    approved: str = Field(default="", max_length=80)
+
+
+class SolidWorksDrawingRevisionTableInput(ActiveDocumentInput):
+    """在指定页插入原生修订表并写入各行。"""
+    sheet: str = Field(min_length=1, max_length=80)
+    rows: List[SolidWorksDrawingRevisionRowInput] = Field(min_length=1, max_length=50)
+    position_mm: Optional[Tuple[float, float]] = Field(default=None, description="Table position; omit to use the sheet format anchor.")
+    anchor: Literal["top_left", "top_right", "bottom_left", "bottom_right"] = "bottom_right"
+    table_template: Optional[str] = Field(default=None, description="Optional absolute revision table template (.sldrevtbt).")
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
+class SolidWorksExitEmptySessionInput(BaseInput):
+    """绑定进程无打开文档时，一次 ExitApp 并确认进程退出。"""
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    wait_seconds: int = Field(default=60, ge=5, le=300)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
+@mcp.tool(
+    name="solidworks_drawing_insert_model_views",
+    title="Insert Model Views On Drawing Sheet",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_drawing_insert_model_views(params: SolidWorksDrawingInsertModelViewsInput) -> str:
+    """把零件/装配体的命名视图放到现有工程图的指定页（图框不变），按中心定位；先 dry_run 核对视图名。"""
+    def op():
+        from scripts.sw_drawing_2d import insert_model_views
+        sw, draw = _active_drawing_required(params)
+        return insert_model_views(sw, draw, params.model_path, params.sheet,
+                                  [v.model_dump() for v in params.views], dry_run=params.dry_run)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_drawing_revision_table",
+    title="Insert Drawing Revision Table",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_drawing_revision_table(params: SolidWorksDrawingRevisionTableInput) -> str:
+    """在指定页插入原生修订表（一页一张），按行写入修订号、描述、日期、批准人并回读。"""
+    def op():
+        from scripts.sw_drawing_2d import insert_revision_table
+        sw, draw = _active_drawing_required(params)
+        return insert_revision_table(sw, draw, params.sheet, [r.model_dump() for r in params.rows],
+                                     position_mm=params.position_mm, anchor=params.anchor,
+                                     table_template=params.table_template or "")
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_exit_empty_session",
+    title="Exit Empty Bound SOLIDWORKS Session",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_exit_empty_session(params: SolidWorksExitEmptySessionInput) -> str:
+    """仅对本服务已绑定（solidworks_connect）的进程：无打开文档时一次 ExitApp，等待进程句柄确认退出；有文档则拒绝并列出。"""
+    def op():
+        global _selected_process_id
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Bind this server to the process first: solidworks_connect(process_id=...)")
+        from scripts.sw_exit_empty import exit_empty_session
+        sw, _previous = connect_solidworks(wait_seconds=1, process_id=params.process_id)
+        result = exit_empty_session(sw, params.process_id, wait_seconds=params.wait_seconds)
+        if result.get("process_exit_verified"):
+            _selected_process_id = None
+        return result
+    return _run_locked(op, params.response_format)
+
+
 @mcp.tool(
     name="solidworks_inspect_drawing_sections",
     title="Inspect Native Drawing Sections",

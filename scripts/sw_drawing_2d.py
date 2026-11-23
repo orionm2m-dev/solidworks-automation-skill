@@ -898,8 +898,7 @@ def add_sheet_from_template(sw, draw, template_path, name, *, properties=None, s
     before = _sheet_names(draw)
 
     def activate_target():
-        errors = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
-        sw.ActivateDoc3(target_name, False, 0, errors)
+        _activate_doc(sw, target_name)
     src = sw.NewDocument(str(template_path), 0, 0, 0)
     if src is None or int(get(src, 'GetType')) != 3:
         raise RuntimeError(f'NewDocument did not create a drawing from {template_path}')
@@ -977,3 +976,210 @@ def add_sheet(draw, name, width_mm, height_mm, *, sheet_format_path=None, scale=
             raise RuntimeError(f'Save failed: {err.value}, {warn.value}')
         out['saved'] = True
     return out
+
+
+# swDisplayMode_e：只开放能可靠回读的几种。
+DISPLAY = {'wireframe': 0, 'hidden_visible': 1, 'hidden_removed': 2, 'shaded': 3}
+
+
+class ModelViewOp(Strict):
+    named_view: str = Field(default='*Front', min_length=1, max_length=80)
+    center_mm: Point
+    scale: float | None = Field(default=None, gt=0, le=100)  # None：使用图纸比例
+    display: Literal['wireframe', 'hidden_visible', 'hidden_removed', 'shaded'] = 'hidden_removed'
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+
+
+# 标准视图在 GetModelViewNames 开头的固定顺序（与界面语言无关）。
+STANDARD_VIEWS = ['*Normal To', '*Front', '*Back', '*Left', '*Right', '*Top', '*Bottom', '*Isometric', '*Trimetric', '*Dimetric']
+
+
+def resolve_named_view(requested, named):
+    """按名称取视图；英文标准名在本地化界面下按标准顺序映射到本地名称。找不到返回 None。"""
+    if requested in named:
+        return requested
+    keys = [k.casefold() for k in STANDARD_VIEWS]
+    if requested.casefold() in keys:
+        std = [n for n in named if n.startswith('*')][:len(STANDARD_VIEWS)]
+        if len(std) == len(STANDARD_VIEWS):
+            return std[keys.index(requested.casefold())]
+    return None
+
+
+def _byref_int():
+    import pythoncom
+    from win32com.client import VARIANT
+    return VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+
+
+def _open_model(sw, model_path):
+    """静默打开（或取已打开的）零件/装配体，返回文档。"""
+    from scripts.sw_connect import get_com_member as get
+    kind = {'.sldprt': 1, '.sldasm': 2}[Path(model_path).suffix.lower()]
+    for doc in list(get(sw, 'GetDocuments') or []):
+        if str(get(doc, 'GetPathName') or '').casefold() == str(model_path).casefold():
+            return doc
+    try:
+        r = sw.OpenDoc6(str(model_path), kind, 1, '', _byref_int(), _byref_int())
+    except TypeError:
+        r = sw.OpenDoc6(str(model_path), kind, 1, '', 0, 0)
+    doc = r[0] if isinstance(r, tuple) else r
+    if doc is None:
+        raise RuntimeError(f'cannot open model {model_path}')
+    return doc
+
+
+def _activate_doc(sw, name):
+    """ActivateDoc3：早绑定要整数，晚绑定要按引用 VARIANT；两种都试。"""
+    try:
+        return sw.ActivateDoc3(name, False, 0, _byref_int())
+    except TypeError:
+        return sw.ActivateDoc3(name, False, 0, 0)
+
+
+def _activate_by_path(sw, path, title):
+    _activate_doc(sw, Path(path).name if path else title)
+
+
+def insert_model_views(sw, draw, model_path, sheet, views, dry_run=True):
+    """把零件/装配体的命名视图放到现有工程图的指定页上（不改图框），按中心定位，可设比例与显示方式。"""
+    import pythoncom
+    from win32com.client import VARIANT
+    from scripts.sw_connect import get_com_member as get
+    if int(get(draw, 'GetType')) != 3:
+        raise ValueError('Active document must be a drawing (.SLDDRW)')
+    _absolute(model_path, {'.sldprt', '.sldasm'})
+    if not Path(model_path).is_file():
+        raise FileNotFoundError(model_path)
+    views = [v if isinstance(v, ModelViewOp) else ModelViewOp.model_validate(v) for v in views]
+    if not views or len(views) > 16:
+        raise ValueError('1..16 views required')
+    if sheet not in _sheet_names(draw):
+        raise ValueError(f'Unknown sheet {sheet!r}; sheets={_sheet_names(draw)}')
+    draw_path = str(get(draw, 'GetPathName') or '')
+    draw_title = str(get(draw, 'GetTitle'))
+    model = _open_model(sw, model_path)
+    named = [str(n) for n in (get(model, 'GetModelViewNames') or [])]
+    _activate_by_path(sw, draw_path, draw_title)
+    resolved = {v.named_view: resolve_named_view(v.named_view, named) for v in views}
+    missing = [k for k, val in resolved.items() if val is None]
+    plan = {'status': 'blocked' if missing else 'ready', 'model_path': str(model_path), 'sheet': sheet,
+            'named_views': named, 'resolved': resolved, 'missing': missing, 'views': [v.model_dump() for v in views]}
+    if missing or dry_run:
+        return plan
+    _activate_sheet(draw, sheet)
+    sh = get(draw, 'GetCurrentSheet')
+    props = list(get(sh, 'GetProperties2') or [])
+    sheet_size = (_mm(props[5]), _mm(props[6])) if len(props) > 6 else None
+    vec = lambda vals: VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_R8, tuple(vals))
+    out = []
+    for op in views:
+        v = draw.CreateDrawViewFromModelView3(str(model_path), resolved[op.named_view], _m(op.center_mm[0]), _m(op.center_mm[1]), 0.0)
+        if v is None:
+            raise RuntimeError(f'CreateDrawViewFromModelView3 failed: {op.named_view}')
+        if op.scale is not None:
+            v.UseSheetScale = 0
+            v.ScaleDecimal = float(op.scale)
+        v.SetDisplayMode4(False, DISPLAY[op.display], False, True, True)
+        if op.name:
+            v.SetName2(op.name)
+        draw.ForceRebuild3(False)
+        draw.GraphicsRedraw2()
+        box = list(get(v, 'GetOutline'))
+        pos = list(get(v, 'Position'))
+        pos[0] += _m(op.center_mm[0]) - (box[0] + box[2]) / 2
+        pos[1] += _m(op.center_mm[1]) - (box[1] + box[3]) / 2
+        v.Position = vec(pos)
+        draw.ForceRebuild3(False)
+        box = [_mm(x) for x in list(get(v, 'GetOutline'))]
+        rec = {'name': str(get(v, 'GetName2')), 'named_view': op.named_view, 'outline_mm': box,
+               'scale': round(float(get(v, 'ScaleDecimal')), 6), 'display_mode': int(get(v, 'GetDisplayMode2'))}
+        if sheet_size and not (0 <= box[0] and box[2] <= sheet_size[0] and 0 <= box[1] and box[3] <= sheet_size[1]):
+            rec['warning'] = f'view outline outside sheet {sheet_size}'
+        out.append(rec)
+    err, warn = _byref_int(), _byref_int()
+    if not draw.Save3(1, err, warn) and err.value:
+        raise RuntimeError(f'Save failed: {err.value}, {warn.value}')
+    return {'status': 'inserted', 'model_path': str(model_path), 'sheet': sheet, 'sheet_size_mm': sheet_size,
+            'views': out, 'manual_review_required': True}
+
+
+class RevisionRow(Strict):
+    revision: str = Field(min_length=1, max_length=8)
+    description: str = Field(default='', max_length=400)
+    date: str = Field(default='', max_length=40)
+    approved: str = Field(default='', max_length=80)
+
+
+def _table_text(tann, row, col):
+    """读表格单元格文字（带参数的属性 Text(row, col)）。"""
+    t = getattr(tann, 'Text')
+    return t(row, col) if callable(t) else t
+
+
+def _set_table_text(tann, row, col, value):
+    """写表格单元格：早绑定有 SetText；晚绑定用 DISPATCH_PROPERTYPUT 调用 Text(row, col)。"""
+    setter = getattr(tann, 'SetText', None)
+    if callable(setter):
+        return setter(row, col, value)
+    import pythoncom
+    dispid = tann._oleobj_.GetIDsOfNames('Text')
+    return tann._oleobj_.Invoke(dispid, 0, pythoncom.DISPATCH_PROPERTYPUT, 0, row, col, value)
+
+
+def insert_revision_table(sw, draw, sheet, rows, *, position_mm=None, anchor='bottom_right', table_template=''):
+    """在指定页插入原生修订表并按行填写；返回表的列标题与回读的单元格。"""
+    from scripts.sw_connect import get_com_member as get
+    if int(get(draw, 'GetType')) != 3:
+        raise ValueError('Active document must be a drawing (.SLDDRW)')
+    rows = [r if isinstance(r, RevisionRow) else RevisionRow.model_validate(r) for r in rows]
+    if not rows:
+        raise ValueError('at least one revision row required')
+    if sheet not in _sheet_names(draw):
+        raise ValueError(f'Unknown sheet {sheet!r}; sheets={_sheet_names(draw)}')
+    _activate_sheet(draw, sheet)
+    sh = get(draw, 'GetCurrentSheet')
+    if get(sh, 'RevisionTable') is not None:
+        raise ValueError(f'sheet {sheet!r} already has a revision table')
+    # swBOMConfigurationAnchor_e：TopLeft=1, TopRight=2, BottomLeft=3, BottomRight=4。
+    anchor_code = {'top_left': 1, 'top_right': 2, 'bottom_left': 3, 'bottom_right': 4}[anchor]
+    use_anchor = position_mm is None
+    x, y = (_m(position_mm[0]), _m(position_mm[1])) if position_mm else (0.0, 0.0)
+    table = sh.InsertRevisionTable2(use_anchor, x, y, anchor_code, str(table_template or ''), 1, True)
+    if table is None:
+        raise RuntimeError('InsertRevisionTable2 failed')
+    tann = table  # IRevisionTableAnnotation 继承 ITableAnnotation
+    for r in rows:
+        row_id = table.AddRevision(r.revision)
+        if not row_id:
+            raise RuntimeError(f'AddRevision failed: {r.revision}')
+    ncols = int(get(tann, 'ColumnCount'))
+    nrows = int(get(tann, 'RowCount'))
+    cell = lambda r_, c_: str(_table_text(tann, r_, c_) or '')
+    # 表头行：前几行中含“描述/日期”类列名的那一行（第一行常是表名）。
+    keys = {'desc': ('desc', 'опис'), 'date': ('date', 'дат'), 'appr': ('approv', 'утв')}
+    header_row, cols = None, {}
+    for r_ in range(min(3, nrows)):
+        found = {}
+        for k, words in keys.items():
+            for c_ in range(ncols):
+                if any(w in cell(r_, c_).casefold() for w in words):
+                    found[k] = c_
+                    break
+        if 'desc' in found:
+            header_row, cols = r_, found
+            break
+    if header_row is None:
+        raise RuntimeError(f'revision table header not recognised: {[[cell(r_, c_) for c_ in range(ncols)] for r_ in range(min(3, nrows))]}')
+    data_rows = list(range(nrows - len(rows), nrows))
+    for r, row in zip(rows, data_rows):
+        for k, val in (('desc', r.description), ('date', r.date), ('appr', r.approved)):
+            if k in cols and val:
+                _set_table_text(tann, row, cols[k], val)
+    headers = [cell(header_row, c_) for c_ in range(ncols)]
+    draw.ForceRebuild3(False)
+    readback = [[cell(r_, c_) for c_ in range(ncols)] for r_ in range(nrows)]
+    err, warn = _byref_int(), _byref_int()
+    if not draw.Save3(1, err, warn) and err.value:
+        raise RuntimeError(f'Save failed: {err.value}, {warn.value}')
+    return {'status': 'inserted', 'sheet': sheet, 'headers': headers, 'cells': readback}
