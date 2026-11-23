@@ -894,6 +894,10 @@ def add_sheet_from_template(sw, draw, template_path, name, *, properties=None, s
         raise ValueError(f'sheet {name!r} already exists')
     target_title = str(get(draw, 'GetTitle'))
     before = _sheet_names(draw)
+
+    def activate_target():
+        errors = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+        sw.ActivateDoc3(target_title, False, 0, errors)
     src = sw.NewDocument(str(template_path), 0, 0, 0)
     if src is None or int(get(src, 'GetType')) != 3:
         raise RuntimeError(f'NewDocument did not create a drawing from {template_path}')
@@ -903,13 +907,13 @@ def add_sheet_from_template(sw, draw, template_path, name, *, properties=None, s
         if not src.Extension.SelectByID2(src_sheet, 'SHEET', 0, 0, 0, False, 0, create_empty_dispatch_variant(), 0):
             raise RuntimeError('cannot select template sheet')
         src.EditCopy()
-        sw.ActivateDoc3(target_title, False, 0, 0)
+        activate_target()
         # swInsertOption_AtEnd=1, swRenameOption_Yes=2（同名自动改名，随后改为目标名）。
         if not draw.PasteSheet(1, 2):
             raise RuntimeError('PasteSheet failed')
     finally:
         sw.CloseDoc(src_title)
-        sw.ActivateDoc3(target_title, False, 0, 0)
+        activate_target()
     added = [n for n in _sheet_names(draw) if n not in before]
     if len(added) != 1:
         raise RuntimeError(f'expected one pasted sheet, got {added}')
