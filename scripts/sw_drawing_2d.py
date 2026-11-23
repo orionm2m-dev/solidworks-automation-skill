@@ -892,12 +892,14 @@ def add_sheet_from_template(sw, draw, template_path, name, *, properties=None, s
         raise FileNotFoundError(template_path)
     if name in _sheet_names(draw):
         raise ValueError(f'sheet {name!r} already exists')
-    target_title = str(get(draw, 'GetTitle'))
+    target_path = str(get(draw, 'GetPathName') or '')
+    # 工程图标题含当前页名，换页后会变；按文件名激活，未保存时退回标题。
+    target_name = Path(target_path).name if target_path else str(get(draw, 'GetTitle'))
     before = _sheet_names(draw)
 
     def activate_target():
         errors = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
-        sw.ActivateDoc3(target_title, False, 0, errors)
+        sw.ActivateDoc3(target_name, False, 0, errors)
     src = sw.NewDocument(str(template_path), 0, 0, 0)
     if src is None or int(get(src, 'GetType')) != 3:
         raise RuntimeError(f'NewDocument did not create a drawing from {template_path}')
@@ -914,6 +916,9 @@ def add_sheet_from_template(sw, draw, template_path, name, *, properties=None, s
     finally:
         sw.CloseDoc(src_title)
         activate_target()
+    active = get(sw, 'ActiveDoc')
+    if target_path and (active is None or str(get(active, 'GetPathName') or '').casefold() != target_path.casefold()):
+        raise RuntimeError(f'target drawing is not active after sheet copy: {target_path}')
     added = [n for n in _sheet_names(draw) if n not in before]
     if len(added) != 1:
         raise RuntimeError(f'expected one pasted sheet, got {added}')
