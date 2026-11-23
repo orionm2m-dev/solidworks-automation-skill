@@ -83,6 +83,8 @@ class NoteOp(Strict):
     font: str | None = Field(default=None, min_length=1, max_length=64)
     bold: bool = False
     italic: bool = False
+    width_factor: float | None = Field(default=None, gt=0, le=5)
+    line_spacing_mm: float | None = Field(default=None, gt=0, le=20)
     justify: Literal['left', 'center', 'right'] = 'left'
 
 
@@ -293,6 +295,10 @@ def _note_record(note, view_name):
         fmt = ann.GetTextFormat(0)
         rec['height_mm'] = _mm(fmt.CharHeight)
         rec['font'] = str(fmt.TypeFaceName)
+        rec['italic'] = bool(fmt.Italic)
+        rec['bold'] = bool(fmt.Bold)
+        rec['width_factor'] = round(float(fmt.WidthFactor), 5)
+        rec['line_spacing_mm'] = _mm(fmt.LineSpacing)
     except Exception:  # noqa: BLE001
         pass
     try:
@@ -601,9 +607,17 @@ def edit_2d(sw, draw, spec, dry_run=True):
         for op in se.delete_notes:
             targets.update(i for i, t in enumerate(texts)
                            if text_matches(t, op) and note_position_in_box(_note_position(notes[i]), op))
+        selected_segments = selected
+        selected_notes = 0
         for i in sorted(targets):
-            if get(notes[i], 'GetAnnotation').Select3(True, null):
-                selected += 1
+            ann = get(notes[i], 'GetAnnotation')
+            # Select3 с пустым SelectData у надписей листа возвращает False; Select2(append, mark) работает.
+            if ann.Select2(True, 0):
+                selected_notes += 1
+        if selected_notes != len(targets):
+            draw.ClearSelection2(True)
+            raise RuntimeError(f'delete: selected {selected_notes} of {len(targets)} notes; nothing changed')
+        selected = selected_segments + selected_notes
         if selected:
             draw.EditDelete()
         res['deleted'] = selected
@@ -667,6 +681,10 @@ def edit_2d(sw, draw, spec, dry_run=True):
             fmt.Italic = op.italic
             if op.font:
                 fmt.TypeFaceName = op.font
+            if op.width_factor is not None:
+                fmt.WidthFactor = op.width_factor
+            if op.line_spacing_mm is not None:
+                fmt.LineSpacing = _m(op.line_spacing_mm)
             ann.SetTextFormat(0, False, fmt)
             note.SetTextJustification(JUSTIFY[op.justify])
             if op.angle_deg:
@@ -737,6 +755,8 @@ def export_pdf_all(sw, draw, pdf_path, overwrite=False):
 class PdfFrame(Strict):
     box_mm: tuple[float, float, float, float]
     label: str | None = Field(default=None, max_length=80)
+    # 页面尺寸（宽, 高，毫米）；给出时图框按比例缩放居中放入该页面（如 A2 图框打印到 A3），矢量不变。
+    page_size_mm: tuple[float, float] | None = None
 
     @model_validator(mode='after')
     def ordered(self):
@@ -774,11 +794,17 @@ def export_pdf_frames(sw, draw, sheet, frames, pdf_path, overwrite=False):
         k = 72 / 25.4
         page_w_mm = src[0].rect.width / k
         pages = []
+        sheet_h = src[0].rect.height
         for f in frames:
             x1, y1, x2, y2 = f.box_mm
-            out.insert_pdf(src, from_page=0, to_page=0)
-            out[-1].set_mediabox(pymupdf.Rect(x1 * k, y1 * k, x2 * k, y2 * k))  # PDF 用户空间，原点左下
-            pages.append({'label': f.label, 'box_mm': list(f.box_mm), 'size_mm': [round(x2 - x1, 1), round(y2 - y1, 1)]})
+            pw, ph = f.page_size_mm or (x2 - x1, y2 - y1)
+            page = out.new_page(width=pw * k, height=ph * k)
+            # clip 用 PyMuPDF 页面坐标（原点左上）；图纸毫米坐标原点左下。
+            clip = pymupdf.Rect(x1 * k, sheet_h - y2 * k, x2 * k, sheet_h - y1 * k)
+            page.show_pdf_page(page.rect, src, 0, clip=clip, keep_proportion=True)
+            scale = min(pw / (x2 - x1), ph / (y2 - y1))
+            pages.append({'label': f.label, 'box_mm': list(f.box_mm), 'size_mm': [round(pw, 1), round(ph, 1)],
+                          'scale': round(scale, 4)})
         Path(pdf_path).parent.mkdir(parents=True, exist_ok=True)
         out.save(pdf_path)
         return {'status': 'exported', 'pdf_path': pdf_path, 'sheet': sheet,
