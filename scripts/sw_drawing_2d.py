@@ -90,6 +90,16 @@ class TextMatch(Strict):
     match: str = Field(min_length=1, max_length=2000)
     contains: bool = False
     expected_count: int = Field(default=1, ge=1, le=500)
+    # 只在此框内（注释插入点，图纸毫米坐标 x1, y1, x2, y2）匹配；同一张图纸上有多个图框时必用。
+    box_mm: tuple[float, float, float, float] | None = None
+
+    @model_validator(mode='after')
+    def ordered_box(self):
+        if self.box_mm is not None:
+            x1, y1, x2, y2 = self.box_mm
+            if not (x1 < x2 and y1 < y2):
+                raise ValueError('box_mm must be x1 < x2 and y1 < y2')
+        return self
 
 
 class ReplaceTextOp(TextMatch):
@@ -187,6 +197,13 @@ def text_matches(text, op):
     return want in have if op.contains else have == want
 
 
+def note_position_in_box(position_mm, op):
+    """注释插入点在操作的 box_mm 内；未给 box_mm 时总为真。"""
+    if op.box_mm is None:
+        return True
+    return bool(position_mm) and inside_box([tuple(position_mm)], op.box_mm)
+
+
 def inside_box(points_mm, box_mm, tol=1e-6):
     """全部点在框内（含边界）才算在框内。"""
     x1, y1, x2, y2 = box_mm
@@ -249,7 +266,7 @@ def _view_notes(view):
     n = get(view, 'GetFirstNote')
     while n is not None:
         notes.append(n)
-        n = get(n, 'GetNextNote')
+        n = get(n, 'GetNext')
     return notes
 
 
@@ -466,17 +483,20 @@ def _apply_pen(seg, pen):
 
 def _resolve(draw, sheet_edit):
     """解析匹配：各注释操作的命中、框内实体；不修改文档。"""
+    from scripts.sw_connect import get_com_member as get
     _activate_sheet(draw, sheet_edit.sheet)
     notes = []
     for v in _views(draw):
         notes.extend(_view_notes(v))
-    texts = [str(n.GetText() or '') for n in notes]
+    texts = [str(get(n, 'GetText') or '') for n in notes]
+    positions = [_note_position(n) for n in notes]
     plan = {'sheet': sheet_edit.sheet, 'notes_on_sheet': len(notes), 'replace_text': [], 'delete_notes': [], 'delete_in_box': []}
     problems = []
     for kind, ops in (('replace_text', sheet_edit.replace_text), ('delete_notes', sheet_edit.delete_notes)):
         for op in ops:
-            hits = [i for i, t in enumerate(texts) if text_matches(t, op)]
-            plan[kind].append({'match': op.match, 'found': len(hits), 'expected': op.expected_count})
+            hits = [i for i, t in enumerate(texts) if text_matches(t, op) and note_position_in_box(positions[i], op)]
+            plan[kind].append({'match': op.match, 'box_mm': op.box_mm, 'found': len(hits), 'expected': op.expected_count,
+                               'positions_mm': [positions[i] for i in hits][:20]})
             if len(hits) != op.expected_count:
                 problems.append(f'{kind} {op.match!r}: found {len(hits)}, expected {op.expected_count}')
     sheet_view = _views(draw)[0]
@@ -488,6 +508,15 @@ def _resolve(draw, sheet_edit):
         if len(n_hits) + len(s_hits) > op.max_count:
             problems.append(f'delete_in_box {op.box_mm}: {len(n_hits) + len(s_hits)} > max_count {op.max_count}')
     return notes, texts, segs, plan, problems
+
+
+def _note_position(note):
+    from scripts.sw_connect import get_com_member as get
+    try:
+        pos = list(get(get(note, 'GetAnnotation'), 'GetPosition') or [])
+        return [_mm(pos[0]), _mm(pos[1])] if len(pos) >= 2 else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _note_in_box(note, box):
@@ -570,7 +599,8 @@ def edit_2d(sw, draw, spec, dry_run=True):
                     if _segment_in_box(s, op.box_mm) and s.Select4(True, null):
                         selected += 1
         for op in se.delete_notes:
-            targets.update(i for i, t in enumerate(texts) if text_matches(t, op))
+            targets.update(i for i, t in enumerate(texts)
+                           if text_matches(t, op) and note_position_in_box(_note_position(notes[i]), op))
         for i in sorted(targets):
             if get(notes[i], 'GetAnnotation').Select3(True, null):
                 selected += 1
@@ -584,7 +614,8 @@ def edit_2d(sw, draw, spec, dry_run=True):
             for v in _views(draw):
                 notes2.extend(_view_notes(v))
             for op in se.replace_text:
-                hits = [n for n in notes2 if text_matches(str(n.GetText() or ''), op)]
+                hits = [n for n in notes2 if text_matches(str(get(n, 'GetText') or ''), op)
+                        and note_position_in_box(_note_position(n), op)]
                 if len(hits) != op.expected_count:
                     raise RuntimeError(f'replace {op.match!r}: found {len(hits)} after deletes, expected {op.expected_count}')
                 ok = [bool(n.SetText(op.new_text)) for n in hits]
@@ -675,7 +706,8 @@ def edit_2d(sw, draw, spec, dry_run=True):
            'sheets': results, 'manual_review_required': True}
     if spec.pdf_path:
         pdf = sw.GetExportFileData(1)
-        pdf.SetSheets(1, VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_BSTR, tuple(final_names)))
+        pdf.SetSheets(3, VARIANT(  # swExportData_ExportSpecifiedSheets
+        pythoncom.VT_ARRAY | pythoncom.VT_BSTR, tuple(final_names)))
         err = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
         warn = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
         if not draw.Extension.SaveAs(spec.pdf_path, 0, 1, pdf, err, warn) or err.value:
@@ -693,9 +725,88 @@ def export_pdf_all(sw, draw, pdf_path, overwrite=False):
         raise FileExistsError(pdf_path)
     names = _sheet_names(draw)
     pdf = sw.GetExportFileData(1)
-    pdf.SetSheets(1, VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_BSTR, tuple(names)))
+    pdf.SetSheets(3, VARIANT(  # swExportData_ExportSpecifiedSheets
+        pythoncom.VT_ARRAY | pythoncom.VT_BSTR, tuple(names)))
     err = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
     warn = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
     if not draw.Extension.SaveAs(pdf_path, 0, 1, pdf, err, warn) or err.value:
         raise RuntimeError(f'PDF export failed: {err.value}')
     return {'status': 'exported', 'pdf_path': pdf_path, 'sheet_names': names}
+
+
+class PdfFrame(Strict):
+    box_mm: tuple[float, float, float, float]
+    label: str | None = Field(default=None, max_length=80)
+
+    @model_validator(mode='after')
+    def ordered(self):
+        x1, y1, x2, y2 = self.box_mm
+        if not (x1 < x2 and y1 < y2):
+            raise ValueError('box_mm must be x1 < x2 and y1 < y2')
+        return self
+
+
+def export_pdf_frames(sw, draw, sheet, frames, pdf_path, overwrite=False):
+    """一张图纸上并排的多个图框 → 多页 PDF，每页按图框裁切（矢量不变，页面尺寸=图框尺寸）。"""
+    import os
+    import tempfile
+    import pythoncom
+    import pymupdf
+    from win32com.client import VARIANT
+    _absolute(pdf_path, {'.pdf'})
+    if Path(pdf_path).exists() and not overwrite:
+        raise FileExistsError(pdf_path)
+    frames = [f if isinstance(f, PdfFrame) else PdfFrame.model_validate(f) for f in frames]
+    if not frames:
+        raise ValueError('frames required')
+    if sheet not in _sheet_names(draw):
+        raise ValueError(f'Unknown sheet {sheet!r}; sheets={_sheet_names(draw)}')
+    tmp = Path(tempfile.mkdtemp(prefix='sw2d_')) / 'sheet.pdf'
+    try:
+        pdf = sw.GetExportFileData(1)
+        pdf.SetSheets(3, VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_BSTR, (sheet,)))  # swExportData_ExportSpecifiedSheets
+        err = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+        warn = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+        if not draw.Extension.SaveAs(str(tmp), 0, 1, pdf, err, warn) or err.value:
+            raise RuntimeError(f'PDF export failed: {err.value}')
+        src = pymupdf.open(str(tmp))
+        out = pymupdf.open()
+        k = 72 / 25.4
+        page_w_mm = src[0].rect.width / k
+        pages = []
+        for f in frames:
+            x1, y1, x2, y2 = f.box_mm
+            out.insert_pdf(src, from_page=0, to_page=0)
+            out[-1].set_mediabox(pymupdf.Rect(x1 * k, y1 * k, x2 * k, y2 * k))  # PDF 用户空间，原点左下
+            pages.append({'label': f.label, 'box_mm': list(f.box_mm), 'size_mm': [round(x2 - x1, 1), round(y2 - y1, 1)]})
+        Path(pdf_path).parent.mkdir(parents=True, exist_ok=True)
+        out.save(pdf_path)
+        return {'status': 'exported', 'pdf_path': pdf_path, 'sheet': sheet,
+                'sheet_pdf_width_mm': round(page_w_mm, 1), 'pages': pages}
+    finally:
+        try:
+            os.remove(tmp)
+            os.rmdir(tmp.parent)
+        except OSError:
+            pass
+
+
+def export_dwg(draw, dwg_path, overwrite=False):
+    """当前工程图另存为 DWG（原 SLDDRW 不变）。"""
+    import pythoncom
+    from win32com.client import VARIANT
+    from scripts.sw_connect import create_empty_dispatch_variant
+    _absolute(dwg_path, {'.dwg', '.dxf'})
+    if Path(dwg_path).exists() and not overwrite:
+        raise FileExistsError(dwg_path)
+    Path(dwg_path).parent.mkdir(parents=True, exist_ok=True)
+    err = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+    warn = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+    # swSaveAsOptions_Copy：导出副本，活动文档仍指向原 SLDDRW。
+    if not draw.Extension.SaveAs(dwg_path, 0, 2, create_empty_dispatch_variant(), err, warn) or err.value:
+        raise RuntimeError(f'DWG export failed: {err.value}, {warn.value}')
+    if not Path(dwg_path).is_file():
+        raise RuntimeError(f'DWG export reported success but no file: {dwg_path}')
+    return {'status': 'exported', 'dwg_path': dwg_path, 'bytes': Path(dwg_path).stat().st_size,
+            'warnings': warn.value}
+
