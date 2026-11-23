@@ -836,3 +836,84 @@ def export_dwg(draw, dwg_path, overwrite=False):
     return {'status': 'exported', 'dwg_path': dwg_path, 'bytes': Path(dwg_path).stat().st_size,
             'warnings': warn.value}
 
+
+
+def _set_properties(draw, properties):
+    """文档级自定义属性（图框 $PRP 链接读取这些值）；返回写入结果码。"""
+    if not properties:
+        return {}
+    cpm = draw.Extension.CustomPropertyManager('')
+    out = {}
+    for name, value in properties.items():
+        # swCustomInfoText=30, swCustomPropertyReplaceValue=2；0 表示已添加或已改值。
+        out[name] = int(cpm.Add3(str(name), 30, str(value), 2))
+    return out
+
+
+def new_drawing_from_template(sw, template_path, save_as, *, sheet_name=None, properties=None):
+    """由工程图模板新建无三维模型的工程图并保存；不覆盖已有文件。"""
+    import pythoncom
+    from win32com.client import VARIANT
+    from scripts.sw_connect import get_com_member as get, create_empty_dispatch_variant
+    _absolute(template_path, {'.drwdot'})
+    _absolute(save_as, {'.slddrw'})
+    if not Path(template_path).is_file():
+        raise FileNotFoundError(template_path)
+    if Path(save_as).exists():
+        raise FileExistsError(save_as)
+    draw = sw.NewDocument(str(template_path), 0, 0, 0)
+    if draw is None or int(get(draw, 'GetType')) != 3:
+        raise RuntimeError(f'NewDocument did not create a drawing from {template_path}')
+    if sheet_name:
+        get(draw, 'GetCurrentSheet').SetName(sheet_name)
+    written = _set_properties(draw, properties)
+    draw.ForceRebuild3(False)
+    Path(save_as).parent.mkdir(parents=True, exist_ok=True)
+    err = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+    warn = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+    if not draw.Extension.SaveAs(str(save_as), 0, 1, create_empty_dispatch_variant(), err, warn) or err.value:
+        raise RuntimeError(f'SaveAs failed: {err.value}, {warn.value}')
+    sheet = get(draw, 'GetCurrentSheet')
+    props = list(get(sheet, 'GetProperties2') or [])
+    return {'status': 'created', 'drawing_path': str(get(draw, 'GetPathName')), 'template_path': str(template_path),
+            'sheet_names': _sheet_names(draw), 'sheet_size_mm': [_mm(props[5]), _mm(props[6])] if len(props) > 6 else None,
+            'sheet_format': str(get(sheet, 'GetTemplateName') or ''), 'properties_written': written}
+
+
+def add_sheet(draw, name, width_mm, height_mm, *, sheet_format_path=None, scale=(1, 1), first_angle=True,
+              properties=None, save=True):
+    """在当前工程图中加一页（可带 .slddrt 图纸格式），可选写文档属性并保存。"""
+    import pythoncom
+    from win32com.client import VARIANT
+    from scripts.sw_connect import get_com_member as get, create_empty_dispatch_variant
+    if int(get(draw, 'GetType')) != 3:
+        raise ValueError('Active document must be a drawing (.SLDDRW)')
+    if not (50 <= width_mm <= 2000 and 50 <= height_mm <= 2000):
+        raise ValueError('Unsupported sheet size')
+    if name in _sheet_names(draw):
+        raise ValueError(f'sheet {name!r} already exists')
+    fmt = ''
+    if sheet_format_path:
+        _absolute(sheet_format_path, {'.slddrt'})
+        if not Path(sheet_format_path).is_file():
+            raise FileNotFoundError(sheet_format_path)
+        fmt = str(sheet_format_path)
+    # swDwgPapersUserDefined=12；有格式文件时 swDwgTemplateCustom=13，否则 swDwgTemplateNone=12。
+    template_kind = 13 if fmt else 12
+    if not draw.NewSheet3(name, 12, template_kind, float(scale[0]), float(scale[1]), bool(first_angle), fmt,
+                          width_mm / 1000, height_mm / 1000, ''):
+        raise RuntimeError(f'NewSheet3 failed: {name}')
+    written = _set_properties(draw, properties)
+    draw.ForceRebuild3(False)
+    sheet = get(draw, 'GetCurrentSheet')
+    props = list(get(sheet, 'GetProperties2') or [])
+    out = {'status': 'added', 'sheet': str(get(sheet, 'GetName')), 'sheet_names': _sheet_names(draw),
+           'sheet_size_mm': [_mm(props[5]), _mm(props[6])] if len(props) > 6 else None,
+           'sheet_format': str(get(sheet, 'GetTemplateName') or ''), 'properties_written': written}
+    if save:
+        err = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+        warn = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+        if not draw.Save3(1, err, warn) and err.value:
+            raise RuntimeError(f'Save failed: {err.value}, {warn.value}')
+        out['saved'] = True
+    return out
