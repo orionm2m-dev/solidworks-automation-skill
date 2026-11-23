@@ -880,6 +880,57 @@ def new_drawing_from_template(sw, template_path, save_as, *, sheet_name=None, pr
             'sheet_format': str(get(sheet, 'GetTemplateName') or ''), 'properties_written': written}
 
 
+def add_sheet_from_template(sw, draw, template_path, name, *, properties=None, save=True):
+    """从 .DRWDOT 模板复制第一页到当前工程图末尾并改名：页面尺寸与带属性链接的图框完全随模板。"""
+    import pythoncom
+    from win32com.client import VARIANT
+    from scripts.sw_connect import get_com_member as get, create_empty_dispatch_variant
+    if int(get(draw, 'GetType')) != 3:
+        raise ValueError('Active document must be a drawing (.SLDDRW)')
+    _absolute(template_path, {'.drwdot'})
+    if not Path(template_path).is_file():
+        raise FileNotFoundError(template_path)
+    if name in _sheet_names(draw):
+        raise ValueError(f'sheet {name!r} already exists')
+    target_title = str(get(draw, 'GetTitle'))
+    before = _sheet_names(draw)
+    src = sw.NewDocument(str(template_path), 0, 0, 0)
+    if src is None or int(get(src, 'GetType')) != 3:
+        raise RuntimeError(f'NewDocument did not create a drawing from {template_path}')
+    src_title = str(get(src, 'GetTitle'))
+    try:
+        src_sheet = _sheet_names(src)[0]
+        if not src.Extension.SelectByID2(src_sheet, 'SHEET', 0, 0, 0, False, 0, create_empty_dispatch_variant(), 0):
+            raise RuntimeError('cannot select template sheet')
+        src.EditCopy()
+        sw.ActivateDoc3(target_title, False, 0, 0)
+        # swInsertOption_AtEnd=1, swRenameOption_Yes=2（同名自动改名，随后改为目标名）。
+        if not draw.PasteSheet(1, 2):
+            raise RuntimeError('PasteSheet failed')
+    finally:
+        sw.CloseDoc(src_title)
+        sw.ActivateDoc3(target_title, False, 0, 0)
+    added = [n for n in _sheet_names(draw) if n not in before]
+    if len(added) != 1:
+        raise RuntimeError(f'expected one pasted sheet, got {added}')
+    draw.ActivateSheet(added[0])
+    sheet = get(draw, 'GetCurrentSheet')
+    sheet.SetName(name)
+    written = _set_properties(draw, properties)
+    draw.ForceRebuild3(False)
+    props = list(get(sheet, 'GetProperties2') or [])
+    out = {'status': 'added', 'sheet': str(get(sheet, 'GetName')), 'sheet_names': _sheet_names(draw),
+           'sheet_size_mm': [_mm(props[5]), _mm(props[6])] if len(props) > 6 else None,
+           'template_path': str(template_path), 'properties_written': written}
+    if save:
+        err = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+        warn = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+        if not draw.Save3(1, err, warn) and err.value:
+            raise RuntimeError(f'Save failed: {err.value}, {warn.value}')
+        out['saved'] = True
+    return out
+
+
 def add_sheet(draw, name, width_mm, height_mm, *, sheet_format_path=None, scale=(1, 1), first_angle=True,
               properties=None, save=True):
     """在当前工程图中加一页（可带 .slddrt 图纸格式），可选写文档属性并保存。"""

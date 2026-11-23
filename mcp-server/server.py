@@ -8626,10 +8626,13 @@ class SolidWorksDrawingNewFromTemplateInput(_Drawing2DBase):
 
 
 class SolidWorksDrawingAddSheetInput(ActiveDocumentInput):
-    """在活动工程图中加一页，可带图纸格式 .SLDDRT。"""
+    """在活动工程图中加一页：template_path（.DRWDOT，整页连同属性链接的图框）或自定义尺寸加可选 .SLDDRT。"""
     name: str = Field(min_length=1, max_length=80)
-    width_mm: float = Field(ge=50, le=2000)
-    height_mm: float = Field(ge=50, le=2000)
+    template_path: Optional[str] = Field(
+        default=None, min_length=1,
+        description="Absolute .DRWDOT template; its first sheet (size and title block with $PRP links) is copied. Preferred over sheet_format_path.")
+    width_mm: Optional[float] = Field(default=None, ge=50, le=2000)
+    height_mm: Optional[float] = Field(default=None, ge=50, le=2000)
     sheet_format_path: Optional[str] = Field(default=None, min_length=1, description="Absolute .SLDDRT sheet format path.")
     scale: Tuple[float, float] = (1.0, 1.0)
     first_angle: bool = True
@@ -8641,6 +8644,19 @@ class SolidWorksDrawingAddSheetInput(ActiveDocumentInput):
     @classmethod
     def _format(cls, value):
         return _absolute_with_suffix(value, {".slddrt"}, "sheet_format_path")
+
+    @field_validator("template_path")
+    @classmethod
+    def _tpl(cls, value):
+        return _absolute_with_suffix(value, {".drwdot"}, "template_path")
+
+    @model_validator(mode="after")
+    def _one_source(self):
+        if self.template_path is None and (self.width_mm is None or self.height_mm is None):
+            raise ValueError("give template_path, or width_mm and height_mm")
+        if self.template_path is not None and (self.sheet_format_path is not None or self.width_mm is not None):
+            raise ValueError("template_path defines the sheet; do not combine with sheet_format_path or sizes")
+        return self
 
 
 class SolidWorksDrawingImportDwgInput(_Drawing2DBase):
@@ -8733,8 +8749,11 @@ def solidworks_drawing_new_from_template(params: SolidWorksDrawingNewFromTemplat
 def solidworks_drawing_add_sheet(params: SolidWorksDrawingAddSheetInput) -> str:
     """活动工程图加一页（自定义尺寸，可带图纸格式），可写属性并保存。"""
     def op():
-        from scripts.sw_drawing_2d import add_sheet
-        _sw, draw = _active_drawing_required(params)
+        from scripts.sw_drawing_2d import add_sheet, add_sheet_from_template
+        sw, draw = _active_drawing_required(params)
+        if params.template_path:
+            return add_sheet_from_template(sw, draw, params.template_path, params.name,
+                                           properties=params.properties, save=params.save)
         return add_sheet(draw, params.name, params.width_mm, params.height_mm,
                          sheet_format_path=params.sheet_format_path, scale=params.scale,
                          first_angle=params.first_angle, properties=params.properties, save=params.save)
