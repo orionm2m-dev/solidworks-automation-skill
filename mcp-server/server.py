@@ -9091,7 +9091,13 @@ class SolidWorksExitEmptySessionInput(BaseInput):
     """绑定进程无打开文档时，一次 ExitApp 并确认进程退出。"""
     process_id: int = Field(gt=0, lt=2**31, strict=True)
     wait_seconds: int = Field(default=60, ge=5, le=300)
+    startup_receipt_path: Optional[str] = Field(default=None, description="Receipt JSON of solidworks_connect(launch_mode='executable'); when given, the live process must match its PID, creation time and executable before ExitApp.")
     response_format: ResponseFormat = ResponseFormat.JSON
+
+    @field_validator("startup_receipt_path")
+    @classmethod
+    def _receipt(cls, value):
+        return None if value is None else _absolute_with_suffix(value, {".json"}, "startup_receipt_path")
 
 
 @mcp.tool(
@@ -9138,7 +9144,8 @@ def solidworks_exit_empty_session(params: SolidWorksExitEmptySessionInput) -> st
             raise ValueError("Bind this server to the process first: solidworks_connect(process_id=...)")
         from scripts.sw_exit_empty import exit_empty_session
         sw, _previous = connect_solidworks(wait_seconds=1, process_id=params.process_id)
-        result = exit_empty_session(sw, params.process_id, wait_seconds=params.wait_seconds)
+        result = exit_empty_session(sw, params.process_id, wait_seconds=params.wait_seconds,
+                                    startup_receipt_path=params.startup_receipt_path)
         if result.get("process_exit_verified"):
             _selected_process_id = None
         return result
