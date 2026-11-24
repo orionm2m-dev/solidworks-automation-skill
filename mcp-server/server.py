@@ -9097,6 +9097,82 @@ class SolidWorksDrawingRevisionTableInput(ActiveDocumentInput):
     response_format: ResponseFormat = ResponseFormat.JSON
 
 
+class SolidWorksDrawingPartsListColumnInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(min_length=1, max_length=40)
+    source: Literal["item", "quantity", "part_number", "property"]
+    property: Optional[str] = Field(default=None, min_length=1, max_length=80, description="Custom property name when source='property' (PartNumber, Title, MPN...).")
+    width_mm: Optional[float] = Field(default=None, gt=2, le=300)
+
+
+class SolidWorksDrawingPartsListInput(ActiveDocumentInput):
+    """在装配体视图上插入原生明细表（ISO 7573 风格列，可表头在下、自下而上），可加手工行。"""
+    sheet: str = Field(min_length=1, max_length=80)
+    view: Optional[str] = Field(default=None, max_length=80, description="Assembly drawing view; default first model view on the sheet.")
+    position_mm: Tuple[float, float] = Field(description="Anchor point of the table on the sheet, mm from the lower-left corner.")
+    anchor: Literal["top_left", "top_right", "bottom_left", "bottom_right"] = "bottom_right"
+    bom_type: Literal["top_level", "parts_only", "indented"] = "top_level"
+    configuration: str = Field(default="", max_length=120)
+    template_path: Optional[str] = Field(default=None, description="Absolute .sldbomtbt; default the installed bom-standard.")
+    columns: Optional[List[SolidWorksDrawingPartsListColumnInput]] = Field(default=None, min_length=1, max_length=12,
+        description="Default: Поз. (item) | Обозначение (PartNumber) | Наименование (Title) | Кол. (quantity) | Примечание (MPN).")
+    header_at_bottom: bool = Field(default=True, description="Header row at the bottom, items numbered upwards (parts list above the title block).")
+    manual_rows: List[Dict[str, str]] = Field(default_factory=list, max_length=100, description="Rows for non-model items, keyed by column title.")
+    dry_run: bool = True
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @field_validator("template_path")
+    @classmethod
+    def _template(cls, value):
+        return _absolute_with_suffix(value, {".sldbomtbt"}, "template_path")
+
+
+class SolidWorksDrawingBalloonsInput(ActiveDocumentInput):
+    """视图自动零件序号，文字取 BOM 项目号（与明细表一致）。"""
+    sheet: str = Field(min_length=1, max_length=80)
+    view: Optional[str] = Field(default=None, max_length=80)
+    style: Literal["circular", "underline", "box", "triangle", "hexagon"] = "circular"
+    size: Literal["tight", "1", "2", "3", "4", "5"] = "2"
+    layout: Literal["square", "circle", "top", "bottom", "right", "left"] = "square"
+    ignore_multiple: bool = True
+    leader_to_faces: bool = False
+    dry_run: bool = True
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
+@mcp.tool(
+    name="solidworks_drawing_parts_list",
+    title="Insert Parts List (BOM Table) On Drawing",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_drawing_parts_list(params: SolidWorksDrawingPartsListInput) -> str:
+    """原生 BOM 明细表：列按规格（序号/数量/零件号/自定义属性），表头可在底部，手工行回读；先 dry_run。"""
+    def op():
+        from scripts.sw_drawing_parts_list import insert_parts_list
+        sw, draw = _active_drawing_required(params)
+        spec = params.model_dump(include={"sheet", "view", "position_mm", "anchor", "bom_type", "configuration",
+                                          "template_path", "columns", "header_at_bottom", "manual_rows"})
+        if spec["columns"] is None:
+            spec.pop("columns")
+        return insert_parts_list(sw, draw, spec, dry_run=params.dry_run)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_drawing_balloons",
+    title="Insert Item Balloons On Assembly View",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_drawing_balloons(params: SolidWorksDrawingBalloonsInput) -> str:
+    """AutoBalloon5：视图已有零件序号时拒绝；序号文字 = BOM 项目号；先 dry_run。"""
+    def op():
+        from scripts.sw_drawing_parts_list import insert_balloons
+        sw, draw = _active_drawing_required(params)
+        spec = params.model_dump(include={"sheet", "view", "style", "size", "layout", "ignore_multiple", "leader_to_faces"})
+        return insert_balloons(sw, draw, spec, dry_run=params.dry_run)
+    return _run_locked(op, params.response_format)
+
+
 class SolidWorksExitEmptySessionInput(BaseInput):
     """绑定进程无打开文档时，一次 ExitApp 并确认进程退出。"""
     process_id: int = Field(gt=0, lt=2**31, strict=True)
