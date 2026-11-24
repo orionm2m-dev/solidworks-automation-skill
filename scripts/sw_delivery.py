@@ -908,6 +908,9 @@ def _pia_pack_and_go(
         "outputs": outputs,
         "produced_count": len(outputs),
         "native_names": list(report.get("names") or []),
+        "native_save_to_names": list(report.get("save_to_names") or []),
+        "native_save_to_status": list(report.get("save_to_status") or []),
+        "native_save_returned_null": bool(report.get("save_returned_null")),
     }
 
 
@@ -1493,6 +1496,7 @@ def pack_and_go(
         "fallback_used": staged is not None,
         "manifest": result.get("manifest"),
         "fallback_errors": fallback_errors,
+        "native_detail": {key: result[key] for key in ("native_names", "native_save_to_names", "native_save_to_status", "native_save_returned_null") if key in result},
         "options": {
             "include_drawings": include_drawings,
             "include_simulation_results": include_simulation_results,

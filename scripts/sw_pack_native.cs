@@ -52,12 +52,18 @@ public static class NativePackAndGo {
   object raw;var names=new string[0];
   if(pg.GetDocumentNames(out raw)&&raw!=null)names=((object[])raw).Cast<string>().ToArray();
   if(!pg.SetSaveToName(true,Canon(req.target)+"\\"))throw new Exception("SetSaveToName rejected the target folder");
+  object rawTargets,rawTargetStatus;var targets=new string[0];var targetStatus=new int[0];
+  if(pg.GetDocumentSaveToNames(out rawTargets,out rawTargetStatus)) {
+   if(rawTargets!=null)targets=((object[])rawTargets).Cast<string>().ToArray();
+   if(rawTargetStatus is int[])targetStatus=(int[])rawTargetStatus;
+  }
   Guard(sw,req.source);
   var codes=(int[])model.Extension.SavePackAndGo(pg);
   Guard(sw,req.source);
   var result=new Dictionary<string,object> {
    {"backend","csharp_pia"},{"process_id",req.process_id},{"source",model.GetPathName()},
-   {"document_count",pg.GetDocumentNamesCount()},{"names",names},{"status_codes",codes??new int[0]}
+   {"document_count",pg.GetDocumentNamesCount()},{"names",names},{"save_to_names",targets},
+   {"save_to_status",targetStatus},{"status_codes",codes??new int[0]},{"save_returned_null",codes==null}
   };
   return json.Serialize(result);
  }
