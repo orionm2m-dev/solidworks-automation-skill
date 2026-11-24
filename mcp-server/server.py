@@ -3684,7 +3684,9 @@ class SolidWorksThreadFeatureInput(ActiveDocumentInput):
     edge_diameter_mm: float = Field(..., gt=0, description="Diameter of the circular start edge, mm.")
     edge_tolerance_mm: float = Field(default=0.05, gt=0, le=1, description="Matching tolerance for centre and radius, mm.")
     thread_type: str = Field(default="Metric Die", min_length=1, description="Thread library profile: 'Metric Die' (external), 'Metric Tap' (internal), 'Inch Die', 'Inch Tap', 'SP4xx Bottle', 'SP4xx Bottle Lite'.")
-    size: str = Field(..., min_length=1, description="Library size name, e.g. 'M10x1.5'.")
+    size: str = Field(..., min_length=1, description="Library size name, e.g. 'M10x1.5' or '0.2500-28'; an unknown name is an error, not a fallback.")
+    pitch_mm: Optional[float] = Field(default=None, gt=0, le=50, description="Override the library pitch, mm (e.g. 0.705556 for 36 threads per inch); omit to keep the library value.")
+    diameter_mm: Optional[float] = Field(default=None, gt=0, le=1000, description="Override the library thread diameter, mm, for external 'Die' threads whose size is missing from the library (e.g. 6.35 for 1/4\"); leave empty for 'Tap' threads, where the bore defines the diameter. This is not the start-edge diameter (see edge_diameter_mm).")
     method: Literal["cut", "extrude"] = Field(default="cut", description="Cut the thread into the body or extrude it onto the body.")
     end_condition: Literal["blind", "revolutions"] = Field(default="blind")
     depth_mm: Optional[float] = Field(default=None, gt=0, description="Thread length for blind end condition, mm.")
@@ -7362,7 +7364,7 @@ def solidworks_list_circular_edges(params: SolidWorksCircularEdgesInput) -> str:
     },
 )
 def solidworks_add_thread_feature(params: SolidWorksThreadFeatureInput) -> str:
-    """Create a native Thread feature (swFmSweepThread) starting at a circular edge found by centre and diameter; reports volume and face-count change; does not save."""
+    """Create a native Thread feature (swFmSweepThread) starting at a circular edge found by centre and diameter; a size missing from the library is an error (the fallback feature is deleted); optional pitch_mm / diameter_mm override the library values; reports volume and face-count change; does not save."""
 
     def op():
         _sw, model = _active_part_required(params)
@@ -7373,6 +7375,8 @@ def solidworks_add_thread_feature(params: SolidWorksThreadFeatureInput) -> str:
             revolutions=params.revolutions, reverse_direction=params.reverse_direction, right_handed=params.right_handed,
             trim_start_face=params.trim_start_face, trim_end_face=params.trim_end_face, offset_m=mm(params.offset_mm),
             start_angle_deg=params.start_angle_deg, feature_name=params.feature_name,
+            pitch_m=mm(params.pitch_mm) if params.pitch_mm else None,
+            diameter_m=mm(params.diameter_mm) if params.diameter_mm else None,
         )
         result.update({
             "status": "ok",

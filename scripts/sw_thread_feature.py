@@ -26,6 +26,25 @@ def _call(obj, name, *args):
     return getattr(obj, name)(*args)
 
 
+def _read_mm(obj, name):
+    """@brief 读取以米为单位的数值属性并换算为毫米；属性不可读时返回 None。"""
+    try:
+        return round(float(getattr(obj, name)) * 1000.0, 6)
+    except Exception:
+        return None
+
+
+def _created_size(feature, data):
+    """@brief 读取已生成特征的规格名：优先取特征定义，取不到时取传入的数据对象。"""
+    try:
+        definition = _call(feature, "GetDefinition")
+        if definition is not None:
+            return str(safe_get_com_member(definition, "Size"))
+    except Exception:
+        pass
+    return str(safe_get_com_member(data, "Size"))
+
+
 def _numbers(values, count, label):
     values = tuple(float(v) for v in (values or ()))
     if len(values) < count or any(not math.isfinite(v) for v in values[:count]):
@@ -108,20 +127,27 @@ def count_faces(model):
 
 def add_thread_feature(model, edge, *, thread_type, size, method="cut", end_condition="blind", depth_m=None,
                        revolutions=None, reverse_direction=False, right_handed=True, trim_start_face=True,
-                       trim_end_face=True, offset_m=0.0, start_angle_deg=0.0, feature_name=None):
+                       trim_end_face=True, offset_m=0.0, start_angle_deg=0.0, feature_name=None,
+                       pitch_m=None, diameter_m=None):
     """
     @brief 在圆形边上创建原生螺纹特征并回读体积与面数变化。
     @param model 零件 IModelDoc2。
     @param edge 起始圆形边（IEdge）。
     @param thread_type 螺纹库名称，例如 "Metric Die"（外螺纹）或 "Metric Tap"（内螺纹）。
-    @param size 库中的规格名，例如 "M10x1.5"。
+    @param size 库中的规格名，例如 "M10x1.5"；库中没有该规格时报错，不回落到其他规格。
     @param method "cut" 或 "extrude"。
     @param end_condition "blind"（需 depth_m）或 "revolutions"（需 revolutions）。
-    @return dict：feature_name、volume_before/after_m3、face_count_before/after。
+    @param pitch_m 可选：覆盖库规格的螺距，米（库中没有的螺距，如每英寸 36 牙）。
+    @param diameter_m 可选：覆盖库规格的螺纹直径，米。
+    @return dict：feature_name、size、pitch_mm、diameter_mm、volume_before/after_m3、face_count_before/after。
+    @raise ValueError 参数无效或库中没有该规格。
     @raise RuntimeError 特征未创建（附 GetCreateFeatureErrors 信息）。
     """
     if method not in SW_THREAD_METHOD:
         raise ValueError("method 必须是 cut 或 extrude")
+    for label, value in (("pitch_m", pitch_m), ("diameter_m", diameter_m)):
+        if value is not None and not (math.isfinite(float(value)) and float(value) > 0):
+            raise ValueError(f"{label} 必须是正的有限数")
     if end_condition not in ("blind", "revolutions"):
         raise ValueError("end_condition 必须是 blind 或 revolutions")
     if end_condition == "blind" and not (depth_m and depth_m > 0):
@@ -138,6 +164,15 @@ def add_thread_feature(model, edge, *, thread_type, size, method="cut", end_cond
     data.Edge = edge
     data.Type = str(thread_type)
     data.Size = str(size)
+    applied_size = str(safe_get_com_member(data, "Size"))
+    if applied_size != str(size):
+        raise ValueError(f"螺纹库 {thread_type} 中没有规格 {size}（库回落到 {applied_size}）")
+    if diameter_m is not None:
+        data.DiameterOverride = True
+        data.Diameter = float(diameter_m)
+    if pitch_m is not None:
+        data.PitchOverride = True
+        data.Pitch = float(pitch_m)
     data.ThreadMethod = SW_THREAD_METHOD[method]
     data.EndCondition = SW_THREAD_END_CONDITION[end_condition]
     if end_condition == "blind":
@@ -160,6 +195,19 @@ def add_thread_feature(model, edge, *, thread_type, size, method="cut", end_cond
         except Exception:
             pass
         raise RuntimeError(f"螺纹特征未创建（{thread_type} {size}）{detail}")
+    created_size = _created_size(feature, data)
+    if created_size != str(size):
+        # SOLIDWORKS 2026 实测：库中没有该规格时赋值 Size 不报错，生成特征时才回落到库的第一个规格。
+        # 错误特征必须删除并核对几何已复原，否则模型里会留下规格不符的螺纹。
+        wrong = str(safe_get_com_member(feature, "Name"))
+        if not _call(feature, "Select2", False, 0):
+            raise RuntimeError(f"螺纹库 {thread_type} 中没有规格 {size}（生成时回落到 {created_size}），错误特征 {wrong} 无法选中，仍留在模型中")
+        _call(model, "EditDelete")
+        _call(model, "ForceRebuild3", False)
+        volume_now = body_volume_m3(model)
+        if count_faces(model) != faces_before or abs(volume_now - volume_before) > 1e-9 * max(abs(volume_before), 1e-12):
+            raise RuntimeError(f"螺纹库 {thread_type} 中没有规格 {size}（生成时回落到 {created_size}），错误特征 {wrong} 未能删除")
+        raise ValueError(f"螺纹库 {thread_type} 中没有规格 {size}（生成时回落到 {created_size}，特征已删除）")
     if feature_name:
         feature.Name = str(feature_name)
     _call(model, "ForceRebuild3", False)
@@ -167,6 +215,8 @@ def add_thread_feature(model, edge, *, thread_type, size, method="cut", end_cond
         "feature_name": str(safe_get_com_member(feature, "Name")),
         "type": str(safe_get_com_member(data, "Type")),
         "size": str(safe_get_com_member(data, "Size")),
+        "pitch_mm": _read_mm(data, "Pitch"),
+        "diameter_mm": _read_mm(data, "Diameter"),
         "volume_before_m3": volume_before,
         "volume_after_m3": body_volume_m3(model),
         "face_count_before": faces_before,

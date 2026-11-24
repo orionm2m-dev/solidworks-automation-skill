@@ -18,6 +18,13 @@
 | 16 mm 基体、12 mm 螺纹深度的盲孔 | Ø5.0、13 mm 定深 | `BlindDepth=12 mm` | `real-thread-verified`，review `pass/100` |
 | 16 mm 基体的贯穿孔 | Ø5.0、`Through All` | `Revolutions=16` | `real-thread-verified`，review `pass/100` |
 
+## 2026-11-24 实测结论：库外规格与外螺纹覆盖
+
+- `IThreadFeatureData.Size` 赋值为库中不存在的规格名（例如 Inch Die 的 `0.2500-36`）不会报错；`CreateFeature` 照常返回特征，但规格回落到库的第一个规格（Inch Die 为 `#0-80`，Metric Die 为 `M1.2x0.25`），生成的螺纹与要求不符。创建后必须回读 `Size`，不一致时删除该特征并核对面数与体积已复原。
+- 库里没有 1/4-36UNS。可用每英寸 36 牙的轮廓 `#8-36` 并设置 `DiameterOverride=True`、`Diameter=6.35 mm`：螺距保持 0.705556 mm，Ø6.35 圆柱上 10 mm 螺纹的体积变化约 −40.7 mm³。
+- 在规格轮廓上只覆盖螺距（`0.2500-28` 配 0.705556 mm）时 `CreateFeature` 返回 `None`；应选牙数一致的轮廓再覆盖直径。
+- 外螺纹（Die）允许覆盖直径；内螺纹（Tap）仍由底孔决定直径，不要覆盖。
+
 ## 官方 API 依据
 
 - [Thread Features and ThreadFeatureData Objects](https://help.solidworks.com/2026/English/api/sldworksapiprogguide/Overview/Thread_Features_and_ThreadFeatureData_Objects.htm)

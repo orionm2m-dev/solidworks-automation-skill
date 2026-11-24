@@ -235,7 +235,7 @@ claude mcp add --scope user solidworks -- python C:\path\to\solidworks-automatio
 | `solidworks_reorganize_components` | 把组件移入已插入的子装配体组件或移回顶层（ReorganizeComponents），移动前后回读变换与包围盒，位置必须不变；SolidWorks 把移入的实例改名为文件名时按文档路径与变换匹配（moved[].renamed），不保存 | 是 |
 | `solidworks_delete_components` | 删除顶层组件及依赖它们的配合（DeleteSelection2），回读顶层组件列表核对，不保存 | 是 |
 | `solidworks_list_circular_edges` | 只读列出零件圆形边的圆心、轴向与直径（毫米），导入实体同样可用 | 否 |
-| `solidworks_add_thread_feature` | 按圆心与直径定位起始边，创建原生螺纹特征（库规格如 M10x1.5），回读体积与面数变化，不保存 | 是 |
+| `solidworks_add_thread_feature` | 按圆心与直径定位起始边，创建原生螺纹特征（库规格如 M10x1.5；库中没有的规格报错并删除回落生成的特征；可用 `pitch_mm`、`diameter_mm` 覆盖螺距与直径），回读体积与面数变化，不保存 | 是 |
 | `solidworks_save_document` | 保存或另存为活动文档；`save_referenced` 同时保存本会话中被修改的引用文档（重组后的子装配体） | 是 |
 | `solidworks_close_documents` | 关闭活动文档；或 `close_all` + `allowed_document_roots`：所有打开文档（含隐藏引用）须位于给定目录内且已保存（或显式 `discard_unsaved_changes`），才一次关闭全部 | 是，可能丢弃未保存修改 |
 | `solidworks_add_coincident_mate` | 在两个组件的指定基准面/特征之间添加重合 Mate | 是 |
