@@ -741,6 +741,7 @@ def _get_pack_and_go(extension):
         errors.append(f"zero-arg: {exc}")
 
     ole_object = getattr(extension, "_oleobj_", None)
+    dispid = None
     if ole_object is not None:
         try:
             dispid = ole_object.GetIDsOfNames("GetPackAndGo")
@@ -757,21 +758,46 @@ def _get_pack_and_go(extension):
         except Exception as exc:
             errors.append(f"noarg-invoketypes: {exc}")
 
-        # SW2024 SP5 的 IDispatch::Invoke 实现要求以 by-ref dispatch 出参携带
-        # IPackAndGo (comtypes 走 vtable 无此限制)；返回值本身为空。
+        # SW2024 SP5 / 2026 的 IDispatch::Invoke 要求一个 by-ref dispatch 出参携带
+        # IPackAndGo（comtypes 走 vtable 无此限制）；无参调用报 DISP_E_PARAMNOTOPTIONAL。
+        # 先用 InvokeTypes 声明出参（pywin32 直接返回出参值），再试 VARIANT 出参。
         if dispid is not None:
+            for label, flags, return_type in (
+                ("byref-invoketypes", pythoncom.DISPATCH_METHOD, (pythoncom.VT_EMPTY, 0)),
+                ("byref-invoketypes-get", pythoncom.DISPATCH_METHOD | pythoncom.DISPATCH_PROPERTYGET, (pythoncom.VT_EMPTY, 0)),
+            ):
+                try:
+                    result = ole_object.InvokeTypes(
+                        dispid,
+                        0,
+                        flags,
+                        return_type,
+                        ((pythoncom.VT_BYREF | pythoncom.VT_DISPATCH, 2),),  # PARAMFLAG_FOUT
+                        None,
+                    )
+                    candidates = list(result) if isinstance(result, tuple) else [result]
+                    for candidate in candidates:
+                        package = _coerce_dispatch(candidate)
+                        if package is not None:
+                            return package
+                    errors.append(f"{label}: no object ({type(result).__name__})")
+                except Exception as exc:
+                    errors.append(f"{label}: {exc}")
             output = _VARIANT(pythoncom.VT_BYREF | pythoncom.VT_DISPATCH, None)
             try:
-                ole_object.Invoke(
+                returned = ole_object.Invoke(
                     dispid,
                     0,
                     pythoncom.DISPATCH_METHOD | pythoncom.DISPATCH_PROPERTYGET,
                     1,
                     output,
                 )
-                package = _coerce_dispatch(output.value)
-                if package is not None:
-                    return package
+                candidates = [output.value, *(returned if isinstance(returned, tuple) else [returned])]
+                for candidate in candidates:
+                    package = _coerce_dispatch(candidate)
+                    if package is not None:
+                        return package
+                errors.append(f"byref-dispatch-out: no object ({type(returned).__name__})")
             except Exception as exc:
                 errors.append(f"byref-dispatch-out: {exc}")
 

@@ -638,3 +638,48 @@ def test_pack_and_go_allow_existing_files_refuses_name_clash(tmp_path):
         raise AssertionError("same-name file must be refused")
     assert (target / leaf.name).read_text(encoding="utf-8") == "old"
     assert not (target / source.name).exists()
+
+
+class FakeByRefOnlyOleObject:
+    """@brief 模拟 SW2026：无参调用报“参数必需”，声明 by-ref 出参时返回 IPackAndGo。"""
+
+    def __init__(self, package):
+        self.package = package
+        self.calls = []
+
+    def GetIDsOfNames(self, name):
+        assert name == "GetPackAndGo"
+        return 207
+
+    def InvokeTypes(self, dispid, lcid, flags, return_type, argument_types, *args):
+        self.calls.append((flags, return_type, argument_types, args))
+        if not argument_types:
+            raise sw_delivery.pythoncom.com_error(-2147352561, "Parameter not optional", None, None)
+        assert argument_types == ((sw_delivery.pythoncom.VT_BYREF | sw_delivery.pythoncom.VT_DISPATCH, 2),)
+        return self.package
+
+    def Invoke(self, *_args):
+        raise AssertionError("InvokeTypes by-ref path must succeed first")
+
+
+class FakeByRefOnlyExtension(FakeExtension):
+    def __init__(self, source):
+        super().__init__(source)
+        self._oleobj_ = FakeByRefOnlyOleObject(self.package)
+
+    def GetPackAndGo(self):
+        raise sw_delivery.pythoncom.com_error(-2147352561, "Parameter not optional", None, None)
+
+
+def test_pack_and_go_uses_declared_byref_output_when_noarg_call_is_refused(tmp_path):
+    """@brief SW2026 的 IDispatch 要求一个出参：按声明的 by-ref 出参取回对象，走原生路径。"""
+    source = tmp_path / "assembly.sldasm"
+    source.write_text("assembly", encoding="utf-8")
+    model = FakeAssembly(source, [])
+    model.Extension = FakeByRefOnlyExtension(source)
+
+    report = sw_delivery.pack_and_go(model, tmp_path / "package")
+
+    assert report["success"] is True
+    assert report["backend"] == "pywin32"
+    assert any(call[2] for call in model.Extension._oleobj_.calls)
