@@ -27,7 +27,7 @@ import time
 from contextlib import contextmanager, nullcontext, redirect_stdout
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
@@ -8756,6 +8756,343 @@ def solidworks_create_drawing_book(params: SolidWorksDrawingBookInput) -> str:
         sw,model=_active_model_required(params)
         return create_book(sw,model,book,params.dry_run)
     return _run_locked(op,params.response_format)
+
+
+class _Drawing2DBase(BaseInput):
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
+def _absolute_with_suffix(value, suffixes, field):
+    if value is None:
+        return value
+    if not absolute_document_path(value) or Path(value).suffix.casefold() not in suffixes:
+        raise ValueError(f"{field} must be an absolute path ending with {sorted(suffixes)}")
+    return value
+
+
+class SolidWorksDrawingNewFromTemplateInput(_Drawing2DBase):
+    """由工程图模板新建无三维模型的工程图。"""
+    template_path: str = Field(min_length=1, description="Absolute .DRWDOT drawing template path.")
+    save_as: str = Field(min_length=1, description="New absolute .SLDDRW path; must not exist.")
+    sheet_name: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    properties: Optional[Dict[str, str]] = Field(
+        default=None, description="Document custom properties read by the title block ($PRP links), e.g. DocumentNumber, Title, Revision, Status.")
+
+    @field_validator("template_path")
+    @classmethod
+    def _template(cls, value):
+        return _absolute_with_suffix(value, {".drwdot"}, "template_path")
+
+    @field_validator("save_as")
+    @classmethod
+    def _save_as(cls, value):
+        return _absolute_with_suffix(value, {".slddrw"}, "save_as")
+
+
+class SolidWorksDrawingAddSheetInput(ActiveDocumentInput):
+    """在活动工程图中加一页：template_path（.DRWDOT，整页连同属性链接的图框）或自定义尺寸加可选 .SLDDRT。"""
+    name: str = Field(min_length=1, max_length=80)
+    template_path: Optional[str] = Field(
+        default=None, min_length=1,
+        description="Absolute .DRWDOT template; its first sheet (size and title block with $PRP links) is copied. Preferred over sheet_format_path.")
+    width_mm: Optional[float] = Field(default=None, ge=50, le=2000)
+    height_mm: Optional[float] = Field(default=None, ge=50, le=2000)
+    sheet_format_path: Optional[str] = Field(default=None, min_length=1, description="Absolute .SLDDRT sheet format path.")
+    scale: Tuple[float, float] = (1.0, 1.0)
+    first_angle: bool = True
+    properties: Optional[Dict[str, str]] = None
+    save: bool = True
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @field_validator("sheet_format_path")
+    @classmethod
+    def _format(cls, value):
+        return _absolute_with_suffix(value, {".slddrt"}, "sheet_format_path")
+
+    @field_validator("template_path")
+    @classmethod
+    def _tpl(cls, value):
+        return _absolute_with_suffix(value, {".drwdot"}, "template_path")
+
+    @model_validator(mode="after")
+    def _one_source(self):
+        if self.template_path is None and (self.width_mm is None or self.height_mm is None):
+            raise ValueError("give template_path, or width_mm and height_mm")
+        if self.template_path is not None and (self.sheet_format_path is not None or self.width_mm is not None):
+            raise ValueError("template_path defines the sheet; do not combine with sheet_format_path or sizes")
+        return self
+
+
+class SolidWorksDrawingImportDwgInput(_Drawing2DBase):
+    """DWG/DXF 导入为新的原生工程图。"""
+    source_path: str = Field(min_length=1, description="Absolute .DWG/.DXF path; read only.")
+    output_path: str = Field(min_length=1, description="New absolute .SLDDRW path; must not exist.")
+    import_method: Optional[int] = Field(default=None, ge=0, le=10)
+    dry_run: bool = True
+
+
+class SolidWorksDrawingInspect2DInput(ActiveDocumentInput):
+    """只读：每页注释（文字、位置、范围、字体）、草图实体与块写入 JSON。"""
+    output_path: str = Field(min_length=1, description="New absolute .json report path.")
+    sheet: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    max_segments_per_sheet: int = Field(default=20000, ge=1, le=200000)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
+class SolidWorksDrawingEdit2DInput(ActiveDocumentInput):
+    """按严格 JSON 规格编辑工程图页：删除、改字（可限框）、线、圆、弧、注释、图片。"""
+    spec_path: str = Field(min_length=1, description="Absolute .json DrawingEdit2D spec path.")
+    dry_run: bool = True
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @field_validator("spec_path")
+    @classmethod
+    def _spec(cls, value):
+        return _absolute_with_suffix(value, {".json"}, "spec_path")
+
+
+class SolidWorksDrawingPdfFrameInput(BaseInput):
+    box_mm: Tuple[float, float, float, float]
+    label: Optional[str] = Field(default=None, max_length=80)
+    page_size_mm: Optional[Tuple[float, float]] = None
+
+
+class SolidWorksDrawingExportPdfFramesInput(ActiveDocumentInput):
+    """一页上并排的多个图框导出为多页 PDF（每页按图框裁切或缩放到 page_size_mm）。"""
+    sheet: str = Field(min_length=1, max_length=80)
+    frames: List[SolidWorksDrawingPdfFrameInput] = Field(min_length=1, max_length=50)
+    pdf_path: str = Field(min_length=1)
+    overwrite: bool = False
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @field_validator("pdf_path")
+    @classmethod
+    def _pdf(cls, value):
+        return _absolute_with_suffix(value, {".pdf"}, "pdf_path")
+
+
+class SolidWorksDrawingExportDwgInput(ActiveDocumentInput):
+    """活动工程图另存一份 DWG/DXF。"""
+    dwg_path: str = Field(min_length=1)
+    overwrite: bool = False
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @field_validator("dwg_path")
+    @classmethod
+    def _dwg(cls, value):
+        return _absolute_with_suffix(value, {".dwg", ".dxf"}, "dwg_path")
+
+
+def _active_drawing_required(params=None):
+    sw, model = _active_model_required(params)
+    if int(get_com_member(model, "GetType")) != 3:
+        raise RuntimeError("Active document must be a drawing (.SLDDRW).")
+    return sw, model
+
+
+@mcp.tool(
+    name="solidworks_drawing_new_from_template",
+    title="New Drawing From Template Without Model",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_drawing_new_from_template(params: SolidWorksDrawingNewFromTemplateInput) -> str:
+    """由 .DRWDOT 新建无三维模型的工程图，可设页名与标题栏属性，保存到新路径。"""
+    def op():
+        from scripts.sw_drawing_2d import new_drawing_from_template
+        sw, _previous = connect_solidworks(wait_seconds=1)
+        return new_drawing_from_template(sw, params.template_path, params.save_as,
+                                         sheet_name=params.sheet_name, properties=params.properties)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_drawing_add_sheet",
+    title="Add Drawing Sheet",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_drawing_add_sheet(params: SolidWorksDrawingAddSheetInput) -> str:
+    """活动工程图加一页（自定义尺寸，可带图纸格式），可写属性并保存。"""
+    def op():
+        from scripts.sw_drawing_2d import add_sheet, add_sheet_from_template
+        sw, draw = _active_drawing_required(params)
+        if params.template_path:
+            return add_sheet_from_template(sw, draw, params.template_path, params.name,
+                                           properties=params.properties, save=params.save)
+        return add_sheet(draw, params.name, params.width_mm, params.height_mm,
+                         sheet_format_path=params.sheet_format_path, scale=params.scale,
+                         first_angle=params.first_angle, properties=params.properties, save=params.save)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_drawing_import_dwg",
+    title="Import DWG/DXF As Native Drawing",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_drawing_import_dwg(params: SolidWorksDrawingImportDwgInput) -> str:
+    """DWG/DXF 导入为新的原生工程图（源文件只读，不覆盖输出）；先 dry_run 查看导入选项。"""
+    def op():
+        from scripts.sw_drawing_2d import import_dwg
+        sw, _previous = connect_solidworks(wait_seconds=1)
+        return import_dwg(sw, params.source_path, params.output_path,
+                          import_method=params.import_method, dry_run=params.dry_run)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_drawing_inspect_2d",
+    title="Inspect Drawing Sheets (2D)",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def solidworks_drawing_inspect_2d(params: SolidWorksDrawingInspect2DInput) -> str:
+    """只读：页尺寸、视图、注释（文字、插入点、范围、角度、字高、字体、斜体）、线与弧、块，写入 JSON。"""
+    def op():
+        from scripts.sw_drawing_2d import inspect_2d
+        _sw, draw = _active_drawing_required(params)
+        return inspect_2d(draw, params.output_path, sheet=params.sheet,
+                          max_segments_per_sheet=params.max_segments_per_sheet)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_drawing_edit_2d",
+    title="Edit Drawing Sheets (2D)",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_drawing_edit_2d(params: SolidWorksDrawingEdit2DInput) -> str:
+    """按 DrawingEdit2D 规格编辑：先 dry_run 核对每项匹配数；匹配数与 expected_count 不符则不修改。"""
+    def op():
+        from scripts.sw_drawing_2d import edit_2d, load_edit
+        sw, draw = _active_drawing_required(params)
+        return edit_2d(sw, draw, load_edit(params.spec_path), dry_run=params.dry_run)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_drawing_export_pdf_frames",
+    title="Export Drawing Frames As PDF Pages",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_drawing_export_pdf_frames(params: SolidWorksDrawingExportPdfFramesInput) -> str:
+    """把一页上的多个图框导出为多页 PDF（矢量不变；page_size_mm 时按比例缩放居中）。"""
+    def op():
+        from scripts.sw_drawing_2d import export_pdf_frames
+        sw, draw = _active_drawing_required(params)
+        frames = [f.model_dump() for f in params.frames]
+        return export_pdf_frames(sw, draw, params.sheet, frames, params.pdf_path, overwrite=params.overwrite)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_drawing_export_dwg",
+    title="Export Drawing As DWG",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_drawing_export_dwg(params: SolidWorksDrawingExportDwgInput) -> str:
+    """活动工程图另存一份 DWG/DXF，原 SLDDRW 不变。"""
+    def op():
+        from scripts.sw_drawing_2d import export_dwg
+        _sw, draw = _active_drawing_required(params)
+        return export_dwg(draw, params.dwg_path, overwrite=params.overwrite)
+    return _run_locked(op, params.response_format)
+
+
+class SolidWorksDrawingModelViewInput(BaseInput):
+    named_view: str = Field(default="*Front", min_length=1, max_length=80,
+                            description="Model view name; English standard names (*Front, *Top, *Isometric...) map to the localized ones.")
+    center_mm: Tuple[float, float]
+    scale: Optional[float] = Field(default=None, gt=0, le=100, description="View scale; omit to use the sheet scale.")
+    display: Literal["wireframe", "hidden_visible", "hidden_removed", "shaded"] = "hidden_removed"
+    name: Optional[str] = Field(default=None, min_length=1, max_length=80)
+
+
+class SolidWorksDrawingInsertModelViewsInput(ActiveDocumentInput):
+    """在现有工程图指定页放置零件/装配体视图（保留图框）。"""
+    model_path: str = Field(min_length=1, description="Absolute .SLDPRT/.SLDASM path.")
+    sheet: str = Field(min_length=1, max_length=80)
+    views: List[SolidWorksDrawingModelViewInput] = Field(min_length=1, max_length=16)
+    dry_run: bool = True
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @field_validator("model_path")
+    @classmethod
+    def _model(cls, value):
+        return _absolute_with_suffix(value, {".sldprt", ".sldasm"}, "model_path")
+
+
+class SolidWorksDrawingRevisionRowInput(BaseInput):
+    revision: str = Field(min_length=1, max_length=8)
+    description: str = Field(default="", max_length=400)
+    date: str = Field(default="", max_length=40)
+    approved: str = Field(default="", max_length=80)
+
+
+class SolidWorksDrawingRevisionTableInput(ActiveDocumentInput):
+    """在指定页插入原生修订表并写入各行。"""
+    sheet: str = Field(min_length=1, max_length=80)
+    rows: List[SolidWorksDrawingRevisionRowInput] = Field(min_length=1, max_length=50)
+    position_mm: Optional[Tuple[float, float]] = Field(default=None, description="Table position; omit to use the sheet format anchor.")
+    anchor: Literal["top_left", "top_right", "bottom_left", "bottom_right"] = "bottom_right"
+    table_template: Optional[str] = Field(default=None, description="Optional absolute revision table template (.sldrevtbt).")
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
+class SolidWorksExitEmptySessionInput(BaseInput):
+    """绑定进程无打开文档时，一次 ExitApp 并确认进程退出。"""
+    process_id: int = Field(gt=0, lt=2**31, strict=True)
+    wait_seconds: int = Field(default=60, ge=5, le=300)
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+
+@mcp.tool(
+    name="solidworks_drawing_insert_model_views",
+    title="Insert Model Views On Drawing Sheet",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_drawing_insert_model_views(params: SolidWorksDrawingInsertModelViewsInput) -> str:
+    """把零件/装配体的命名视图放到现有工程图的指定页（图框不变），按中心定位；先 dry_run 核对视图名。"""
+    def op():
+        from scripts.sw_drawing_2d import insert_model_views
+        sw, draw = _active_drawing_required(params)
+        return insert_model_views(sw, draw, params.model_path, params.sheet,
+                                  [v.model_dump() for v in params.views], dry_run=params.dry_run)
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_drawing_revision_table",
+    title="Insert Drawing Revision Table",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_drawing_revision_table(params: SolidWorksDrawingRevisionTableInput) -> str:
+    """在指定页插入原生修订表（一页一张），按行写入修订号、描述、日期、批准人并回读。"""
+    def op():
+        from scripts.sw_drawing_2d import insert_revision_table
+        sw, draw = _active_drawing_required(params)
+        return insert_revision_table(sw, draw, params.sheet, [r.model_dump() for r in params.rows],
+                                     position_mm=params.position_mm, anchor=params.anchor,
+                                     table_template=params.table_template or "")
+    return _run_locked(op, params.response_format)
+
+
+@mcp.tool(
+    name="solidworks_exit_empty_session",
+    title="Exit Empty Bound SOLIDWORKS Session",
+    annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_exit_empty_session(params: SolidWorksExitEmptySessionInput) -> str:
+    """仅对本服务已绑定（solidworks_connect）的进程：无打开文档时一次 ExitApp，等待进程句柄确认退出；有文档则拒绝并列出。"""
+    def op():
+        global _selected_process_id
+        if type(_selected_process_id) is not int or _selected_process_id != params.process_id:
+            raise ValueError("Bind this server to the process first: solidworks_connect(process_id=...)")
+        from scripts.sw_exit_empty import exit_empty_session
+        sw, _previous = connect_solidworks(wait_seconds=1, process_id=params.process_id)
+        result = exit_empty_session(sw, params.process_id, wait_seconds=params.wait_seconds)
+        if result.get("process_exit_verified"):
+            _selected_process_id = None
+        return result
+    return _run_locked(op, params.response_format)
 
 
 @mcp.tool(
