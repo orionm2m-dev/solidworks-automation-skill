@@ -185,6 +185,34 @@ def _shape_columns(tann, bom, columns):
     return plan
 
 
+def _call(obj, name, *args):
+    from scripts.sw_connect import get_com_member as get
+    return get(obj, name, *args)
+
+
+def _set_column_type(tann, index, code, prop):
+    """设列类型并回读：SetColumnType3 → SetColumnType2 → SetColumnType，以 GetColumnType2 为准。"""
+    def current():
+        for name, args in (('GetColumnType2', (index, False)), ('GetColumnType', (index,))):
+            try:
+                return int(_call(tann, name, *args))
+            except Exception:  # noqa: BLE001
+                continue
+        return None
+
+    if current() == code and code != COL_PROPERTY:
+        return True
+    for name, args in (('SetColumnType3', (index, code, False, prop)), ('SetColumnType2', (index, code, False)),
+                       ('SetColumnType', (index, code))):
+        try:
+            _call(tann, name, *args)
+        except Exception:  # noqa: BLE001
+            continue
+        if current() == code:
+            return True
+    return False
+
+
 def _new_row_index(before, after, header_row_after=None):
     """插入一行后的新行：按内容找“之前没有”的行（插入后 SolidWorks 会重排行，按索引比对不可靠）。
 
@@ -201,9 +229,12 @@ def _new_row_index(before, after, header_row_after=None):
             left[key] -= 1
         else:
             fresh.append(i)
-    if len(fresh) == 1:
-        return fresh[0]
+    # 内容相同的行无法按内容区分（例如新行复制了表头）：在同内容的行中排除表头位置。
     candidates = [i for i in range(len(after)) if tuple(after[i]) in {tuple(after[j]) for j in fresh} and i != header_row_after]
+    if len(fresh) == 1 and fresh[0] != header_row_after:
+        same = [i for i in candidates if tuple(after[i]) == tuple(after[fresh[0]])]
+        if len(same) <= 1:
+            return fresh[0]
     empty = [i for i in candidates if not any(x.strip() for x in after[i])]
     if len(empty) == 1:
         return empty[0]
