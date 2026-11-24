@@ -747,19 +747,24 @@ def edit_2d(sw, draw, spec, dry_run=True):
                 hits = [d for d, r in dims if dimension_matches(r, op) and note_position_in_box(r.get('position_mm'), op)]
                 if len(hits) != op.expected_count:
                     raise RuntimeError(f'replace_dimension_text {op.match!r}: found {len(hits)}, expected {op.expected_count}')
+                underline_errors = []
                 for d in hits:
                     # 整段文字替换 <DIM>：显示为 new_text，数值不再参与显示。
                     d.SetText(0, op.new_text)
                     for part in (1, 2):
                         d.SetText(part, '')
                     if op.underline:
-                        _underline_dimension(d)
+                        try:
+                            _underline_dimension(d)
+                        except Exception as exc:  # noqa: BLE001 - 下划线可选，失败只报告
+                            underline_errors.append(str(exc))
                 after = [_dimension_record(d, '') for d in hits]
                 bad = [a for a in after if a.get('display') != op.new_text and a.get('text') != op.new_text]
                 if bad:
                     raise RuntimeError(f'replace_dimension_text {op.match!r}: readback {bad}')
                 dim_replaced.append({'match': op.match, 'replaced': len(hits), 'new_text': op.new_text,
-                                     'readback': [a.get('text') for a in after]})
+                                     'readback': [a.get('text') for a in after], 'underlined': op.underline and not underline_errors,
+                                     'underline_errors': underline_errors})
         res['dimension_text_replaced'] = dim_replaced
         # 绘制：图纸草图（非图框模板），不吸附。
         draw.ClearSelection2(True)
