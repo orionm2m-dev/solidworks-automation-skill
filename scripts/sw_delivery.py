@@ -205,16 +205,19 @@ def _collect_new_outputs(target: Path, existing_files: dict[str, tuple[int, int]
 def _document_dependency_paths(model, source_path: str) -> list[str]:
     """@brief 读取当前文档引用路径，用于校验 Pack and Go 是否漏包。"""
     try:
-        dependencies = get_com_member(model, "GetDependencies2", False, True, False) or []
+        # Traverseflag=True：递归到子装配体的零件；False 只给第一层，暂存包会漏件。
+        dependencies = get_com_member(model, "GetDependencies2", True, True, False) or []
     except Exception:
         return []
     values = list(dependencies)
     source_name = Path(source_path).name.casefold()
     paths = []
+    seen = set()
     for index in range(1, len(values), 2):
         path = str(values[index] or "")
-        if not path or Path(path).name.casefold() == source_name:
+        if not path or Path(path).name.casefold() == source_name or path.casefold() in seen:
             continue
+        seen.add(path.casefold())
         paths.append(path)
     return paths
 
@@ -355,6 +358,17 @@ def _required_pack_dependency_paths(
         if path.casefold() not in seen:
             seen.add(path.casefold())
             required.append(path)
+    # 组件审计里有、依赖列表里没有的文件同样必需（依赖枚举不全时不能报“全部落盘”）。
+    for path_key, records in metadata.items():
+        if path_key in seen:
+            continue
+        if not include_suppressed and all(record["is_suppressed"] for record in records):
+            continue
+        if not include_toolbox_components and all(record["toolbox_state"] in {"standard", "copied", "candidate"} for record in records):
+            continue
+        path = str(Path(records[0]["path"]).expanduser().resolve())
+        seen.add(path_key)
+        required.append(path)
     if include_drawings:
         for raw_path in associated_drawings:
             path = str(Path(raw_path).expanduser().resolve())
@@ -1121,6 +1135,7 @@ def pack_and_go(
     flatten: bool = False,
     overwrite: bool = False,
     fallback_policy: str = "stage_dependencies",
+    allow_existing_files: bool = False,
 ) -> dict[str, Any]:
     """执行原生 Pack and Go，并按策略处理不同版本的依赖枚举缺失。
 
@@ -1135,7 +1150,7 @@ def pack_and_go(
     target = Path(os.path.expandvars(str(output_dir))).expanduser().resolve()
     target.mkdir(parents=True, exist_ok=True)
     existing_files = {str(path): _file_signature(path) for path in target.rglob("*") if path.is_file()}
-    if existing_files and not overwrite:
+    if existing_files and not overwrite and not allow_existing_files:
         raise FileExistsError(f"Pack and Go 目标目录非空，未允许覆盖: {target}")
 
     dependencies = _document_dependency_paths(model, source_path)
@@ -1149,6 +1164,12 @@ def pack_and_go(
         include_toolbox_components=include_toolbox_components,
         include_suppressed=include_suppressed,
     )
+    if existing_files and allow_existing_files and not overwrite:
+        # 允许目录里已有无关文件，但不允许覆盖：任何同名文件都在写入前拒绝。
+        planned = {Path(p).name.casefold() for p in [source_path, *required_dependencies]}
+        clashes = sorted(p for p in existing_files if Path(p).name.casefold() in planned)
+        if clashes:
+            raise FileExistsError(f"Pack and Go 目标目录已有同名文件，未允许覆盖: {clashes[:10]}")
     fallback_errors = []
     native_error: str | None = None
     result: dict[str, Any]
@@ -1315,6 +1336,14 @@ def pack_and_go(
             retryable = True
             manual_review_required = False
             limitations = []
+    if staged is not None:
+        # 暂存包的完整性按同一份必需清单回读，而不是沿用“已复制 N/N”。
+        missing_dependencies = _missing_dependency_paths(required_dependencies, result["outputs"])
+        if missing_dependencies:
+            success = False
+            status = "blocked"
+            error_code = "SW_PACK_AND_GO_STAGED_INCOMPLETE"
+            limitations = [*limitations, "暂存包缺少必需文件"]
     final_audit = build_pack_and_go_audit_matrix(
         source_path,
         dependencies,
@@ -1348,6 +1377,7 @@ def pack_and_go(
         "associated_drawings": associated_drawings,
         "audit_matrix": final_audit,
         "native_audit_matrix": native_audit,
+        "required_count": len(required_dependencies) + 1,
         "missing_dependencies": missing_dependencies,
         "native_missing_dependencies": native_missing_dependencies,
         "fallback_policy": fallback_policy,

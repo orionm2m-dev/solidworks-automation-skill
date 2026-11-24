@@ -4272,6 +4272,7 @@ class SolidWorksPackAndGoInput(ActiveDocumentInput):
     include_suppressed: bool = Field(default=False)
     flatten: bool = Field(default=False)
     overwrite: bool = Field(default=False)
+    allow_existing_files: bool = Field(default=False, description="Allow unrelated files already in output_dir; any file with the same name as a package file is refused before writing (no overwrite).")
     fallback_policy: Literal["stage_dependencies", "blocked"] = Field(
         default="stage_dependencies",
         description="原生依赖枚举缺失时生成可审计暂存包，或严格阻断",
@@ -8579,6 +8580,7 @@ def solidworks_pack_and_go_tool(params: SolidWorksPackAndGoInput) -> str:
             flatten=params.flatten,
             overwrite=params.overwrite,
             fallback_policy=params.fallback_policy,
+            allow_existing_files=params.allow_existing_files,
         )
         result["document"] = _model_summary(model)
         return result

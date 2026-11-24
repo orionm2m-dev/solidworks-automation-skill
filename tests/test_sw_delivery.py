@@ -538,3 +538,103 @@ def test_pack_and_go_report_exposes_stable_audit_matrix(tmp_path):
     assert report["native_audit_matrix"]["summary"]["required_count"] == 2
     assert report["component_audit"][0]["configuration"] == "默认"
     assert report["associated_drawings"] == []
+
+
+class FakeRecordingDependencyAssembly(FakeDependencyAssembly):
+    """@brief 记录 GetDependencies2 参数，并只在递归模式下给出子装配体的零件。"""
+
+    def __init__(self, source, components, first_level, nested):
+        super().__init__(source, components, first_level)
+        self.nested = nested
+        self.calls = []
+
+    def GetDependencies2(self, *args):
+        self.calls.append(args)
+        paths = list(self.dependencies) + (list(self.nested) if args and args[0] else [])
+        values = []
+        for path in paths:
+            values.extend([Path(path).stem, str(path)])
+        return tuple(values)
+
+
+def _three_level_tree(tmp_path):
+    source = tmp_path / "top.sldasm"
+    sub = tmp_path / "sub.sldasm"
+    leaf = tmp_path / "leaf.sldprt"
+    for path in (source, sub, leaf):
+        path.write_text(path.stem, encoding="utf-8")
+    return source, sub, leaf
+
+
+def test_pack_and_go_dependencies_traverse_subassemblies(tmp_path):
+    """@brief 暂存回退必须递归读取依赖：只读第一层会漏掉子装配体的零件。"""
+    source, sub, leaf = _three_level_tree(tmp_path)
+    model = FakeRecordingDependencyAssembly(source, [], [sub], [leaf])
+
+    report = sw_delivery.pack_and_go(model, tmp_path / "package")
+
+    assert model.calls and model.calls[0][0] is True
+    assert str(leaf) in report["required_dependencies"]
+    assert report["missing_dependencies"] == []
+    assert {Path(item["path"]).name for item in report["outputs"]} >= {source.name, sub.name, leaf.name}
+    assert report["required_count"] == 3
+
+
+def test_pack_and_go_requires_component_audit_files_missing_from_dependencies(tmp_path):
+    """@brief 组件审计里有的文件即使依赖列表漏报，也计入必需清单并进入暂存包。"""
+    source, sub, leaf = _three_level_tree(tmp_path)
+    components = [FakeComponent(sub, "默认", "sub-1", {}), FakeComponent(leaf, "默认", "leaf-1", {})]
+    model = FakeDependencyAssembly(source, components, [sub])
+
+    report = sw_delivery.pack_and_go(model, tmp_path / "package")
+
+    assert str(leaf.resolve()) in report["required_dependencies"]
+    assert report["required_count"] == 3
+    assert report["success"] is True
+    assert report["missing_dependencies"] == []
+    assert leaf.name in {Path(item["path"]).name for item in report["outputs"]}
+
+
+def test_pack_and_go_component_audit_respects_suppressed_option(tmp_path):
+    """@brief 压缩组件在未要求 include_suppressed 时不计入必需清单。"""
+    source, sub, leaf = _three_level_tree(tmp_path)
+    components = [FakeComponent(leaf, "默认", "leaf-1", {}, suppression=0)]
+    model = FakeDependencyAssembly(source, components, [sub])
+
+    report = sw_delivery.pack_and_go(model, tmp_path / "package")
+
+    assert str(leaf.resolve()) not in report["required_dependencies"]
+
+
+def test_pack_and_go_allow_existing_files_keeps_unrelated_files(tmp_path):
+    """@brief allow_existing_files 允许目录里有无关文件，且不触碰它们。"""
+    source = tmp_path / "assembly.sldasm"
+    source.write_text("assembly", encoding="utf-8")
+    target = tmp_path / "package"
+    target.mkdir()
+    (target / "keep.txt").write_text("keep", encoding="utf-8")
+    model = FakeAssembly(source, [])
+
+    report = sw_delivery.pack_and_go(model, target, allow_existing_files=True)
+
+    assert report["success"] is True
+    assert (target / "keep.txt").read_text(encoding="utf-8") == "keep"
+    assert "keep.txt" not in {Path(item["path"]).name for item in report["outputs"]}
+
+
+def test_pack_and_go_allow_existing_files_refuses_name_clash(tmp_path):
+    """@brief 同名文件已在目录中时，allow_existing_files 在写入前拒绝，不覆盖。"""
+    source, sub, leaf = _three_level_tree(tmp_path)
+    target = tmp_path / "package"
+    target.mkdir()
+    (target / leaf.name).write_text("old", encoding="utf-8")
+    model = FakeRecordingDependencyAssembly(source, [], [sub], [leaf])
+
+    try:
+        sw_delivery.pack_and_go(model, target, allow_existing_files=True)
+    except FileExistsError as error:
+        assert "同名文件" in str(error)
+    else:
+        raise AssertionError("same-name file must be refused")
+    assert (target / leaf.name).read_text(encoding="utf-8") == "old"
+    assert not (target / source.name).exists()
