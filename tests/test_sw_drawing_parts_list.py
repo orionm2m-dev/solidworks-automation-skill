@@ -111,3 +111,11 @@ class FakeView:
 def test_balloon_texts_skip_plain_notes():
     view = FakeView(FakeNote("1", True, FakeNote("примечание", False, FakeNote("2", True))))
     assert m._balloon_texts(view) == ["1", "2"]
+
+
+def test_new_row_index_by_grid_difference():
+    before = [["Поз.", "Наим."], ["1", "Корпус"]]
+    assert m._new_row_index(before, [["Поз.", "Наим."], ["1", "Корпус"], ["3", ""]]) == 2
+    assert m._new_row_index(before, [["", ""], ["Поз.", "Наим."], ["1", "Корпус"]]) == 0
+    with pytest.raises(RuntimeError):
+        m._new_row_index(before, before)

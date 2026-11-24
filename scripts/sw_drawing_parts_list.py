@@ -18,6 +18,7 @@ ANCHORS = {'top_left': 1, 'top_right': 2, 'bottom_left': 3, 'bottom_right': 4}
 HEADER_TOP, HEADER_BOTTOM = 1, 2
 COL_PART_NUMBER, COL_ITEM, COL_QUANTITY, COL_PROPERTY = 201, 202, 203, 204
 INSERT_AFTER = 3
+INSERT_LAST = 4
 NUMBERING_DETAILED = 1
 # swBalloonStyle_e / swBalloonFit_e / swBalloonLayoutType_e / swBalloonTextContent_e。
 BALLOON_STYLES = {'circular': 1, 'underline': 10, 'box': 4, 'triangle': 2, 'hexagon': 3}
@@ -180,31 +181,32 @@ def _shape_columns(tann, bom, columns):
     return plan
 
 
+def _new_row_index(before, after):
+    """插入一行后的新行索引：前后网格第一处不同的位置（末尾追加时为原行数）。"""
+    if len(after) != len(before) + 1:
+        raise RuntimeError(f'row count {len(before)} -> {len(after)} after InsertRow')
+    for i, row in enumerate(before):
+        if after[i] != row:
+            return i
+    return len(before)
+
+
 def _add_manual_rows(tann, spec, header_row):
-    """在最后一个数据行之后插入手工行，按列标题填写；返回新行索引。"""
+    """在表尾（逻辑最后一行之后）插入手工行，按列标题填写；返回新行索引。"""
     from scripts.sw_connect import get_com_member as get
     from scripts.sw_drawing_2d import _set_table_text
     titles = [c.title for c in spec.columns]
     added = []
     for row in spec.manual_rows:
         before = _grid(tann)
-        data_rows = [r for r in range(len(before)) if r != header_row]
-        anchor_row = max(data_rows) if data_rows else header_row
-        if spec.header_at_bottom:
-            anchor_row = min(data_rows) if data_rows else header_row
-        if not tann.InsertRow(INSERT_AFTER if not spec.header_at_bottom else 2, anchor_row):  # 2 = Before
+        if not tann.InsertRow(INSERT_LAST, len(before) - 1):
             raise RuntimeError('InsertRow failed')
-        after = _grid(tann)
-        new_rows = [r for r in range(len(after)) if not any(x.strip() for x in after[r])]
-        if not new_rows:
-            raise RuntimeError('inserted row not found')
-        r_new = new_rows[0]
+        r_new = _new_row_index(before, _grid(tann))
         for title, text in row.items():
             _set_table_text(tann, r_new, titles.index(title), str(text))
         added.append(r_new)
-        header_row = _header_row(_grid(tann), titles)
-        if header_row is None:
-            raise RuntimeError('header row lost after inserting a manual row')
+        if _header_row(_grid(tann), titles) is None:
+            raise RuntimeError(f'header row lost after inserting a manual row: {_grid(tann)}')
     return added
 
 
@@ -235,14 +237,22 @@ def insert_parts_list(sw, draw, spec, dry_run=True):
     if bom is None:
         raise RuntimeError('InsertBomTable4 failed')
     tann = _table_of(bom)
-    columns = _shape_columns(tann, bom, spec.columns)
-    if not tann.SetHeader(HEADER_BOTTOM if spec.header_at_bottom else HEADER_TOP, 1):
-        raise RuntimeError('SetHeader failed')
     titles = [c.title for c in spec.columns]
-    header_row = _header_row(_grid(tann), titles)
-    if header_row is None:
-        raise RuntimeError(f'header row not recognised after setup: {_grid(tann)[:3]}')
-    manual = _add_manual_rows(tann, spec, header_row) if spec.manual_rows else []
+    try:
+        columns = _shape_columns(tann, bom, spec.columns)
+        if not tann.SetHeader(HEADER_BOTTOM if spec.header_at_bottom else HEADER_TOP, 1):
+            raise RuntimeError('SetHeader failed')
+        header_row = _header_row(_grid(tann), titles)
+        if header_row is None:
+            raise RuntimeError('header row not recognised after column setup')
+        manual = _add_manual_rows(tann, spec, header_row) if spec.manual_rows else []
+    except Exception as exc:  # noqa: BLE001 - the table exists but the drawing is not saved
+        try:
+            grid = _grid(tann)
+        except Exception:  # noqa: BLE001
+            grid = None
+        raise RuntimeError(f'parts list setup failed after InsertBomTable4; the drawing is NOT saved, close it without '
+                           f'saving or undo: {exc}; table={grid}') from exc
     draw.ForceRebuild3(False)
     grid = _grid(tann)
     header_row = _header_row(grid, titles)
@@ -281,18 +291,24 @@ def insert_balloons(sw, draw, spec, dry_run=True):
         raise ValueError(f'view {name!r} already has balloons {existing}; delete them first')
     if dry_run:
         return {'status': 'ready', 'dry_run': True, **plan}
+    def step(label, fn):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 - name the failing COM member
+            raise RuntimeError(f'{label}: {exc}') from exc
+
     draw.ClearSelection2(True)
     ext = get(draw, 'Extension')
-    if not ext.SelectByID2(name, 'DRAWINGVIEW', 0, 0, 0, False, 0, create_empty_dispatch_variant(), 0):
+    if not step('SelectByID2', lambda: ext.SelectByID2(name, 'DRAWINGVIEW', 0, 0, 0, False, 0, create_empty_dispatch_variant(), 0)):
         raise RuntimeError(f'cannot select view {name!r}')
-    opts = draw.CreateAutoBalloonOptions()
-    opts.Layout = BALLOON_LAYOUTS[spec.layout]
-    opts.Style = BALLOON_STYLES[spec.style]
-    opts.Size = BALLOON_SIZES[spec.size]
-    opts.UpperTextContent = BALLOON_TEXT_ITEM
-    opts.IgnoreMultiple = bool(spec.ignore_multiple)
-    opts.LeaderAttachmentToFaces = bool(spec.leader_to_faces)
-    created = draw.AutoBalloon5(opts)
+    opts = step('CreateAutoBalloonOptions', lambda: get(draw, 'CreateAutoBalloonOptions'))
+    if opts is None:
+        raise RuntimeError('CreateAutoBalloonOptions returned nothing')
+    for prop, value in (('Layout', BALLOON_LAYOUTS[spec.layout]), ('Style', BALLOON_STYLES[spec.style]),
+                        ('Size', BALLOON_SIZES[spec.size]), ('UpperTextContent', BALLOON_TEXT_ITEM),
+                        ('IgnoreMultiple', bool(spec.ignore_multiple)), ('LeaderAttachmentToFaces', bool(spec.leader_to_faces))):
+        step(f'AutoBalloonOptions.{prop}', lambda prop=prop, value=value: _put(opts, prop, value))
+    created = step('AutoBalloon5', lambda: draw.AutoBalloon5(opts))
     draw.ClearSelection2(True)
     draw.ForceRebuild3(False)
     texts = _balloon_texts(view)
@@ -302,6 +318,17 @@ def insert_balloons(sw, draw, spec, dry_run=True):
     if not draw.Save3(1, err, warn) and err.value:
         raise RuntimeError(f'Save failed: {err.value}, {warn.value}')
     return {'status': 'inserted', **plan, 'balloons': texts, 'count': len(texts), 'manual_review_required': True}
+
+
+def _put(obj, name, value):
+    """属性赋值：动态代理失败时直接 DISPATCH_PROPERTYPUT。"""
+    try:
+        setattr(obj, name, value)
+        return
+    except Exception:  # noqa: BLE001
+        import pythoncom
+        dispid = obj._oleobj_.GetIDsOfNames(name)
+        obj._oleobj_.Invoke(dispid, 0, pythoncom.DISPATCH_PROPERTYPUT, 0, value)
 
 
 def _balloon_texts(view):
