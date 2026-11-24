@@ -9003,6 +9003,49 @@ def solidworks_drawing_export_dwg(params: SolidWorksDrawingExportDwgInput) -> st
     return _run_locked(op, params.response_format)
 
 
+class SolidWorksDrawingExportReleaseInput(ActiveDocumentInput):
+    """出图：全部或指定图纸 → 一个 PDF（逐页核对 100 % 尺寸）+ 每张图纸一个 DXF。"""
+    pdf_path: Optional[str] = Field(default=None, description="Absolute .pdf path; every page is checked against its sheet size.")
+    dxf_dir: Optional[str] = Field(default=None, description="Absolute folder; one DXF per sheet named <drawing>_<sheet>.dxf.")
+    sheets: Optional[List[str]] = Field(default=None, min_length=1, max_length=200, description="Sheet names in output order; default all sheets.")
+    tolerance_mm: float = Field(default=0.5, gt=0, le=5)
+    overwrite: bool = False
+    response_format: ResponseFormat = ResponseFormat.JSON
+
+    @field_validator("pdf_path")
+    @classmethod
+    def _pdf(cls, value):
+        return None if value is None else _absolute_with_suffix(value, {".pdf"}, "pdf_path")
+
+    @field_validator("dxf_dir")
+    @classmethod
+    def _dxf_dir(cls, value):
+        if value is not None and not Path(value).is_absolute():
+            raise ValueError("dxf_dir must be an absolute path")
+        return value
+
+    @model_validator(mode="after")
+    def _some_output(self):
+        if not self.pdf_path and not self.dxf_dir:
+            raise ValueError("pdf_path or dxf_dir required")
+        return self
+
+
+@mcp.tool(
+    name="solidworks_drawing_export_release",
+    title="Export Drawing Release (PDF + DXF Per Sheet)",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_drawing_export_release(params: SolidWorksDrawingExportReleaseInput) -> str:
+    """出图：PDF 全部页（页面尺寸逐页核对 = 图纸尺寸，status=size_mismatch 时不可交付）+ 每页 DXF。"""
+    def op():
+        from scripts.sw_drawing_2d import export_release
+        sw, draw = _active_drawing_required(params)
+        return export_release(sw, draw, pdf_path=params.pdf_path, dxf_dir=params.dxf_dir, sheets=params.sheets,
+                              tolerance_mm=params.tolerance_mm, overwrite=params.overwrite)
+    return _run_locked(op, params.response_format)
+
+
 class SolidWorksDrawingModelViewInput(BaseInput):
     named_view: str = Field(default="*Front", min_length=1, max_length=80,
                             description="Model view name; English standard names (*Front, *Top, *Isometric...) map to the localized ones.")

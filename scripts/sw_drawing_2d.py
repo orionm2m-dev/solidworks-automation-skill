@@ -752,6 +752,132 @@ def export_pdf_all(sw, draw, pdf_path, overwrite=False):
     return {'status': 'exported', 'pdf_path': pdf_path, 'sheet_names': names}
 
 
+def _safe_file_part(name):
+    bad = '<>:"/\\|?*'
+    out = ''.join('_' if c in bad or ord(c) < 32 else c for c in str(name)).strip(' .')
+    return out or 'sheet'
+
+
+def check_pdf_pages(pdf_path, sheets, tolerance_mm=0.5):
+    """逐页核对 PDF 页面尺寸 = 图纸尺寸（100 % 比例），页数 = 图纸数；不修改文件。"""
+    import pymupdf
+    k = 72 / 25.4
+    doc = pymupdf.open(str(pdf_path))
+    try:
+        pages = [(p.rect.width / k, p.rect.height / k) for p in doc]
+    finally:
+        doc.close()
+    rows = []
+    for i, sheet in enumerate(sheets):
+        w, h = sheet['size_mm']
+        if i >= len(pages):
+            rows.append({'sheet': sheet['name'], 'sheet_size_mm': [w, h], 'page_size_mm': None, 'ok': False,
+                         'problem': 'missing_page'})
+            continue
+        pw, ph = pages[i]
+        delta = max(abs(pw - w), abs(ph - h))
+        row = {'sheet': sheet['name'], 'page': i + 1, 'sheet_size_mm': [round(w, 2), round(h, 2)],
+               'page_size_mm': [round(pw, 2), round(ph, 2)], 'delta_mm': round(delta, 2), 'ok': delta <= tolerance_mm}
+        if not row['ok']:
+            rotated = max(abs(pw - h), abs(ph - w)) <= tolerance_mm
+            row['problem'] = 'rotated' if rotated else 'size'
+        rows.append(row)
+    extra = len(pages) - len(sheets)
+    return {'pages': rows, 'page_count': len(pages), 'sheet_count': len(sheets),
+            'extra_pages': max(extra, 0), 'tolerance_mm': tolerance_mm,
+            'all_ok': extra == 0 and all(r['ok'] for r in rows)}
+
+
+def export_release(sw, draw, *, pdf_path=None, dxf_dir=None, sheets=None, tolerance_mm=0.5, overwrite=False):
+    """出图：全部（或指定）图纸 → 一个 PDF（逐页核对尺寸 = 图纸尺寸）+ 每张图纸一个 DXF。
+
+    DXF 逐页导出：临时把 swDxfMultiSheetOption 设为仅当前页，finally 中恢复原设置和原活动页。
+    已有输出文件在任何写入前拒绝（overwrite=False）。
+    """
+    import pythoncom
+    from win32com.client import VARIANT
+    from scripts.sw_connect import create_empty_dispatch_variant, get_com_member as get
+    if not pdf_path and not dxf_dir:
+        raise ValueError('pdf_path or dxf_dir required')
+    all_names = _sheet_names(draw)
+    names = list(sheets) if sheets else all_names
+    unknown = [n for n in names if n not in all_names]
+    if unknown or not names:
+        raise ValueError(f'Unknown sheets {unknown}; sheets={all_names}')
+    drawing_path = str(get(draw, 'GetPathName'))
+    stem = Path(drawing_path).stem or 'drawing'
+    planned = []
+    if pdf_path:
+        _absolute(pdf_path, {'.pdf'})
+        planned.append(Path(pdf_path))
+    dxf_paths = {}
+    if dxf_dir:
+        if not Path(dxf_dir).is_absolute():
+            raise ValueError('dxf_dir must be absolute')
+        for n in names:
+            dxf_paths[n] = Path(dxf_dir) / f'{stem}_{_safe_file_part(n)}.dxf'
+        if len({str(p).casefold() for p in dxf_paths.values()}) != len(dxf_paths):
+            raise ValueError('Sheet names collide after file-name cleanup')
+        planned.extend(dxf_paths.values())
+    existing = [str(p) for p in planned if p.exists()]
+    if existing and not overwrite:
+        raise FileExistsError(f'Outputs exist: {existing}')
+
+    original = str(get(get(draw, 'GetCurrentSheet'), 'GetName'))
+    sheet_info = []
+    old_dxf = None
+    result = {'status': 'exported', 'drawing_path': drawing_path, 'sheet_names': names}
+    try:
+        for n in names:
+            _activate_sheet(draw, n)
+            props = list(get(get(draw, 'GetCurrentSheet'), 'GetProperties2') or [])
+            if len(props) < 7:
+                raise RuntimeError(f'Sheet size unavailable: {n}')
+            sheet_info.append({'name': n, 'size_mm': [float(props[5]) * 1000, float(props[6]) * 1000],
+                               'scale': [float(props[2]), float(props[3])]})
+        result['sheets'] = [{'name': i['name'], 'size_mm': [round(x, 2) for x in i['size_mm']],
+                             'sheet_scale': i['scale']} for i in sheet_info]
+        if pdf_path:
+            Path(pdf_path).parent.mkdir(parents=True, exist_ok=True)
+            pdf = sw.GetExportFileData(1)
+            pdf.SetSheets(3, VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_BSTR, tuple(names)))  # swExportData_ExportSpecifiedSheets
+            err = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+            warn = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+            if not draw.Extension.SaveAs(str(pdf_path), 0, 1, pdf, err, warn) or err.value:
+                raise RuntimeError(f'PDF export failed: {err.value}')
+            check = check_pdf_pages(pdf_path, sheet_info, tolerance_mm)
+            result['pdf'] = {'path': str(pdf_path), **check}
+        if dxf_dir:
+            Path(dxf_dir).mkdir(parents=True, exist_ok=True)
+            old_dxf = int(sw.GetUserPreferenceIntegerValue(253))  # swDxfMultiSheetOption
+            sw.SetUserPreferenceIntegerValue(253, 0)  # swDxfActiveSheetOnly
+            files = []
+            for n in names:
+                _activate_sheet(draw, n)
+                target = dxf_paths[n]
+                err = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+                warn = VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
+                # swSaveAsOptions_Copy：导出副本，活动文档仍指向原 SLDDRW。
+                if not draw.Extension.SaveAs(str(target), 0, 2, create_empty_dispatch_variant(), err, warn) or err.value:
+                    raise RuntimeError(f'DXF export failed for {n}: {err.value}, {warn.value}')
+                if not target.is_file() or target.stat().st_size == 0:
+                    raise RuntimeError(f'DXF export reported success but no file: {target}')
+                files.append({'sheet': n, 'path': str(target), 'bytes': target.stat().st_size})
+            result['dxf'] = files
+    finally:
+        if old_dxf is not None:
+            sw.SetUserPreferenceIntegerValue(253, old_dxf)
+        try:
+            _activate_sheet(draw, original)
+        except Exception:  # noqa: BLE001
+            pass
+    if pdf_path and not result['pdf']['all_ok']:
+        result['status'] = 'size_mismatch'
+    result['success'] = result['status'] == 'exported'
+    result['manual_review_required'] = True
+    return result
+
+
 class PdfFrame(Strict):
     box_mm: tuple[float, float, float, float]
     label: str | None = Field(default=None, max_length=80)
