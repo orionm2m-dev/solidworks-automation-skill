@@ -17,6 +17,7 @@ BOM_TYPES = {'parts_only': 1, 'top_level': 2, 'indented': 3}
 ANCHORS = {'top_left': 1, 'top_right': 2, 'bottom_left': 3, 'bottom_right': 4}
 HEADER_TOP, HEADER_BOTTOM = 1, 2
 COL_PART_NUMBER, COL_ITEM, COL_QUANTITY, COL_PROPERTY = 201, 202, 203, 204
+INSERT_BEFORE = 2
 INSERT_AFTER = 3
 INSERT_LAST = 4
 NUMBERING_DETAILED = 1
@@ -256,7 +257,13 @@ def _add_manual_rows(tann, spec, header_row):
     original = _data_rows(_grid(tann), header_row)
     for row in spec.manual_rows:
         before = _grid(tann)
-        if not tann.InsertRow(INSERT_LAST, len(before) - 1):
+        data = [i for i in range(len(before)) if i != header_row]
+        # 手工行放在编号末端，组件序号不变：表头在下时插在最上面一行之上，表头在上时追加到最后。
+        if spec.header_at_bottom and data:
+            ok = tann.InsertRow(INSERT_BEFORE, min(data))
+        else:
+            ok = tann.InsertRow(INSERT_LAST, len(before) - 1)
+        if not ok:
             raise RuntimeError('InsertRow failed')
         after = _grid(tann)
         r_new = _new_row_index(before, after, _header_row(after, titles))
