@@ -167,10 +167,11 @@ def _shape_columns(tann, bom, columns):
     plan = []
     for i, col in enumerate(columns):
         code = {'item': COL_ITEM, 'quantity': COL_QUANTITY, 'part_number': COL_PART_NUMBER, 'property': COL_PROPERTY}[col.source]
-        ok_type = bool(tann.SetColumnType(i, code))
+        ok_type = _set_column_type(tann, i, code, col.property or '')
         ok_prop = True
         if col.source == 'property':
-            ok_prop = bool(bom.SetColumnCustomProperty(i, col.property))
+            bom.SetColumnCustomProperty(i, col.property)
+            ok_prop = str(_call(bom, 'GetColumnCustomProperty', i) or '') == col.property
         ok_title = bool(tann.SetColumnTitle(i, col.title))
         width = None
         if col.width_mm:
@@ -191,6 +192,34 @@ def _new_row_index(before, after):
     return len(before)
 
 
+def _call(obj, name, *args):
+    from scripts.sw_connect import get_com_member as get
+    return get(obj, name, *args)
+
+
+def _set_column_type(tann, index, code, prop):
+    """设列类型并回读：SetColumnType3 → SetColumnType2 → SetColumnType，以 GetColumnType2 为准。"""
+    def current():
+        for name, args in (('GetColumnType2', (index, False)), ('GetColumnType', (index,))):
+            try:
+                return int(_call(tann, name, *args))
+            except Exception:  # noqa: BLE001
+                continue
+        return None
+
+    if current() == code and code != COL_PROPERTY:
+        return True
+    for name, args in (('SetColumnType3', (index, code, False, prop)), ('SetColumnType2', (index, code, False)),
+                       ('SetColumnType', (index, code))):
+        try:
+            _call(tann, name, *args)
+        except Exception:  # noqa: BLE001
+            continue
+        if current() == code:
+            return True
+    return False
+
+
 def _add_manual_rows(tann, spec, header_row):
     """在表尾（逻辑最后一行之后）插入手工行，按列标题填写；返回新行索引。"""
     from scripts.sw_connect import get_com_member as get
@@ -202,8 +231,9 @@ def _add_manual_rows(tann, spec, header_row):
         if not tann.InsertRow(INSERT_LAST, len(before) - 1):
             raise RuntimeError('InsertRow failed')
         r_new = _new_row_index(before, _grid(tann))
-        for title, text in row.items():
-            _set_table_text(tann, r_new, titles.index(title), str(text))
+        # 新行会复制相邻行的文字（含表头），先按规格整行写入，未给出的列写空。
+        for index, title in enumerate(titles):
+            _set_table_text(tann, r_new, index, str(row.get(title, '')))
         added.append(r_new)
         if _header_row(_grid(tann), titles) is None:
             raise RuntimeError(f'header row lost after inserting a manual row: {_grid(tann)}')
@@ -232,16 +262,19 @@ def insert_parts_list(sw, draw, spec, dry_run=True):
             'header_at_bottom': spec.header_at_bottom, 'manual_rows': len(spec.manual_rows)}
     if dry_run:
         return {'status': 'ready', 'dry_run': True, **plan}
+    # 配置名为空时 BOM 没有任何行：默认取视图引用的配置。
+    configuration = spec.configuration or str(get(view, 'ReferencedConfiguration') or '')
     bom = view.InsertBomTable4(False, _m(spec.position_mm[0]), _m(spec.position_mm[1]), ANCHORS[spec.anchor],
-                               BOM_TYPES[spec.bom_type], spec.configuration, template, False, NUMBERING_DETAILED, False)
+                               BOM_TYPES[spec.bom_type], configuration, template, False, NUMBERING_DETAILED, False)
     if bom is None:
         raise RuntimeError('InsertBomTable4 failed')
     tann = _table_of(bom)
     titles = [c.title for c in spec.columns]
     try:
         columns = _shape_columns(tann, bom, spec.columns)
-        if not tann.SetHeader(HEADER_BOTTOM if spec.header_at_bottom else HEADER_TOP, 1):
-            raise RuntimeError('SetHeader failed')
+        wanted = HEADER_BOTTOM if spec.header_at_bottom else HEADER_TOP
+        tann.SetHeader(wanted, 1)
+        header_style = int(_call(tann, 'GetHeaderStyle'))
         header_row = _header_row(_grid(tann), titles)
         if header_row is None:
             raise RuntimeError('header row not recognised after column setup')
@@ -259,7 +292,15 @@ def insert_parts_list(sw, draw, spec, dry_run=True):
     err, warn = _byref_int(), _byref_int()
     if not draw.Save3(1, err, warn) and err.value:
         raise RuntimeError(f'Save failed: {err.value}, {warn.value}')
-    return {'status': 'inserted', **plan, 'column_setup': columns, 'header_row': header_row,
+    problems = [f"column {c['title']}: type not set" for c in columns if not c['type_set']]
+    problems += [f"column {c['title']}: property not set" for c in columns if not c['property_set']]
+    if header_style != wanted:
+        problems.append(f'header position {header_style}, wanted {wanted}')
+    data_rows = [r for r in range(len(grid)) if r != header_row and r not in manual]
+    if not data_rows:
+        problems.append('no component rows in the BOM')
+    return {'status': 'inserted' if not problems else 'inserted_with_problems', 'problems': problems,
+            **plan, 'configuration': configuration, 'header_style': header_style, 'column_setup': columns, 'header_row': header_row,
             'manual_row_indices': manual, 'cells': grid, 'manual_review_required': True}
 
 

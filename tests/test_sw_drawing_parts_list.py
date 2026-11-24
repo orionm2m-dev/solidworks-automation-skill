@@ -56,6 +56,12 @@ class FakeTable:
         self.props[index] = name
         return True
 
+    def GetColumnCustomProperty(self, index):
+        return self.props.get(index, "")
+
+    def GetColumnType2(self, index, _include_hidden):
+        return self.types.get(index)
+
     def SetColumnTitle(self, index, title):
         self.titles[index] = title
         return True
@@ -119,3 +125,14 @@ def test_new_row_index_by_grid_difference():
     assert m._new_row_index(before, [["", ""], ["Поз.", "Наим."], ["1", "Корпус"]]) == 0
     with pytest.raises(RuntimeError):
         m._new_row_index(before, before)
+
+
+def test_column_type_that_does_not_stick_is_reported():
+    class Stubborn(FakeTable):
+        def SetColumnType(self, index, code):
+            return True  # claims success, readback stays unchanged
+
+    table = Stubborn(["A", "B"])
+    plan = m._shape_columns(table, table, [m.PartsListColumn(title="Поз.", source="item"),
+                                           m.PartsListColumn(title="Кол.", source="quantity")])
+    assert [p["type_set"] for p in plan] == [False, False]
