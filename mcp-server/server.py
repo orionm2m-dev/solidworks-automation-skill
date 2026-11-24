@@ -120,6 +120,7 @@ def _load_automation_modules() -> None:
         "open_document": connect.open_document,
         "save_document": connect.save_document,
         "close_all_documents_scoped": connect.close_all_documents_scoped,
+        "close_documents_by_paths": connect.close_documents_by_paths,
         "extrude_boss": part.extrude_boss,
         "extrude_cut": part.extrude_cut,
         "extrude_cut_midplane": part.extrude_cut_midplane,
@@ -3928,7 +3929,9 @@ class SolidWorksCloseDocumentsInput(ActiveDocumentInput):
     allowed_document_roots: Optional[list[str]] = Field(default=None, min_length=1, max_length=20,
         description="With close_all: every open document (including hidden referenced documents) must be saved, unchanged and located under one of these absolute directories, otherwise nothing is closed. Replaces the single-document guard for close_all.")
     discard_unsaved_changes: bool = Field(default=False,
-        description="Only with allowed_document_roots: also close documents that carry unsaved changes, discarding them (for example version-conversion flags on hidden referenced documents). Never-saved documents are still refused.")
+        description="With allowed_document_roots or paths: also close documents that carry unsaved changes, discarding them (for example version-conversion flags on hidden referenced documents). Never-saved documents are still refused.")
+    paths: Optional[list[str]] = Field(default=None, min_length=1, max_length=200,
+        description="Close exactly these open documents (absolute paths) and nothing else; refused before closing anything if one is not open or has unsaved changes without discard_unsaved_changes. Not combined with close_all or a single-document guard.")
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
 
@@ -8085,6 +8088,13 @@ def solidworks_close_documents(params: SolidWorksCloseDocumentsInput = SolidWork
     """Close the active document or all documents in the current SolidWorks session."""
 
     def op():
+        if params.paths:
+            if params.close_all or params.allowed_document_roots or params.expected_document_path or params.expected_document_title:
+                raise ValueError("paths is not combined with close_all, allowed_document_roots or a single-document guard.")
+            sw, _model = connect_solidworks(wait_seconds=1)
+            result = close_documents_by_paths(sw, params.paths, discard_unsaved_changes=params.discard_unsaved_changes)
+            clear_sketch_selection_cache()
+            return {"closed": "paths", **result}
         if params.close_all and params.allowed_document_roots:
             if params.expected_document_path or params.expected_document_title:
                 raise ValueError("close_all with allowed_document_roots does not take a single-document guard.")

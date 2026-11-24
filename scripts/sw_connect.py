@@ -852,6 +852,50 @@ def close_all_documents_scoped(sw, allowed_document_roots, discard_unsaved_chang
     }
 
 
+_CLOSE_ORDER = {".slddrw": 0, ".sldasm": 1}
+
+
+def close_documents_by_paths(sw, paths, discard_unsaved_changes=False):
+    """
+    只关闭列出的文档，其余打开的文档不动。
+
+    拒绝条件（任何关闭之前）：列表为空、含相对路径或重复；任一列出的文档没有打开；
+    列出的文档有未保存修改且 discard_unsaved_changes 为 False。关闭顺序：工程图、
+    装配体、零件（被打开装配体引用的零件 CloseDoc 后仍会作为隐藏文档留在进程里）。
+    关闭后回读：列出的文档仍在进程中则 status=incomplete 并列出。
+    """
+    requested = [str(path) for path in paths or [] if str(path).strip()]
+    if not requested:
+        raise ValueError("paths must list at least one absolute document path")
+    if any(not os.path.isabs(path) for path in requested):
+        raise ValueError("paths must be absolute document paths")
+    keys = [os.path.normcase(os.path.abspath(path)) for path in requested]
+    if len(set(keys)) != len(keys):
+        raise ValueError("paths contain duplicates")
+    rows = list_open_document_rows(sw)
+    by_key = {os.path.normcase(os.path.abspath(row["path"])): row for row in rows if row["path"]}
+    missing = [path for path, key in zip(requested, keys) if key not in by_key]
+    if missing:
+        raise ValueError(f"Documents are not open in this process: {missing}")
+    targets = [by_key[key] for key in keys]
+    dirty = [row["path"] for row in targets if row["needs_save"]]
+    if dirty and not discard_unsaved_changes:
+        raise ValueError("Listed documents have unsaved changes; save them first or pass "
+                         f"discard_unsaved_changes=True: {dirty}")
+    ordered = sorted(targets, key=lambda row: _CLOSE_ORDER.get(os.path.splitext(row["path"])[1].casefold(), 2))
+    for row in ordered:
+        get_com_member(sw, "CloseDoc", row["title"])
+    after = {os.path.normcase(os.path.abspath(row["path"])) for row in list_open_document_rows(sw) if row["path"]}
+    still_open = [row["path"] for row in ordered if os.path.normcase(os.path.abspath(row["path"])) in after]
+    return {
+        "status": "incomplete" if still_open else "ok",
+        "closed_paths": [row["path"] for row in ordered if row["path"] not in still_open],
+        "still_open": still_open,
+        "discarded_paths": dirty,
+        "untouched_count": len(rows) - len(targets),
+    }
+
+
 def _find_new_document(sw, preexisting_titles):
     """
     在新建文档后定位真正的新文档。
