@@ -108,6 +108,12 @@ class ReplaceTextOp(TextMatch):
     new_text: str = Field(min_length=1, max_length=2000)
 
 
+class ReplaceDimensionTextOp(TextMatch):
+    """显示尺寸的文字：match 对比显示文字（<DIM> 代入数值）或数值本身（"149,95" 与 149.95 mm 相等）。"""
+    new_text: str = Field(min_length=1, max_length=200)
+    underline: bool = False  # 不按比例的尺寸（ГОСТ 2.307）：文字加下划线
+
+
 class DeleteInBoxOp(Strict):
     box_mm: tuple[float, float, float, float]
     notes: bool = True
@@ -142,6 +148,7 @@ class SheetEdit(Strict):
     delete_in_box: list[DeleteInBoxOp] = Field(default_factory=list, max_length=50)
     delete_notes: list[TextMatch] = Field(default_factory=list, max_length=200)
     replace_text: list[ReplaceTextOp] = Field(default_factory=list, max_length=500)
+    replace_dimension_text: list[ReplaceDimensionTextOp] = Field(default_factory=list, max_length=100)
     lines: list[LineOp] = Field(default_factory=list, max_length=3000)
     polylines: list[PolylineOp] = Field(default_factory=list, max_length=500)
     circles: list[CircleOp] = Field(default_factory=list, max_length=1000)
@@ -308,6 +315,74 @@ def _note_record(note, view_name):
     return rec
 
 
+def _view_dimensions(view):
+    from scripts.sw_connect import get_com_member as get
+    out = []
+    try:
+        dd = get(view, 'GetFirstDisplayDimension5')
+    except Exception:  # noqa: BLE001
+        return out
+    while dd is not None:
+        out.append(dd)
+        dd = get(dd, 'GetNext5')
+    return out
+
+
+def _format_number(value):
+    text = f'{value:.3f}'.rstrip('0').rstrip('.')
+    return text.replace('.', ',')
+
+
+def _dimension_record(dd, view_name):
+    """显示尺寸：各部分文字、数值（mm）、替代值、显示文字、位置、图层。"""
+    from scripts.sw_connect import get_com_member as get
+    rec = {'view': view_name}
+    for key, part in (('text', 0), ('prefix', 1), ('suffix', 2), ('above', 3), ('below', 4)):
+        try:
+            rec[key] = str(dd.GetText(part) or '')
+        except Exception:  # noqa: BLE001
+            pass
+    value = None
+    try:
+        dim = dd.GetDimension2(0)
+        rec['name'] = str(get(dim, 'FullName') or '')
+        value = float(get(dim, 'SystemValue')) * 1000.0
+        rec['value_mm'] = round(value, 4)
+    except Exception as exc:  # noqa: BLE001
+        rec['value_error'] = str(exc)
+    try:
+        if bool(dd.GetOverride()):
+            rec['override_value'] = float(dd.GetOverrideValue())
+    except Exception:  # noqa: BLE001
+        pass
+    shown = rec.get('override_value', value)
+    number = _format_number(shown) if shown is not None else ''
+    rec['display'] = ' '.join(x for x in (rec.get('prefix', ''), rec.get('text', '<DIM>').replace('<DIM>', number),
+                                          rec.get('suffix', '')) if x).strip()
+    try:
+        ann = get(dd, 'GetAnnotation')
+        pos = list(get(ann, 'GetPosition') or [])
+        rec['position_mm'] = [_mm(pos[0]), _mm(pos[1])] if len(pos) >= 2 else None
+        rec['layer'] = str(get(ann, 'Layer') or '')
+    except Exception as exc:  # noqa: BLE001
+        rec['position_error'] = str(exc)
+    return rec
+
+
+def dimension_matches(rec, op):
+    """显示文字匹配，或 match 为数字时与数值相差 < 0.005 mm。"""
+    shown = normalize_text(rec.get('display', ''))
+    want = normalize_text(op.match)
+    if (want in shown) if op.contains else (shown == want):
+        return True
+    try:
+        number = float(op.match.replace(',', '.').strip())
+    except ValueError:
+        return False
+    value = rec.get('override_value', rec.get('value_mm'))
+    return value is not None and abs(float(value) - number) < 0.005
+
+
 def _point_mm(p):
     from scripts.sw_connect import get_com_member as get
     return (_mm(get(p, 'X')), _mm(get(p, 'Y')))
@@ -396,6 +471,15 @@ def inspect_2d(draw, output_path, sheet=None, max_segments_per_sheet=20000):
                     pass
                 rec['views'].append(vrec)
                 rec['notes'].extend(_note_record(n, vname) for n in _view_notes(v))
+                rec.setdefault('dimensions', []).extend(_dimension_record(d, vname) for d in _view_dimensions(v))
+                try:
+                    counts = {}
+                    for ann in list(get(v, 'GetAnnotations') or []):
+                        kind = int(get(ann, 'GetType'))
+                        counts[kind] = counts.get(kind, 0) + 1
+                    vrec['annotation_types'] = {str(k): n for k, n in sorted(counts.items())}
+                except Exception:  # noqa: BLE001
+                    pass
                 segs = _sheet_segments(v)
                 vrec['segment_count'] = len(segs)
                 for seg in segs[:max_segments_per_sheet]:
@@ -415,7 +499,8 @@ def inspect_2d(draw, output_path, sheet=None, max_segments_per_sheet=20000):
     summary = {'status': 'inspected', 'output_path': str(out), 'sheet_names': names,
                'blocks': len(report['blocks']),
                'sheets': [{'name': s['name'], 'size_mm': s['size_mm'], 'views': len(s['views']),
-                           'notes': len(s['notes']), 'segment_types': s['segment_types'],
+                           'notes': len(s['notes']), 'dimensions': len(s.get('dimensions', [])),
+                           'segment_types': s['segment_types'],
                            'segments_truncated': s.get('segments_truncated', 0)} for s in report['sheets']]}
     return summary
 
@@ -496,8 +581,18 @@ def _resolve(draw, sheet_edit):
         notes.extend(_view_notes(v))
     texts = [str(get(n, 'GetText') or '') for n in notes]
     positions = [_note_position(n) for n in notes]
-    plan = {'sheet': sheet_edit.sheet, 'notes_on_sheet': len(notes), 'replace_text': [], 'delete_notes': [], 'delete_in_box': []}
+    plan = {'sheet': sheet_edit.sheet, 'notes_on_sheet': len(notes), 'replace_text': [], 'delete_notes': [], 'delete_in_box': [],
+            'replace_dimension_text': []}
     problems = []
+    if sheet_edit.replace_dimension_text:
+        dims = [(d, _dimension_record(d, str(get(v, 'GetName2')))) for v in _views(draw) for d in _view_dimensions(v)]
+        plan['dimensions_on_sheet'] = len(dims)
+        for op in sheet_edit.replace_dimension_text:
+            hits = [r for _d, r in dims if dimension_matches(r, op) and note_position_in_box(r.get('position_mm'), op)]
+            plan['replace_dimension_text'].append({'match': op.match, 'box_mm': op.box_mm, 'found': len(hits),
+                                                   'expected': op.expected_count, 'hits': hits[:10]})
+            if len(hits) != op.expected_count:
+                problems.append(f'replace_dimension_text {op.match!r}: found {len(hits)}, expected {op.expected_count}')
     for kind, ops in (('replace_text', sheet_edit.replace_text), ('delete_notes', sheet_edit.delete_notes)):
         for op in ops:
             hits = [i for i, t in enumerate(texts) if text_matches(t, op) and note_position_in_box(positions[i], op)]
@@ -514,6 +609,16 @@ def _resolve(draw, sheet_edit):
         if len(n_hits) + len(s_hits) > op.max_count:
             problems.append(f'delete_in_box {op.box_mm}: {len(n_hits) + len(s_hits)} > max_count {op.max_count}')
     return notes, texts, segs, plan, problems
+
+
+def _underline_dimension(dd):
+    """尺寸文字加下划线：注释的局部文字格式 Underline=True（不用文档默认格式）。"""
+    from scripts.sw_connect import get_com_member as get
+    ann = get(dd, 'GetAnnotation')
+    fmt = ann.GetTextFormat(0)
+    fmt.Underline = True
+    if not ann.SetTextFormat(0, False, fmt):
+        raise RuntimeError('SetTextFormat(underline) failed')
 
 
 def _note_position(note):
@@ -635,6 +740,27 @@ def edit_2d(sw, draw, spec, dry_run=True):
                 ok = [bool(n.SetText(op.new_text)) for n in hits]
                 replaced.append({'match': op.match, 'replaced': sum(ok), 'new_text': op.new_text})
         res['replaced'] = replaced
+        dim_replaced = []
+        if se.replace_dimension_text:
+            dims = [(d, _dimension_record(d, str(get(v, 'GetName2')))) for v in _views(draw) for d in _view_dimensions(v)]
+            for op in se.replace_dimension_text:
+                hits = [d for d, r in dims if dimension_matches(r, op) and note_position_in_box(r.get('position_mm'), op)]
+                if len(hits) != op.expected_count:
+                    raise RuntimeError(f'replace_dimension_text {op.match!r}: found {len(hits)}, expected {op.expected_count}')
+                for d in hits:
+                    # 整段文字替换 <DIM>：显示为 new_text，数值不再参与显示。
+                    d.SetText(0, op.new_text)
+                    for part in (1, 2):
+                        d.SetText(part, '')
+                    if op.underline:
+                        _underline_dimension(d)
+                after = [_dimension_record(d, '') for d in hits]
+                bad = [a for a in after if a.get('display') != op.new_text and a.get('text') != op.new_text]
+                if bad:
+                    raise RuntimeError(f'replace_dimension_text {op.match!r}: readback {bad}')
+                dim_replaced.append({'match': op.match, 'replaced': len(hits), 'new_text': op.new_text,
+                                     'readback': [a.get('text') for a in after]})
+        res['dimension_text_replaced'] = dim_replaced
         # 绘制：图纸草图（非图框模板），不吸附。
         draw.ClearSelection2(True)
         draw.EditSheet()

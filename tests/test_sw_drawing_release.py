@@ -54,3 +54,17 @@ def test_missing_and_extra_pages_fail(tmp_path):
 def test_safe_file_part_strips_forbidden_characters():
     assert _safe_file_part('Лист 1: "схема"/A?') == "Лист 1_ _схема__A_"
     assert _safe_file_part("..") == "sheet"
+
+
+def test_dimension_match_by_display_text_or_value():
+    from scripts.sw_drawing_2d import ReplaceDimensionTextOp, dimension_matches
+    rec = {"display": "149,95", "value_mm": 149.95, "position_mm": [270.0, 377.0]}
+    assert dimension_matches(rec, ReplaceDimensionTextOp(match="149,95", new_text="172 min"))
+    assert dimension_matches({"display": "", "value_mm": 149.951}, ReplaceDimensionTextOp(match="149.95", new_text="x"))
+    assert not dimension_matches(rec, ReplaceDimensionTextOp(match="149,9", new_text="x"))
+    assert dimension_matches({"display": "R5 typ", "value_mm": 5.0}, ReplaceDimensionTextOp(match="typ", contains=True, new_text="x"))
+
+
+def test_format_number_uses_decimal_comma():
+    from scripts.sw_drawing_2d import _format_number
+    assert _format_number(149.95) == "149,95" and _format_number(172.0) == "172"
