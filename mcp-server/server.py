@@ -8569,7 +8569,7 @@ def solidworks_pack_and_go_tool(params: SolidWorksPackAndGoInput) -> str:
     """Run the native Pack and Go API into a protected output directory."""
 
     def op():
-        _sw, model = _active_model_required(params)
+        sw, model = _active_model_required(params)
         result = pack_and_go(
             model,
             params.output_dir,
@@ -8581,6 +8581,7 @@ def solidworks_pack_and_go_tool(params: SolidWorksPackAndGoInput) -> str:
             overwrite=params.overwrite,
             fallback_policy=params.fallback_policy,
             allow_existing_files=params.allow_existing_files,
+            sw=sw,
         )
         result["document"] = _model_summary(model)
         return result

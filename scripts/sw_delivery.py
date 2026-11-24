@@ -850,6 +850,67 @@ def _pywin32_pack_and_go(
     }
 
 
+def _run_pia_pack_script(payload: dict[str, Any]) -> dict[str, Any]:
+    """@brief 通过 PowerShell 加载已安装的 SolidWorks PIA 执行 sw_pack_native.cs。"""
+    import base64
+    import subprocess
+    from scripts.cad_installation import discover_installation
+
+    install = Path(discover_installation("solidworks")["executable"]).parent
+    interop = next((p for p in (install / "api/redist", install) if (p / "SolidWorks.Interop.sldworks.dll").is_file()), None)
+    if interop is None:
+        raise FileNotFoundError("Installed SOLIDWORKS PIA not found")
+    encoded = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+    script = Path(__file__).with_name("sw_pack_native.ps1")
+    cmd = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script),
+           "-InputBase64", encoded, "-InteropRoot", str(interop)]
+    proc = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=600,
+                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    if proc.returncode:
+        raise RuntimeError((proc.stderr.strip() or proc.stdout.strip())[-2000:])
+    return json.loads(proc.stdout.lstrip("\ufeff"))
+
+
+def _pia_pack_and_go(
+    sw,
+    source_path: str,
+    target: Path,
+    existing_files: dict[str, tuple[int, int] | None],
+    *,
+    include_drawings: bool,
+    include_simulation_results: bool,
+    include_toolbox_components: bool,
+    include_suppressed: bool,
+    flatten: bool,
+    runner=None,
+) -> dict[str, Any]:
+    """@brief PIA 早绑定的原生 Pack and Go：按显式 PID 绑定同一实例，走 vtable 取得 IPackAndGo。"""
+    pid = int(get_com_member(sw, "GetProcessID"))
+    payload = {
+        "process_id": pid,
+        "source": str(Path(source_path).resolve()),
+        "target": str(target),
+        "include_drawings": bool(include_drawings),
+        "include_simulation_results": bool(include_simulation_results),
+        "include_toolbox_components": bool(include_toolbox_components),
+        "include_suppressed": bool(include_suppressed),
+        "flatten": bool(flatten),
+    }
+    report = (runner or _run_pia_pack_script)(payload)
+    if int(report.get("process_id", -1)) != pid:
+        raise RuntimeError(f"PIA Pack and Go 回报的 PID 不一致: {report.get('process_id')} != {pid}")
+    outputs = _collect_new_outputs(target, existing_files)
+    return {
+        "backend": "csharp_pia",
+        "process_id": pid,
+        "document_count": int(report.get("document_count") or 0),
+        "status_codes": [int(code) for code in report.get("status_codes") or []],
+        "outputs": outputs,
+        "produced_count": len(outputs),
+        "native_names": list(report.get("names") or []),
+    }
+
+
 def _comtypes_module():
     """@brief 加载 SolidWorks comtypes 早绑定模块。"""
     import comtypes.client
@@ -1162,6 +1223,8 @@ def pack_and_go(
     overwrite: bool = False,
     fallback_policy: str = "stage_dependencies",
     allow_existing_files: bool = False,
+    sw=None,
+    pia_runner=None,
 ) -> dict[str, Any]:
     """执行原生 Pack and Go，并按策略处理不同版本的依赖枚举缺失。
 
@@ -1213,18 +1276,38 @@ def pack_and_go(
         )
     except Exception as exc:
         fallback_errors.append(f"pywin32: {exc}")
+        pia_result = None
+        if sw is not None:
+            try:
+                pia_result = _pia_pack_and_go(
+                    sw,
+                    source_path,
+                    target,
+                    existing_files,
+                    include_drawings=include_drawings,
+                    include_simulation_results=include_simulation_results,
+                    include_toolbox_components=include_toolbox_components,
+                    include_suppressed=include_suppressed,
+                    flatten=flatten,
+                    runner=pia_runner,
+                )
+            except Exception as pia_exc:
+                fallback_errors.append(f"csharp_pia: {pia_exc}")
         try:
-            result = _comtypes_pack_and_go(
-                source_path,
-                target,
-                existing_files,
-                include_drawings=include_drawings,
-                include_simulation_results=include_simulation_results,
-                include_toolbox_components=include_toolbox_components,
-                include_suppressed=include_suppressed,
-                flatten=flatten,
-                dependencies=required_dependencies,
-            )
+            if pia_result is not None:
+                result = pia_result
+            else:
+                result = _comtypes_pack_and_go(
+                    source_path,
+                    target,
+                    existing_files,
+                    include_drawings=include_drawings,
+                    include_simulation_results=include_simulation_results,
+                    include_toolbox_components=include_toolbox_components,
+                    include_suppressed=include_suppressed,
+                    flatten=flatten,
+                    dependencies=required_dependencies,
+                )
         except Exception as comtypes_exc:
             if isinstance(comtypes_exc, SolidWorksConnectionError):
                 # 超时/未知身份可能留下进行中的 CAD 操作，禁止另起暂存覆盖这次交付。

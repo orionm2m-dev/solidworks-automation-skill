@@ -683,3 +683,69 @@ def test_pack_and_go_uses_declared_byref_output_when_noarg_call_is_refused(tmp_p
     assert report["success"] is True
     assert report["backend"] == "pywin32"
     assert any(call[2] for call in model.Extension._oleobj_.calls)
+
+
+class FakeNoPackageExtension(FakeExtension):
+    """@brief 模拟 SW2026 pywin32：IDispatch 取不到 IPackAndGo。"""
+
+    def GetPackAndGo(self):
+        raise sw_delivery.pythoncom.com_error(-2147352561, "Parameter not optional", None, None)
+
+
+def _pia_runner_writing(names, pid=77, codes=(0, 0)):
+    calls = []
+
+    def runner(payload):
+        calls.append(payload)
+        target = Path(payload["target"])
+        target.mkdir(parents=True, exist_ok=True)
+        for name in names:
+            (target / name).parent.mkdir(parents=True, exist_ok=True)
+            (target / name).write_bytes(b"native")
+        return {"process_id": pid, "document_count": len(names), "names": names, "status_codes": list(codes)}
+
+    return runner, calls
+
+
+def test_pack_and_go_uses_pia_backend_when_pywin32_has_no_package(tmp_path):
+    """@brief pywin32 取不到对象时，按同一 PID 走 PIA 早绑定的原生 Pack and Go。"""
+    source, sub, leaf = _three_level_tree(tmp_path)
+    model = FakeRecordingDependencyAssembly(source, [], [sub], [leaf])
+    model.Extension = FakeNoPackageExtension(source)
+    runner, calls = _pia_runner_writing([source.name, "sub.sldasm", "leaf.sldprt"])
+    sw = SimpleNamespace(GetProcessID=lambda: 77)
+
+    report = sw_delivery.pack_and_go(model, tmp_path / "package", sw=sw, pia_runner=runner)
+
+    assert report["success"] is True and report["status"] == "pass"
+    assert report["backend"] == "csharp_pia"
+    assert report["fallback_used"] is False
+    assert calls[0]["process_id"] == 77 and calls[0]["source"] == str(source.resolve())
+    assert calls[0]["include_drawings"] is True and calls[0]["flatten"] is False
+
+
+def test_pack_and_go_rejects_pia_report_from_another_process(tmp_path):
+    """@brief PIA 回报的 PID 与绑定实例不同：不接受其结果，转入暂存回退。"""
+    source, sub, leaf = _three_level_tree(tmp_path)
+    model = FakeRecordingDependencyAssembly(source, [], [sub], [leaf])
+    model.Extension = FakeNoPackageExtension(source)
+    runner, _calls = _pia_runner_writing([source.name], pid=78)
+    sw = SimpleNamespace(GetProcessID=lambda: 77)
+
+    report = sw_delivery.pack_and_go(model, tmp_path / "package", sw=sw, pia_runner=runner)
+
+    assert report["backend"] != "csharp_pia"
+    assert any("csharp_pia" in item and "PID" in item for item in report["fallback_errors"])
+
+
+def test_pack_and_go_without_sw_skips_pia_backend(tmp_path):
+    source, sub, leaf = _three_level_tree(tmp_path)
+    model = FakeRecordingDependencyAssembly(source, [], [sub], [leaf])
+    model.Extension = FakeNoPackageExtension(source)
+
+    def runner(_payload):
+        raise AssertionError("PIA must not run without the bound application")
+
+    report = sw_delivery.pack_and_go(model, tmp_path / "package", pia_runner=runner)
+
+    assert not any("csharp_pia" in item for item in report["fallback_errors"])
