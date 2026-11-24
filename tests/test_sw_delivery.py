@@ -707,8 +707,9 @@ def _pia_runner_writing(names, pid=77, codes=(0, 0)):
     return runner, calls
 
 
-def test_pack_and_go_uses_pia_backend_when_pywin32_has_no_package(tmp_path):
+def test_pack_and_go_uses_pia_backend_when_pywin32_has_no_package(tmp_path, monkeypatch):
     """@brief pywin32 取不到对象时，按同一 PID 走 PIA 早绑定的原生 Pack and Go。"""
+    _no_comtypes(monkeypatch)
     source, sub, leaf = _three_level_tree(tmp_path)
     model = FakeRecordingDependencyAssembly(source, [], [sub], [leaf])
     model.Extension = FakeNoPackageExtension(source)
@@ -724,8 +725,17 @@ def test_pack_and_go_uses_pia_backend_when_pywin32_has_no_package(tmp_path):
     assert calls[0]["include_drawings"] is True and calls[0]["flatten"] is False
 
 
-def test_pack_and_go_rejects_pia_report_from_another_process(tmp_path):
+def _no_comtypes(monkeypatch):
+    """@brief 测试里禁止真实 comtypes 回退：它会在子进程里附着到本机正在运行的 SolidWorks。"""
+    def refuse(*_args, **_kwargs):
+        raise RuntimeError("comtypes disabled in tests")
+
+    monkeypatch.setattr(sw_delivery, "_comtypes_pack_and_go", refuse)
+
+
+def test_pack_and_go_rejects_pia_report_from_another_process(tmp_path, monkeypatch):
     """@brief PIA 回报的 PID 与绑定实例不同：不接受其结果，转入暂存回退。"""
+    _no_comtypes(monkeypatch)
     source, sub, leaf = _three_level_tree(tmp_path)
     model = FakeRecordingDependencyAssembly(source, [], [sub], [leaf])
     model.Extension = FakeNoPackageExtension(source)
@@ -738,7 +748,8 @@ def test_pack_and_go_rejects_pia_report_from_another_process(tmp_path):
     assert any("csharp_pia" in item and "PID" in item for item in report["fallback_errors"])
 
 
-def test_pack_and_go_without_sw_skips_pia_backend(tmp_path):
+def test_pack_and_go_without_sw_skips_pia_backend(tmp_path, monkeypatch):
+    _no_comtypes(monkeypatch)
     source, sub, leaf = _three_level_tree(tmp_path)
     model = FakeRecordingDependencyAssembly(source, [], [sub], [leaf])
     model.Extension = FakeNoPackageExtension(source)
