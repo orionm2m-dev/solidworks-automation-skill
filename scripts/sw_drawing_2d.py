@@ -337,7 +337,8 @@ def _dimension_record(dd, view_name):
     """显示尺寸：各部分文字、数值（mm）、替代值、显示文字、位置、图层。"""
     from scripts.sw_connect import get_com_member as get
     rec = {'view': view_name}
-    for key, part in (('text', 0), ('prefix', 1), ('suffix', 2), ('above', 3), ('below', 4)):
+    # SolidWorks 2026 实测：GetText(0) 恒为空，整段文字在 GetText(1)；SetText(0, …) 写入的正是它。
+    for key, part in (('text', 1), ('prefix', 2), ('suffix', 3), ('above', 4), ('below', 5)):
         try:
             rec[key] = str(dd.GetText(part) or '')
         except Exception:  # noqa: BLE001
@@ -357,7 +358,8 @@ def _dimension_record(dd, view_name):
         pass
     shown = rec.get('override_value', value)
     number = _format_number(shown) if shown is not None else ''
-    rec['display'] = ' '.join(x for x in (rec.get('prefix', ''), rec.get('text', '<DIM>').replace('<DIM>', number),
+    body = rec.get('text') or '<DIM>'  # 导入的 DWG 尺寸整段文字为空时显示数值
+    rec['display'] = ' '.join(x for x in (rec.get('prefix', ''), body.replace('<DIM>', number),
                                           rec.get('suffix', '')) if x).strip()
     try:
         ann = get(dd, 'GetAnnotation')
@@ -751,8 +753,6 @@ def edit_2d(sw, draw, spec, dry_run=True):
                 for d in hits:
                     # 整段文字替换 <DIM>：显示为 new_text，数值不再参与显示。
                     d.SetText(0, op.new_text)
-                    for part in (1, 2):
-                        d.SetText(part, '')
                     if op.underline:
                         try:
                             _underline_dimension(d)
