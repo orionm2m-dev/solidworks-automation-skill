@@ -119,12 +119,20 @@ def test_balloon_texts_skip_plain_notes():
     assert m._balloon_texts(view) == ["1", "2"]
 
 
-def test_new_row_index_by_grid_difference():
-    before = [["Поз.", "Наим."], ["1", "Корпус"]]
-    assert m._new_row_index(before, [["Поз.", "Наим."], ["1", "Корпус"], ["3", ""]]) == 2
-    assert m._new_row_index(before, [["", ""], ["Поз.", "Наим."], ["1", "Корпус"]]) == 0
+def test_new_row_index_by_content_even_when_rows_are_reordered():
+    hdr = ["Поз.", "Наим."]
+    before = [["2", "Корпус"], ["1", "Крышка"], hdr]
+    after = [["", ""], ["2", "Корпус"], ["1", "Крышка"], hdr]
+    assert m._new_row_index(before, after, 3) == 0
+    after = [["2", "Корпус"], ["3", ""], ["1", "Крышка"], hdr]
+    assert m._new_row_index(before, after, 3) == 1
     with pytest.raises(RuntimeError):
         m._new_row_index(before, before)
+
+
+def test_new_row_copying_the_header_is_found_away_from_the_header():
+    hdr = ["Поз.", "Наим."]
+    assert m._new_row_index([hdr], [hdr, hdr], 1) == 0
 
 
 def test_column_type_that_does_not_stick_is_reported():

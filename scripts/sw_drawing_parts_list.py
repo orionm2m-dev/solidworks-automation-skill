@@ -167,11 +167,14 @@ def _shape_columns(tann, bom, columns):
     plan = []
     for i, col in enumerate(columns):
         code = {'item': COL_ITEM, 'quantity': COL_QUANTITY, 'part_number': COL_PART_NUMBER, 'property': COL_PROPERTY}[col.source]
-        ok_type = _set_column_type(tann, i, code, col.property or '')
         ok_prop = True
         if col.source == 'property':
+            # 自定义属性列：先 SetColumnCustomProperty（SolidWorks 随之改列类型），再按需补设类型。
             bom.SetColumnCustomProperty(i, col.property)
             ok_prop = str(_call(bom, 'GetColumnCustomProperty', i) or '') == col.property
+        ok_type = _set_column_type(tann, i, code, col.property or '')
+        if col.source == 'property' and not ok_type and ok_prop:
+            ok_type = None  # 类型回读不是 204，但属性已绑定：由单元格回读判断
         ok_title = bool(tann.SetColumnTitle(i, col.title))
         width = None
         if col.width_mm:
@@ -182,61 +185,61 @@ def _shape_columns(tann, bom, columns):
     return plan
 
 
-def _new_row_index(before, after):
-    """插入一行后的新行索引：前后网格第一处不同的位置（末尾追加时为原行数）。"""
+def _new_row_index(before, after, header_row_after=None):
+    """插入一行后的新行：按内容找“之前没有”的行（插入后 SolidWorks 会重排行，按索引比对不可靠）。
+
+    新行通常是空行；表中没有数据行时它复制表头文字，此时取不在表头位置的那一行。
+    """
+    from collections import Counter
     if len(after) != len(before) + 1:
         raise RuntimeError(f'row count {len(before)} -> {len(after)} after InsertRow')
-    for i, row in enumerate(before):
-        if after[i] != row:
-            return i
-    return len(before)
+    left = Counter(tuple(r) for r in before)
+    fresh = []
+    for i, row in enumerate(after):
+        key = tuple(row)
+        if left[key]:
+            left[key] -= 1
+        else:
+            fresh.append(i)
+    if len(fresh) == 1:
+        return fresh[0]
+    candidates = [i for i in range(len(after)) if tuple(after[i]) in {tuple(after[j]) for j in fresh} and i != header_row_after]
+    empty = [i for i in candidates if not any(x.strip() for x in after[i])]
+    if len(empty) == 1:
+        return empty[0]
+    if len(candidates) == 1:
+        return candidates[0]
+    raise RuntimeError(f'cannot identify the inserted row: before={before} after={after}')
 
 
-def _call(obj, name, *args):
-    from scripts.sw_connect import get_com_member as get
-    return get(obj, name, *args)
-
-
-def _set_column_type(tann, index, code, prop):
-    """设列类型并回读：SetColumnType3 → SetColumnType2 → SetColumnType，以 GetColumnType2 为准。"""
-    def current():
-        for name, args in (('GetColumnType2', (index, False)), ('GetColumnType', (index,))):
-            try:
-                return int(_call(tann, name, *args))
-            except Exception:  # noqa: BLE001
-                continue
-        return None
-
-    if current() == code and code != COL_PROPERTY:
-        return True
-    for name, args in (('SetColumnType3', (index, code, False, prop)), ('SetColumnType2', (index, code, False)),
-                       ('SetColumnType', (index, code))):
-        try:
-            _call(tann, name, *args)
-        except Exception:  # noqa: BLE001
-            continue
-        if current() == code:
-            return True
-    return False
+def _data_rows(grid, header_row):
+    from collections import Counter
+    return Counter(tuple(r) for i, r in enumerate(grid) if i != header_row)
 
 
 def _add_manual_rows(tann, spec, header_row):
-    """在表尾（逻辑最后一行之后）插入手工行，按列标题填写；返回新行索引。"""
-    from scripts.sw_connect import get_com_member as get
+    """插入手工行，按列标题整行写入；之后核对原有的组件行一行不少、内容不变。"""
     from scripts.sw_drawing_2d import _set_table_text
     titles = [c.title for c in spec.columns]
     added = []
+    original = _data_rows(_grid(tann), header_row)
     for row in spec.manual_rows:
         before = _grid(tann)
         if not tann.InsertRow(INSERT_LAST, len(before) - 1):
             raise RuntimeError('InsertRow failed')
-        r_new = _new_row_index(before, _grid(tann))
-        # 新行会复制相邻行的文字（含表头），先按规格整行写入，未给出的列写空。
+        after = _grid(tann)
+        r_new = _new_row_index(before, after, _header_row(after, titles))
+        # 新行可能复制相邻行（含表头）的文字：整行写入，未给出的列写空。
         for index, title in enumerate(titles):
             _set_table_text(tann, r_new, index, str(row.get(title, '')))
         added.append(r_new)
-        if _header_row(_grid(tann), titles) is None:
+        header_row = _header_row(_grid(tann), titles)
+        if header_row is None:
             raise RuntimeError(f'header row lost after inserting a manual row: {_grid(tann)}')
+    final = _data_rows(_grid(tann), header_row)
+    missing = original - final
+    if missing:
+        raise RuntimeError(f'component rows changed while adding manual rows: {sorted(missing)}')
     return added
 
 
@@ -292,7 +295,7 @@ def insert_parts_list(sw, draw, spec, dry_run=True):
     err, warn = _byref_int(), _byref_int()
     if not draw.Save3(1, err, warn) and err.value:
         raise RuntimeError(f'Save failed: {err.value}, {warn.value}')
-    problems = [f"column {c['title']}: type not set" for c in columns if not c['type_set']]
+    problems = [f"column {c['title']}: type not set" for c in columns if c['type_set'] is False]
     problems += [f"column {c['title']}: property not set" for c in columns if not c['property_set']]
     if header_style != wanted:
         problems.append(f'header position {header_style}, wanted {wanted}')
