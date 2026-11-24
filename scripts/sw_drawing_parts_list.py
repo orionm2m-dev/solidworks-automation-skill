@@ -330,17 +330,36 @@ def insert_parts_list(sw, draw, spec, dry_run=True):
     draw.ForceRebuild3(False)
     grid = _grid(tann)
     header_row = _header_row(grid, titles)
+    # 重建后按内容核对手工行（行序会变）；文字没留住就不保存。
+    manual_found = set()
+    for row in spec.manual_rows:
+        want = {titles.index(t): str(v) for t, v in row.items()}
+        hits = [r for r in range(len(grid)) if r != header_row and r not in manual_found
+                and all(grid[r][c].strip() == v.strip() for c, v in want.items())]
+        if not hits:
+            raise RuntimeError(f'manual row {row} not kept after rebuild; the drawing is NOT saved, close it without '
+                               f'saving or undo; table={grid}')
+        manual_found.add(hits[0])
     err, warn = _byref_int(), _byref_int()
     if not draw.Save3(1, err, warn) and err.value:
         raise RuntimeError(f'Save failed: {err.value}, {warn.value}')
-    problems = [f"column {c['title']}: type not set" for c in columns if c['type_set'] is False]
-    problems += [f"column {c['title']}: property not set" for c in columns if not c['property_set']]
+    components = [r for r in range(len(grid)) if r != header_row and r not in manual_found]
+    problems, warnings = [], []
+    for c in columns:
+        if c['type_set'] is not False and c['property_set']:
+            continue
+        filled = any(grid[r][c['index']].strip() for r in components)
+        text = f"column {c['title']}: column type or property not confirmed by SolidWorks"
+        if filled:
+            warnings.append(text + ' (component cells are filled; check them)')
+        else:
+            problems.append(text + ' and its component cells are empty')
     if header_style != wanted:
         problems.append(f'header position {header_style}, wanted {wanted}')
-    data_rows = [r for r in range(len(grid)) if r != header_row and r not in manual]
-    if not data_rows:
+    if not components:
         problems.append('no component rows in the BOM')
-    return {'status': 'inserted' if not problems else 'inserted_with_problems', 'problems': problems,
+    manual = sorted(manual_found)
+    return {'status': 'inserted' if not problems else 'inserted_with_problems', 'problems': problems, 'warnings': warnings,
             **plan, 'configuration': configuration, 'header_style': header_style, 'column_setup': columns, 'header_row': header_row,
             'manual_row_indices': manual, 'cells': grid, 'manual_review_required': True}
 
