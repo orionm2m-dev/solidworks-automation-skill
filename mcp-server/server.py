@@ -7043,6 +7043,37 @@ def _run_feature_with_edges(params, edge_spec, create_feature):
     return payload
 
 
+class SolidWorksQueryFacesInput(ActiveDocumentInput):
+    """Faces of the active part whose bounding box meets a query box."""
+
+    box_mm: List[float] = Field(..., min_length=6, max_length=6, description="[xmin, ymin, zmin, xmax, ymax, zmax] in part coordinates, mm.")
+    mode: Literal["intersects", "inside"] = Field(default="intersects", description="intersects: face box overlaps the query box; inside: face box lies within it.")
+    kinds: Optional[List[Literal["plane", "cylinder", "cone", "sphere", "torus", "other"]]] = Field(default=None, description="Only these surface types; default all.")
+    limit: int = Field(default=100, ge=1, le=2000)
+    tolerance_mm: float = Field(default=0.01, ge=0.0, le=10.0)
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+
+@mcp.tool(
+    name="solidworks_query_faces",
+    title="Query Part Faces In A Box",
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+)
+def solidworks_query_faces(params: SolidWorksQueryFacesInput) -> str:
+    """List faces in a region of the active part: surface type, plane normal, axis and radius of cylinders/cones,
+    sphere centre and radius, area and bounding box (mm). Read-only. For edges in a box use solidworks_list_edges
+    with endpoint_bounds_mm."""
+
+    def op():
+        from scripts.sw_face_query import query_faces
+        _sw, model = _active_part_required(params)
+        result = query_faces(model, params.box_mm, params.mode, params.kinds, params.limit, params.tolerance_mm)
+        result["document"] = _model_summary(model)
+        return result
+
+    return _run_locked(op, params.response_format)
+
+
 @mcp.tool(
     name="solidworks_list_edges",
     title="List SolidWorks Model Edges",
