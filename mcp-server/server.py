@@ -7246,6 +7246,88 @@ def solidworks_sketch_and_extrude(params: SolidWorksSketchOnPlaneInput) -> str:
     return _run_locked(op, params.response_format)
 
 
+class SolidWorksSketchAndRevolveInput(ActiveDocumentInput):
+    """Closed line/arc profile plus a centerline in one sketch, revolved as a boss or cut."""
+
+    plane_name: str = Field(default="Front Plane", description="Sketch plane, English or Chinese name.")
+    profile_points_mm: List[List[float]] = Field(..., min_length=3, max_length=500,
+        description="Closed loop [x, y] or [x, y, bulge] in sketch coordinates, mm; bulge = tan(arc angle / 4), >0 counter-clockwise.")
+    axis: Literal["sketch_x", "sketch_y", "points"] = Field(default="sketch_y",
+        description="Revolve axis: the sketch X or Y axis through the sketch origin, or the line through axis_points_mm.")
+    axis_points_mm: Optional[List[List[float]]] = Field(default=None, min_length=2, max_length=2,
+        description="Two points [x, y] (mm) of the axis line, only with axis='points'.")
+    angle_deg: float = Field(default=360.0, gt=0.0, le=360.0)
+    cut: bool = Field(default=False, description="Revolved cut instead of a boss.")
+    merge: bool = Field(default=True, description="Boss only: False keeps the result as a separate solid body.")
+    color: Optional[str] = Field(default=None, min_length=1, description="Optional appearance: preset name or #RRGGBB.")
+    feature_name: Optional[str] = Field(default=None, max_length=120)
+    response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+    @model_validator(mode="after")
+    def _axis_points(self):
+        if (self.axis == "points") != (self.axis_points_mm is not None):
+            raise ValueError("axis_points_mm is required exactly when axis='points'")
+        if self.axis_points_mm is not None and any(len(p) != 2 or not all(math.isfinite(v) for v in p) for p in self.axis_points_mm):
+            raise ValueError("axis_points_mm must be two [x, y] points with finite numbers")
+        return self
+
+
+@mcp.tool(
+    name="solidworks_sketch_and_revolve",
+    title="Sketch a Profile and Revolve It",
+    annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+)
+def solidworks_sketch_and_revolve(params: SolidWorksSketchAndRevolveInput) -> str:
+    """Draw a closed line/arc profile and a centerline on a plane and revolve the profile about it (boss or cut).
+
+    The profile is checked before drawing: it must lie on one side of the axis (touching the axis is allowed).
+    """
+
+    def op():
+        from scripts.sw_revolve import axis_segment, check_profile_side, revolve_feature
+        sw, model = _active_part_required(params)
+        profile = _profile_vertices_m(params.profile_points_mm)
+        axis_points = [(p[0] / 1000.0, p[1] / 1000.0) for p in params.axis_points_mm] if params.axis_points_mm else None
+        p1, p2 = axis_segment(params.axis, profile, axis_points)
+        check_profile_side(profile, p1, p2)
+        with sketch(model, params.plane_name) as sketch_ref, _exact_sketch_entry(model):
+            sketch_profile(model, profile)
+            centerline = model.SketchManager.CreateCenterLine(p1[0], p1[1], 0.0, p2[0], p2[1], 0.0)
+            if centerline is None:
+                raise RuntimeError("CreateCenterLine failed")
+        feature = revolve_feature(model, sketch_ref, math.radians(params.angle_deg), cut=params.cut, merge=params.merge)
+        if feature is None:
+            return {
+                "status": "error",
+                "feature_created": False,
+                "sketch_name": str(sketch_ref),
+                "suggestion": "The sketch was created but the revolve did not build. Check that the profile is closed, "
+                              "does not self-intersect and, for a cut, that it overlaps existing material.",
+            }
+        if params.feature_name:
+            feature.Name = params.feature_name
+        result = {
+            "status": "ok",
+            "feature_created": True,
+            "feature_name": get_com_member(feature, "Name"),
+            "sketch_name": str(sketch_ref),
+            "operation": "revolve cut" if params.cut else "revolve boss",
+            "angle_deg": params.angle_deg,
+            "axis": params.axis,
+            "axis_mm": [[round(p1[0] * 1000.0, 6), round(p1[1] * 1000.0, 6)], [round(p2[0] * 1000.0, 6), round(p2[1] * 1000.0, 6)]],
+            "document": _model_summary(model),
+        }
+        if not params.merge and not params.cut:
+            result["merged"] = False
+        if params.color:
+            result["color"] = params.color
+            result["appearance_ok"] = bool(set_feature_appearance(feature, params.color))
+        result["feature_box_mm"] = _feature_box_mm(feature)
+        return result
+
+    return _run_locked(op, params.response_format)
+
+
 @mcp.tool(
     name="solidworks_revolve",
     title="Revolve a Sketch Profile",
