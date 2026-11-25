@@ -348,6 +348,44 @@ def inspect_interference(asm_model, treat_subassemblies_as_components=False,
     return result
 
 
+def summarize_interference(result, max_items=50, max_groups=50):
+    """
+    压缩干涉结果：按体积排序只保留前 max_items 条，并按组件对分组汇总。
+
+    参数:
+        result: inspect_interference 的返回值（不修改原对象）。
+        max_items: 回复中保留的干涉条目数；完整列表由调用方另行写文件。
+        max_groups: 回复中保留的组件对分组数。
+
+    返回:
+        新 dict：items 为按体积降序的前 max_items 条，items_total / items_truncated
+        给出总数与截断数；groups 为按组件对（名称排序）汇总的数量、总体积与最大体积。
+    """
+    summary = dict(result)
+    items = list(result.get("items") or [])
+    ordered = sorted(items, key=lambda item: -(item.get("volume_mm3") or 0.0))
+    groups = {}
+    for item in items:
+        names = tuple(sorted(str(c.get("name")) for c in item.get("components") or []))
+        group = groups.setdefault(names, {"components": list(names), "count": 0, "total_volume_mm3": 0.0, "max_volume_mm3": 0.0})
+        volume = float(item.get("volume_mm3") or 0.0)
+        group["count"] += 1
+        group["total_volume_mm3"] += volume
+        group["max_volume_mm3"] = max(group["max_volume_mm3"], volume)
+    group_rows = sorted(groups.values(), key=lambda g: (-g["total_volume_mm3"], -g["count"], g["components"]))
+    for group in group_rows:
+        group["total_volume_mm3"] = _round(group["total_volume_mm3"], 6)
+        group["max_volume_mm3"] = _round(group["max_volume_mm3"], 6)
+    keep = max(int(max_items), 0)
+    summary["items"] = ordered[:keep]
+    summary["items_total"] = len(items)
+    summary["items_truncated"] = max(len(items) - keep, 0)
+    summary["groups"] = group_rows[:max(int(max_groups), 0)]
+    summary["groups_total"] = len(group_rows)
+    summary["groups_truncated"] = max(len(group_rows) - int(max_groups), 0)
+    return summary
+
+
 def check_tolerance_fit(shaft_mm, hole_mm, nominal_mm=None, fit="clearance"):
     """
     计算基本尺寸的配合间隙并给出 IT 公差等级参考。

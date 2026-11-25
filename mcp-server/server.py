@@ -3819,7 +3819,22 @@ class SolidWorksInterferenceInput(ActiveDocumentInput):
         default=False,
         description="Off by default: mating faces of bolted joints are coincident and would flood the report.",
     )
+    output_path: Optional[str] = Field(default=None,
+        description="Absolute .json path for the full list of interferences (never overwritten); the reply keeps a summary.")
+    max_items: int = Field(default=50, ge=0, le=5000,
+        description="Interferences kept in the reply, largest volume first; the rest are counted in items_truncated.")
+    max_groups: int = Field(default=50, ge=0, le=5000, description="Component-pair groups kept in the reply.")
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
+
+    @field_validator("output_path")
+    @classmethod
+    def _output(cls, value):
+        if value is None:
+            return value
+        value = _absolute_with_suffix(value, {".json"}, "output_path")
+        if Path(value).exists():
+            raise ValueError(f"output_path already exists: {value}")
+        return value
 
 
 class SolidWorksUnitsInput(ActiveDocumentInput):
@@ -7523,7 +7538,14 @@ def solidworks_interference_check(params: SolidWorksInterferenceInput = SolidWor
             "Interference results require engineering review: suppression state, press fits, and "
             "weldments all affect interpretation."
         )
-        return result
+        if params.output_path:
+            out = Path(params.output_path)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            with open(out, "x", encoding="utf-8") as handle:
+                json.dump(result, handle, ensure_ascii=False, indent=1)
+            result["output_path"] = str(out)
+        from scripts.sw_measure import summarize_interference
+        return summarize_interference(result, params.max_items, params.max_groups)
 
     return _run_locked(op, params.response_format)
 
