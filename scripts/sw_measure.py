@@ -245,6 +245,41 @@ def collect_bounding_box(model):
     return result
 
 
+def _interference_location(item):
+    """
+    干涉体的位置：GetInterferenceBody 的包围盒与中心（mm，装配体坐标），质心，以及是否为紧固件干涉。
+    任何一步失败只记录 location_error，不影响干涉数量与体积。
+    """
+    out = {}
+    try:
+        out["is_fastener"] = bool(get_com_member(item, "IsFastener"))
+    except Exception:
+        pass
+    try:
+        body = get_com_member(item, "GetInterferenceBody")
+    except Exception as exc:
+        out["location_error"] = f"GetInterferenceBody: {exc}"
+        return out
+    if body is None:
+        out["location_error"] = "GetInterferenceBody returned nothing"
+        return out
+    try:
+        box = [float(v) for v in list(get_com_member(body, "GetBodyBox"))[:6]]
+        if len(box) != 6 or not all(math.isfinite(v) for v in box):
+            raise ValueError(f"bad box {box}")
+        out["box_mm"] = [_round(v * _MM_PER_M, 3) for v in box]
+        out["center_mm"] = [_round((box[i] + box[i + 3]) / 2 * _MM_PER_M, 3) for i in range(3)]
+    except Exception as exc:
+        out["location_error"] = f"GetBodyBox: {exc}"
+    try:
+        props = [float(v) for v in list(get_com_member(body, "GetMassProperties", 1.0))[:3]]
+        if len(props) == 3 and all(math.isfinite(v) for v in props):
+            out["centroid_mm"] = [_round(v * _MM_PER_M, 3) for v in props]
+    except Exception:
+        pass
+    return out
+
+
 def inspect_interference(asm_model, treat_subassemblies_as_components=False,
                          treat_coincidence_as_interference=False, include_volume=True):
     """
@@ -318,6 +353,7 @@ def inspect_interference(asm_model, treat_subassemblies_as_components=False,
                  "path": get_com_member(component, "GetPathName")}
                 for component in (components if components is not None else [])
             ]
+            entry.update(_interference_location(item))
             items.append(entry)
     except Exception as exc:
         result["errors"].append(f"配置、计算或读取干涉失败: {exc}")
@@ -369,6 +405,12 @@ def summarize_interference(result, max_items=50, max_groups=50):
         names = tuple(sorted(str(c.get("name")) for c in item.get("components") or []))
         group = groups.setdefault(names, {"components": list(names), "count": 0, "total_volume_mm3": 0.0, "max_volume_mm3": 0.0})
         volume = float(item.get("volume_mm3") or 0.0)
+        box = item.get("box_mm")
+        if box and len(box) == 6:
+            prev = group.get("box_mm")
+            group["box_mm"] = list(box) if prev is None else [min(prev[i], box[i]) for i in range(3)] + [max(prev[i], box[i]) for i in range(3, 6)]
+        if item.get("is_fastener"):
+            group["fastener_count"] = group.get("fastener_count", 0) + 1
         group["count"] += 1
         group["total_volume_mm3"] += volume
         group["max_volume_mm3"] = max(group["max_volume_mm3"], volume)
