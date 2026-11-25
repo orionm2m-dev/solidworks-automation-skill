@@ -3944,6 +3944,8 @@ class SolidWorksAddComponentInput(ActiveDocumentInput):
     z_mm: float = Field(default=0.0, description="Insertion Z coordinate in mm.")
     config_name: str = Field(default="", description="Optional component configuration name.")
     fix_component: bool = Field(default=False, description="Fix the inserted component in the assembly.")
+    insertion_point: Literal["origin", "bbox_center"] = Field(default="origin",
+        description="origin: the component's origin lands exactly at x/y/z (rotation kept). bbox_center: native AddComponent behaviour, x/y/z is the centre of the component's bounding box.")
     response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Return format.")
 
     @field_validator("path")
@@ -7735,6 +7737,7 @@ def solidworks_add_component(params: SolidWorksAddComponentInput) -> str:
             mm(params.z_mm),
             config_name=params.config_name,
             sw=sw,
+            insertion_point=params.insertion_point,
         )
         if component is None:
             raise RuntimeError(f"AddComponent4 failed: {params.path}")
@@ -7742,9 +7745,17 @@ def solidworks_add_component(params: SolidWorksAddComponentInput) -> str:
         fixed = None
         if params.fix_component:
             fixed = _set_component_fixed(asm, component, fixed=True)
+        # AddComponent 或回退打开零件后，活动窗口可能变成零件或另一装配体；切回并核对。
+        from scripts.sw_assembly import ensure_active_document
+        activation = ensure_active_document(sw, asm)
+        transform = component.Transform2
+        origin = [round(float(v) * 1000.0, 6) for v in list(transform.ArrayData)[9:12]] if transform is not None else None
         return {
             "status": "ok",
             "component": _component_summary(component),
+            "insertion_point": params.insertion_point,
+            "origin_mm": origin,
+            "active_document_restored": activation["reactivated"],
             "fixed": fixed,
             "component_count": len(get_components(asm)),
             "document": _model_summary(asm),

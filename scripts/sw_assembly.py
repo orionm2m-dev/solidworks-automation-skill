@@ -130,7 +130,7 @@ def _add_component4(asm_model, component_path, config_name, x, y, z):
     )
 
 
-def add_component(asm_model, part_path, x=0, y=0, z=0, config_name="", sw=None):
+def add_component(asm_model, part_path, x=0, y=0, z=0, config_name="", sw=None, insertion_point="bbox_center"):
     """
     向装配体添加零部件
 
@@ -140,6 +140,8 @@ def add_component(asm_model, part_path, x=0, y=0, z=0, config_name="", sw=None):
         x, y, z: 放置位置（米）
         config_name: 配置名称，空字符串使用默认配置
         sw: 可选 SolidWorks 应用对象；用于 AddComponent 失败后自动打开零件并切回装配体。
+        insertion_point: "bbox_center"（AddComponent 原生语义：x/y/z 是组件包围盒中心）或
+            "origin"（插入后平移，使组件原点正好落在 x/y/z，姿态不变）。
 
     返回:
         IComponent2 对象
@@ -189,12 +191,75 @@ def add_component(asm_model, part_path, x=0, y=0, z=0, config_name="", sw=None):
         else:
             errors.append("GetActiveObject(SldWorks.Application): 返回 None")
 
+    if component and insertion_point == "origin":
+        place_component_origin(component, x, y, z, sw=sw)
+    elif insertion_point not in ("origin", "bbox_center"):
+        raise ValueError(f"insertion_point 无效: {insertion_point}")
+
     if component:
         print(f"已添加组件: {component_path}")
     else:
         detail = "；".join(errors) if errors else "AddComponent5/AddComponent4 均返回 None"
         print(f"添加组件失败: {component_path} ({detail})")
     return component
+
+
+def place_component_origin(component, x, y, z, sw=None, tolerance=1e-9):
+    """
+    @brief 平移组件，使其原点落在装配体坐标 (x, y, z)（米），旋转与比例不变。
+    @details AddComponent4/5 的 x/y/z 是组件包围盒中心，不是组件原点。
+    @return dict：moved、origin_before_mm、origin_mm、method。
+    """
+    transform = component.Transform2
+    if transform is None:
+        raise RuntimeError("组件没有可用 Transform2")
+    data = [float(v) for v in transform.ArrayData]
+    if len(data) < 13:
+        raise RuntimeError(f"Transform2.ArrayData 长度异常: {len(data)}")
+    data = (data + [0.0] * 16)[:16]
+    target = [float(x), float(y), float(z)]
+    before = data[9:12]
+    result = {"moved": False, "origin_before_mm": [round(v * 1000.0, 6) for v in before],
+              "origin_mm": [round(v * 1000.0, 6) for v in target], "method": None}
+    if max(abs(a - b) for a, b in zip(before, target)) <= tolerance:
+        return result
+    data[9:12] = target
+    applied = apply_component_rigid_transform(component, tuple(data), sw=sw)
+    result.update(moved=True, method=applied["method"],
+                  origin_mm=[round(v * 1000.0, 6) for v in applied["array_data"][9:12]])
+    return result
+
+
+def _same_document(doc, path, title):
+    if doc is None:
+        return False
+    doc_path = str(safe_get_com_member(doc, "GetPathName") or "")
+    if path:
+        return os.path.normcase(os.path.abspath(doc_path)) == os.path.normcase(os.path.abspath(path)) if doc_path else False
+    return str(safe_get_com_member(doc, "GetTitle") or "") == title
+
+
+def ensure_active_document(sw, model):
+    """
+    @brief 插入组件、打开零件等操作后，让 model 重新成为活动文档并回读核对。
+    @details 按文件名 ActivateDoc3（标题可能带配置/图纸后缀）；早绑定要整数，晚绑定要 by-ref VARIANT。
+    @return dict：reactivated 表示是否切换过。
+    @raise RuntimeError 切换后活动文档仍不是 model。
+    """
+    path = str(safe_get_com_member(model, "GetPathName") or "")
+    title = str(safe_get_com_member(model, "GetTitle") or "")
+    if _same_document(safe_get_com_member(sw, "ActiveDoc"), path, title):
+        return {"reactivated": False}
+    name = os.path.basename(path) if path else title
+    try:
+        sw.ActivateDoc3(name, False, 0, VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0))
+    except TypeError:
+        sw.ActivateDoc3(name, False, 0, 0)
+    active = safe_get_com_member(sw, "ActiveDoc")
+    if not _same_document(active, path, title):
+        other = str(safe_get_com_member(active, "GetPathName") or safe_get_com_member(active, "GetTitle") or "") if active is not None else None
+        raise RuntimeError(f"无法把 {name} 重新设为活动文档；当前活动文档: {other}")
+    return {"reactivated": True}
 
 
 def resolve_component(component, state=SW_COMPONENT_FULLY_RESOLVED):
