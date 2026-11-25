@@ -65,12 +65,14 @@ def describe_face(face):
             params = _vector(get_com_member(surface, "PlaneParams"), 6)
             normal, root = _plane_from_params(params)
             normal = _unit(normal)
-            row.update(type="plane", surface_params=params, root_point_mm=_mm(root),
-                       normal=normal if sense or normal is None else [-v for v in normal])
+            # SolidWorks 2026 实测（长方体 6 面、旋转件槽两壁）：FaceInSurfaceSense=False 时 PlaneParams 法向即
+            # 指向材料外侧；True 时相反。
+            row.update(type="plane", surface_params=params, root_point_mm=_mm(root), face_in_surface_sense=sense,
+                       normal=normal if (not sense or normal is None) else [-v for v in normal])
         elif get_com_member(surface, "IsCylinder"):
             p = _vector(get_com_member(surface, "CylinderParams"), 7)
             row.update(type="cylinder", axis_point_mm=_mm(p[0:3]), axis_direction=_unit(p[3:6]),
-                       radius_mm=round(p[6] * _MM, 4), diameter_mm=round(2 * p[6] * _MM, 4), outward=sense)
+                       radius_mm=round(p[6] * _MM, 4), diameter_mm=round(2 * p[6] * _MM, 4), face_in_surface_sense=sense)
         elif get_com_member(surface, "IsCone"):
             p = _vector(get_com_member(surface, "ConeParams"), 8)
             row.update(type="cone", axis_point_mm=_mm(p[0:3]), axis_direction=_unit(p[3:6]),
@@ -136,4 +138,4 @@ def query_faces(model, box_mm, mode="intersects", kinds=None, limit=100, toleran
     return {"status": "ok", "body_count": len(bodies), "total_face_count": total, "matched_count": len(matches),
             "returned_count": len(rows), "truncated": len(matches) > len(rows), "box_mm": query, "mode": mode,
             "faces": rows, "errors": errors,
-            "coordinates": "part coordinates, mm; plane normal points out of the material when FaceInSurfaceSense is read"}
+            "coordinates": "part coordinates, mm; plane normal points out of the material"}
