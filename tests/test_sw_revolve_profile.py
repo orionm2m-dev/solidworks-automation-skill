@@ -37,7 +37,7 @@ def test_profile_crossing_axis_is_refused_with_vertex_number():
 
 def test_arc_bulging_over_the_axis_is_refused():
     # Вершины справа от оси, но дуга между ними уходит за ось.
-    profile = verts([[2, 0], [10, 0], [10, 10], [2, 10, -1.0]])
+    profile = verts([[2, 0], [10, 0], [10, 10], [2, 10, 1.0]])  # против часовой: середина дуги в (−3; 5)
     p1, p2 = axis_segment("sketch_y", profile)
     with pytest.raises(ValueError):
         check_profile_side(profile, p1, p2)
